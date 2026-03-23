@@ -14,57 +14,7 @@ import mlx_whisper
 import platform
 
 
-DEFAULT_MODEL_NAME = "mlx-community/whisper-turbo"
-SUPPORTED_MODEL_NAMES = [
-    "mlx-community/whisper-large-v3-mlx",
-    "mlx-community/whisper-tiny-mlx-q4",
-    "mlx-community/whisper-large-v2-mlx-fp32",
-    "mlx-community/whisper-tiny.en-mlx-q4",
-    "mlx-community/whisper-base.en-mlx-q4",
-    "mlx-community/whisper-small.en-mlx-q4",
-    "mlx-community/whisper-tiny-mlx-fp32",
-    "mlx-community/whisper-base-mlx-fp32",
-    "mlx-community/whisper-small-mlx-fp32",
-    "mlx-community/whisper-medium-mlx-fp32",
-    "mlx-community/whisper-base-mlx-2bit",
-    "mlx-community/whisper-tiny-mlx-8bit",
-    "mlx-community/whisper-tiny.en-mlx-4bit",
-    "mlx-community/whisper-base-mlx",
-    "mlx-community/whisper-base-mlx-8bit",
-    "mlx-community/whisper-base.en-mlx-4bit",
-    "mlx-community/whisper-small-mlx",
-    "mlx-community/whisper-small-mlx-8bit",
-    "mlx-community/whisper-small.en-mlx-4bit",
-    "mlx-community/whisper-medium-mlx-8bit",
-    "mlx-community/whisper-medium.en-mlx-8bit",
-    "mlx-community/whisper-large-mlx-4bit",
-    "mlx-community/whisper-large-v1-mlx",
-    "mlx-community/whisper-large-v1-mlx-8bit",
-    "mlx-community/whisper-large-v2-mlx-8bit",
-    "mlx-community/whisper-large-v2-mlx-4bit",
-    "mlx-community/whisper-large-v1-mlx-4bit",
-    "mlx-community/whisper-large-mlx-8bit",
-    "mlx-community/whisper-large-mlx",
-    "mlx-community/whisper-medium.en-mlx-4bit",
-    "mlx-community/whisper-small.en-mlx-8bit",
-    "mlx-community/whisper-small.en-mlx",
-    "mlx-community/whisper-small-mlx-4bit",
-    "mlx-community/whisper-base.en-mlx-8bit",
-    "mlx-community/whisper-base.en-mlx",
-    "mlx-community/whisper-base-mlx-4bit",
-    "mlx-community/whisper-tiny.en-mlx-8bit",
-    "mlx-community/whisper-tiny.en-mlx",
-    "mlx-community/whisper-tiny-mlx",
-    "mlx-community/whisper-medium.en-mlx-fp32",
-    "mlx-community/whisper-small.en-mlx-fp32",
-    "mlx-community/whisper-base.en-mlx-fp32",
-    "mlx-community/whisper-tiny.en-mlx-fp32",
-    "mlx-community/whisper-medium-mlx-q4",
-    "mlx-community/whisper-small-mlx-q4",
-    "mlx-community/whisper-base-mlx-q4",
-    "mlx-community/whisper-large-v3-turbo",
-    "mlx-community/whisper-turbo",
-]
+DEFAULT_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
 
 
 def parse_key(key_name):
@@ -79,16 +29,11 @@ def parse_key_combination(key_combination):
 
 
 class SpeechTranscriber:
-    # removed model from arguments
     def __init__(self, model_name):
-
-        # self.model = model
         self.pykeyboard = keyboard.Controller()
         self.model_name = model_name
 
     def transcribe(self, audio_data, language=None):
-
-        # changed because of MLX
         result = mlx_whisper.transcribe(
             audio_data, language=language, path_or_hf_repo=self.model_name
         )
@@ -279,14 +224,10 @@ def parse_args():
     )
     parser.add_argument(
         "-m",
-        "--model_name",
+        "--model",
         type=str,
-        choices=SUPPORTED_MODEL_NAMES,
         default=DEFAULT_MODEL_NAME,
-        help="""Specify the MLX Whisper model to use. Example: mlx-community/whisper-large-v3-mlx.
-        To see the  most up to date list of models visit https://huggingface.co/collections/mlx-community/whisper-663256f9964fbb1177db93dc?utm_source=chatgpt.com. 
-        Note that the models ending in .en are trained only on English speech and will perform better on English 
-        language.""",
+        help="The local MLX model path or Hugging Face repo to use for transcription.",
     )
     parser.add_argument(
         "-k",
@@ -332,7 +273,7 @@ def parse_args():
         args.language = args.language.split(",")
 
     if (
-        args.model_name.endswith(".en")
+        args.model.endswith(".en")
         and args.language is not None
         and any(lang != "en" for lang in args.language)
     ):
@@ -343,24 +284,10 @@ def parse_args():
     return args
 
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
 
-    # commented out
-    """
-    print("Loading model...")
-    
-    #added this
-    print('model_name:', args.model_name)
-    
-    model = load_model(model_name)
-    
-    #added this
-    print(f"{model_name} model loaded")
-    """
-
-    # removed model argument passing
-    transcriber = SpeechTranscriber(args.model_name)
+    transcriber = SpeechTranscriber(args.model)
     recorder = Recorder(transcriber)
 
     app = StatusBarApp(recorder, args.language, args.max_time)
@@ -373,9 +300,13 @@ if __name__ == "__main__":
     )
     listener.start()
 
-    print(f"Running with model: {args.model_name}")
+    print(f"Running with model: {args.model}")
     if args.k_double_cmd:
         print("Hotkey: double right command to start, single right command to stop")
     else:
         print(f"Hotkey: {args.key_combination}")
     app.run()
+
+
+if __name__ == "__main__":
+    main()

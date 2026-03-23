@@ -2,3 +2,4 @@ venv/
 .venv/
 t1.py
 __pycache__/
+.eggs/

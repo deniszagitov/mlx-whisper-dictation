@@ -2,7 +2,7 @@
 
 Offline dictation for macOS that records from the microphone, transcribes with MLX Whisper, and types into the currently focused input field.
 
-This repository is tuned for Apple Silicon Macs. On a MacBook M3, the default model is `mlx-community/whisper-turbo` because it gives a better latency profile for interactive dictation than the old `large` default.
+This repository is tuned for Apple Silicon Macs and packaged as a menu bar application. The transcription path stays close to the MLX examples approach: the app calls `mlx_whisper.transcribe(...)` directly and passes the selected `path_or_hf_repo` model identifier.
 
 ## What It Does
 
@@ -17,27 +17,31 @@ This repository is tuned for Apple Silicon Macs. On a MacBook M3, the default mo
 - macOS on Apple Silicon.
 - Python 3.11 or 3.12.
 - Homebrew.
+- `py2app==0.28.10` and `modulegraph` for local application builds.
 - Accessibility permission.
 - Microphone permission.
 
-## Run
+## Build The App Locally
 
 ```bash
-./bootstrap.sh
-./run.sh
+brew install portaudio
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install py2app==0.28.10 modulegraph
+pip install -r requirements.txt
+python setup.py py2app
 ```
 
-`bootstrap.sh` is the one-time environment setup. It will:
+The built app bundle will appear at:
 
-- verify Homebrew
-- ensure `portaudio` is installed
-- prefer `python3.12`, otherwise `python3.11`
-- recreate `.venv` automatically if it was built with the wrong Python version
-- install or refresh Python dependencies
+```bash
+dist/MLX Whisper Dictation.app
+```
 
-`run.sh` is the normal runtime entrypoint. It only activates `.venv` and starts the app.
+## Run During Development
 
-If you want to run the Python file directly after bootstrap:
+If you want to run the script directly before packaging:
 
 ```bash
 source .venv/bin/activate
@@ -78,53 +82,50 @@ If you use this mode, disable the built-in macOS Dictation shortcut first.
 Default:
 
 ```bash
-mlx-community/whisper-turbo
+mlx-community/whisper-large-v3-turbo
 ```
 
 Recommended on M3:
 
-- `mlx-community/whisper-turbo` for the lowest latency
 - `mlx-community/whisper-large-v3-turbo` for a stronger latency and quality balance
 - `mlx-community/whisper-large-v3-mlx` if quality matters more than responsiveness
+- `mlx-community/whisper-turbo` if you prefer lower latency over quality
 
 Example:
 
 ```bash
-python whisper-dictation.py -m mlx-community/whisper-large-v3-turbo -l ru
+python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
 ```
 
 ## Permissions
 
-Grant these permissions to the app that launches the script:
+Grant these permissions to the built app:
 
 - `Microphone`
 - `Accessibility`
 
-If you start the app from Terminal, grant permissions to Terminal.
+If global hotkeys still do not react, also check `Input Monitoring` for the built app.
 
-## Autostart
+## Start At Login
 
-Install the LaunchAgent:
+After building, add the app bundle to `Login Items` in macOS:
 
-```bash
-./install-launch-agent.sh
-```
+1. Open `System Settings`
+2. Open `General`
+3. Open `Login Items & Extensions`
+4. Add `dist/MLX Whisper Dictation.app`
 
-Remove it later with:
+## GitHub Actions Build
 
-```bash
-./uninstall-launch-agent.sh
-```
+The repository includes a GitHub Actions workflow at [.github/workflows/build-macos-app.yml](.github/workflows/build-macos-app.yml).
 
-What this does:
+It:
 
-- installs a user LaunchAgent in `~/Library/LaunchAgents`
-- starts the app automatically after login
-- writes logs to `~/Library/Logs/whisper-dictation`
-
-The LaunchAgent uses [run.sh](run.sh) for startup, so it does not reinstall dependencies on every login.
-
-If the environment is missing, `install-launch-agent.sh` runs [bootstrap.sh](bootstrap.sh) once before registering the agent.
+- runs on `macos-14`
+- installs `portaudio`
+- installs Python dependencies and `py2app`
+- builds the `.app`
+- uploads a zipped app artifact
 
 ## Reference
 
@@ -132,4 +133,4 @@ This repository uses the MLX Whisper approach shown in the MLX examples project:
 
 - `mlx_whisper.transcribe(audio, path_or_hf_repo=...)`
 - MLX Community Whisper models hosted on Hugging Face
-- fast model variants such as `whisper-turbo` for interactive usage
+- model selection via direct repo or local model path, similar to the MLX examples CLI and API

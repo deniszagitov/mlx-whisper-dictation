@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "whisper-dictation"
 version = "0.1.0"
-description = "Multilingual Dictation App based on OpenAI Whisper"
-authors = ["Your Name <you@example.com>"]
+description = "Offline macOS dictation app built on MLX Whisper"
+authors = ["Denis Zagitov"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.11,<3.13"
 pyaudio = "^0.2.13"
 mlx-whisper = "*"
 rumps = "^0.4.0"
