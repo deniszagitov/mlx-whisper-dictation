@@ -1,5 +1,0 @@
-pyaudio
-pynput
-rumps
-numpy
-mlx-whisper

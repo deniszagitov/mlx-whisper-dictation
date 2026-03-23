@@ -1,45 +1,102 @@
+"""Приложение офлайн-диктовки для macOS на базе MLX Whisper.
+
+Модуль содержит menu bar приложение, которое записывает звук с микрофона,
+распознает речь локально через MLX Whisper и вставляет результат в активное
+поле ввода.
+"""
+
 import argparse
-import time
+import logging
+import platform
 import threading
-import pyaudio
+import time
+from typing import Any, cast
+
+import AppKit
+import mlx_whisper
 import numpy as np
+import pyaudio
 import rumps
 from pynput import keyboard
-from AppKit import NSPasteboard, NSPasteboardTypeString
-
-# from whisper import load_model
-
-# added because of MLX
-import mlx_whisper
-
-import platform
-
 
 DEFAULT_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
+MIN_HOTKEY_PARTS = 2
+DOUBLE_COMMAND_PRESS_INTERVAL = 0.5
+LOGGER = logging.getLogger(__name__)
+
+
+def notify_user(title, message):
+    """Показывает системное уведомление macOS.
+
+    Args:
+        title: Заголовок уведомления.
+        message: Основной текст уведомления.
+    """
+    try:
+        rumps.notification(title, "", message)
+    except Exception:
+        LOGGER.exception("Не удалось показать системное уведомление macOS")
 
 
 def parse_key(key_name):
+    """Преобразует строковое имя клавиши в объект pynput.
+
+    Args:
+        key_name: Имя клавиши, например `cmd_l`, `alt` или `space`.
+
+    Returns:
+        Объект клавиши или код символа, который понимает pynput.
+    """
     return getattr(keyboard.Key, key_name, keyboard.KeyCode(char=key_name))
 
 
 def parse_key_combination(key_combination):
+    """Разбирает строку с комбинацией клавиш.
+
+    Args:
+        key_combination: Строка вида `cmd_l+alt` или `cmd_l+shift+space`.
+
+    Returns:
+        Кортеж объектов клавиш в том порядке, в котором они указаны.
+
+    Raises:
+        ValueError: Если в комбинации меньше двух клавиш.
+    """
     parts = [part.strip() for part in key_combination.split("+") if part.strip()]
-    if len(parts) < 2:
-        raise ValueError("Key combination must include at least two keys.")
+    if len(parts) < MIN_HOTKEY_PARTS:
+        raise ValueError("Комбинация клавиш должна содержать как минимум две клавиши.")
     return tuple(parse_key(part) for part in parts)
 
 
 class SpeechTranscriber:
+    """Распознает аудио и вставляет текст в активное приложение.
+
+    Attributes:
+        pykeyboard: Контроллер клавиатуры pynput для вставки текста.
+        model_name: Имя или путь к модели MLX Whisper.
+    """
+
     def __init__(self, model_name):
+        """Создает объект распознавания.
+
+        Args:
+            model_name: Имя модели Hugging Face или локальный путь к модели.
+        """
         self.pykeyboard = keyboard.Controller()
         self.model_name = model_name
 
     def _paste_text(self, text):
-        pasteboard = NSPasteboard.generalPasteboard()
-        previous_text = pasteboard.stringForType_(NSPasteboardTypeString)
+        """Вставляет текст через буфер обмена и Cmd+V.
+
+        Args:
+            text: Текст для вставки в активное поле ввода.
+        """
+        appkit = cast("Any", AppKit)
+        pasteboard = appkit.NSPasteboard.generalPasteboard()
+        previous_text = pasteboard.stringForType_(appkit.NSPasteboardTypeString)
 
         pasteboard.clearContents()
-        pasteboard.setString_forType_(text, NSPasteboardTypeString)
+        pasteboard.setString_forType_(text, appkit.NSPasteboardTypeString)
         time.sleep(0.05)
 
         with self.pykeyboard.pressed(keyboard.Key.cmd):
@@ -50,56 +107,126 @@ class SpeechTranscriber:
 
         pasteboard.clearContents()
         if previous_text is not None:
-            pasteboard.setString_forType_(previous_text, NSPasteboardTypeString)
+            pasteboard.setString_forType_(
+                previous_text,
+                appkit.NSPasteboardTypeString,
+            )
 
     def transcribe(self, audio_data, language=None):
-        result = mlx_whisper.transcribe(
-            audio_data, language=language, path_or_hf_repo=self.model_name
-        )
-        text = result["text"].lstrip()
+        """Распознает аудио и вставляет результат в активное приложение.
+
+        Args:
+            audio_data: Массив с аудио в формате float32.
+            language: Необязательный код языка для улучшения распознавания.
+        """
+        try:
+            result = mlx_whisper.transcribe(
+                audio_data,
+                language=language,
+                path_or_hf_repo=self.model_name,
+            )
+        except Exception:
+            LOGGER.exception("Ошибка распознавания")
+            notify_user(
+                "MLX Whisper Dictation",
+                "Ошибка распознавания. Смотрите stderr.log.",
+            )
+            return
+
+        text = str(result.get("text", "")).lstrip()
+        LOGGER.info("Распознавание завершено, длина текста=%s", len(text))
 
         if not text:
+            LOGGER.info("Результат распознавания пустой")
             return
 
         try:
             self._paste_text(text)
+            LOGGER.info("Текст вставлен через буфер обмена")
         except Exception:
-            self.pykeyboard.type(text)
+            LOGGER.exception("Не удалось вставить через буфер обмена, переключаюсь на ввод клавишами")
+            try:
+                self.pykeyboard.type(text)
+                LOGGER.info("Текст вставлен через резервный ввод клавишами")
+            except Exception:
+                LOGGER.exception("Резервный ввод клавишами тоже завершился ошибкой")
+                notify_user(
+                    "MLX Whisper Dictation",
+                    "Не удалось вставить текст. Проверьте Accessibility и Input Monitoring.",
+                )
 
 
 class Recorder:
+    """Записывает звук с микрофона и передает его в распознавание.
+
+    Attributes:
+        recording: Флаг активной записи.
+        transcriber: Объект распознавания, который обрабатывает аудио.
+    """
+
     def __init__(self, transcriber):
+        """Создает объект записи.
+
+        Args:
+            transcriber: Экземпляр SpeechTranscriber для обработки записанного аудио.
+        """
         self.recording = False
         self.transcriber = transcriber
 
     def start(self, language=None):
+        """Запускает запись в отдельном потоке.
+
+        Args:
+            language: Необязательный код языка для последующего распознавания.
+        """
         thread = threading.Thread(target=self._record_impl, args=(language,))
         thread.daemon = True
         thread.start()
 
     def stop(self):
+        """Останавливает активную запись."""
         self.recording = False
 
     def _record_impl(self, language):
+        """Выполняет запись, конвертацию аудио и запуск распознавания.
+
+        Args:
+            language: Необязательный код языка для последующего распознавания.
+        """
         self.recording = True
         frames_per_buffer = 1024
-        p = pyaudio.PyAudio()
-        stream = p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            frames_per_buffer=frames_per_buffer,
-            input=True,
-        )
+        audio_interface = pyaudio.PyAudio()
+        stream = None
         frames = []
 
-        while self.recording:
-            data = stream.read(frames_per_buffer, exception_on_overflow=False)
-            frames.append(data)
+        try:
+            stream = audio_interface.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=16000,
+                frames_per_buffer=frames_per_buffer,
+                input=True,
+            )
 
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
+            while self.recording:
+                data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                frames.append(data)
+        except Exception:
+            LOGGER.exception("Ошибка записи")
+            notify_user(
+                "MLX Whisper Dictation",
+                "Ошибка записи с микрофона. Смотрите stderr.log.",
+            )
+            return
+        finally:
+            if stream is not None:
+                stream.stop_stream()
+                stream.close()
+            audio_interface.terminate()
+
+        if not frames:
+            LOGGER.warning("Запись остановлена без захваченных аудиофреймов")
+            return
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
         audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
@@ -107,126 +234,213 @@ class Recorder:
 
 
 class GlobalKeyListener:
+    """Обрабатывает глобальную комбинацию клавиш для запуска диктовки.
+
+    Attributes:
+        app: Экземпляр StatusBarApp, которым управляет listener.
+        keys: Кортеж клавиш, которые образуют хоткей.
+        pressed_keys: Набор клавиш, зажатых в текущий момент.
+        triggered: Флаг, защищающий от повторного срабатывания при удержании.
+    """
+
     def __init__(self, app, key_combination):
+        """Создает listener для заданной комбинации клавиш.
+
+        Args:
+            app: Экземпляр приложения, у которого будет вызван toggle.
+            key_combination: Строка с комбинацией клавиш.
+        """
         self.app = app
         self.keys = parse_key_combination(key_combination)
         self.pressed_keys = set()
         self.triggered = False
 
     def on_key_press(self, key):
+        """Обрабатывает нажатие клавиши.
+
+        Args:
+            key: Объект клавиши из pynput.
+        """
         if key in self.keys:
             self.pressed_keys.add(key)
 
-        if not self.triggered and all(
-            hotkey in self.pressed_keys for hotkey in self.keys
-        ):
+        if not self.triggered and all(hotkey in self.pressed_keys for hotkey in self.keys):
             self.triggered = True
             self.app.toggle()
 
     def on_key_release(self, key):
+        """Обрабатывает отпускание клавиши.
+
+        Args:
+            key: Объект клавиши из pynput.
+        """
         self.pressed_keys.discard(key)
         if key in self.keys:
             self.triggered = False
 
 
 class DoubleCommandKeyListener:
+    """Обрабатывает режим управления через правую клавишу Command.
+
+    Attributes:
+        app: Экземпляр приложения, у которого будет вызван toggle.
+        key: Клавиша, используемая для переключения записи.
+        last_press_time: Время предыдущего нажатия для определения двойного клика.
+    """
+
     def __init__(self, app):
+        """Создает listener для режима двойного нажатия Command.
+
+        Args:
+            app: Экземпляр приложения, у которого будет вызван toggle.
+        """
         self.app = app
         self.key = keyboard.Key.cmd_r
-        self.pressed = 0
-        self.last_press_time = 0
+        self.last_press_time = 0.0
 
     def on_key_press(self, key):
+        """Обрабатывает нажатие правой клавиши Command.
+
+        Args:
+            key: Объект клавиши из pynput.
+        """
         is_listening = self.app.started
         if key == self.key:
             current_time = time.time()
-            if (
-                not is_listening and current_time - self.last_press_time < 0.5
-            ):  # Double click to start listening
-                self.app.toggle()
-            elif is_listening:  # Single click to stop listening
+            if is_listening or current_time - self.last_press_time < DOUBLE_COMMAND_PRESS_INTERVAL:
                 self.app.toggle()
             self.last_press_time = current_time
 
     def on_key_release(self, key):
-        pass
+        """Игнорирует отпускание клавиши в этом режиме.
+
+        Args:
+            key: Объект клавиши из pynput.
+        """
+        del key
 
 
 class StatusBarApp(rumps.App):
+    """Menu bar приложение для управления записью и распознаванием.
+
+    Attributes:
+        languages: Доступные языки распознавания или None.
+        current_language: Текущий выбранный язык или None.
+        started: Флаг активной записи.
+        recorder: Объект записи аудио.
+        max_time: Максимальная длительность записи в секундах.
+        elapsed_time: Количество секунд с начала текущей записи.
+        status_timer: Таймер обновления индикатора в строке меню.
+    """
+
     def __init__(self, recorder, languages=None, max_time=None):
+        """Создает menu bar приложение.
+
+        Args:
+            recorder: Объект Recorder для записи и распознавания.
+            languages: Необязательный список доступных языков.
+            max_time: Необязательный лимит длительности записи в секундах.
+        """
         super().__init__("whisper", "⏯")
         self.languages = languages
         self.current_language = languages[0] if languages is not None else None
 
-        menu = [
-            "Start Recording",
-            "Stop Recording",
-            None,
-        ]
+        menu = ["Начать запись", "Остановить запись", None]
 
         if languages is not None:
             for lang in languages:
-                callback = (
-                    self.change_language if lang != self.current_language else None
-                )
+                callback = self.change_language if lang != self.current_language else None
                 menu.append(rumps.MenuItem(lang, callback=callback))
             menu.append(None)
 
         self.menu = menu
-        self.menu["Stop Recording"].set_callback(None)
+        self._menu_item("Остановить запись").set_callback(None)
 
         self.started = False
         self.recorder = recorder
         self.max_time = max_time
-        self.timer = None
         self.elapsed_time = 0
+        self.status_timer = rumps.Timer(self.on_status_tick, 1)
+        self.status_timer.start()
+
+    def _menu_item(self, title):
+        """Возвращает пункт меню по заголовку.
+
+        Args:
+            title: Текст пункта меню.
+
+        Returns:
+            Объект пункта меню из rumps.
+        """
+        return cast("Any", self.menu)[title]
 
     def change_language(self, sender):
+        """Переключает текущий язык распознавания.
+
+        Args:
+            sender: Пункт меню, выбранный пользователем.
+        """
+        if self.languages is None:
+            return
+
         self.current_language = sender.title
         for lang in self.languages:
-            self.menu[lang].set_callback(
-                self.change_language if lang != self.current_language else None
-            )
+            self._menu_item(lang).set_callback(self.change_language if lang != self.current_language else None)
 
-    @rumps.clicked("Start Recording")
+    @rumps.clicked("Начать запись")
     def start_app(self, _):
-        print("Listening...")
+        """Запускает запись и обновляет состояние интерфейса.
+
+        Args:
+            _: Аргумент callback от rumps, который здесь не используется.
+        """
+        print("Слушаю...")
+        LOGGER.info("Запись началась")
         self.started = True
-        self.menu["Start Recording"].set_callback(None)
-        self.menu["Stop Recording"].set_callback(self.stop_app)
+        self._menu_item("Начать запись").set_callback(None)
+        self._menu_item("Остановить запись").set_callback(self.stop_app)
         self.recorder.start(self.current_language)
 
-        if self.max_time is not None:
-            self.timer = threading.Timer(self.max_time, lambda: self.stop_app(None))
-            self.timer.start()
-
         self.start_time = time.time()
-        self.update_title()
+        self.on_status_tick(None)
 
-    @rumps.clicked("Stop Recording")
+    @rumps.clicked("Остановить запись")
     def stop_app(self, _):
+        """Останавливает запись и запускает этап распознавания.
+
+        Args:
+            _: Аргумент callback от rumps, который здесь не используется.
+        """
         if not self.started:
             return
 
-        if self.timer is not None:
-            self.timer.cancel()
-
-        print("Transcribing...")
+        print("Распознаю...")
+        LOGGER.info("Запись остановлена, запускаю распознавание")
         self.title = "⏯"
         self.started = False
-        self.menu["Stop Recording"].set_callback(None)
-        self.menu["Start Recording"].set_callback(self.start_app)
+        self._menu_item("Остановить запись").set_callback(None)
+        self._menu_item("Начать запись").set_callback(self.start_app)
         self.recorder.stop()
-        print("Done.\n")
+        print("Готово.\n")
 
-    def update_title(self):
-        if self.started:
-            self.elapsed_time = int(time.time() - self.start_time)
-            minutes, seconds = divmod(self.elapsed_time, 60)
-            self.title = f"({minutes:02d}:{seconds:02d}) 🔴"
-            threading.Timer(1, self.update_title).start()
+    def on_status_tick(self, _):
+        """Обновляет индикатор времени записи в строке меню.
+
+        Args:
+            _: Аргумент timer callback, который здесь не используется.
+        """
+        if not self.started:
+            return
+
+        self.elapsed_time = int(time.time() - self.start_time)
+        minutes, seconds = divmod(self.elapsed_time, 60)
+        self.title = f"({minutes:02d}:{seconds:02d}) 🔴"
+
+        if self.max_time is not None and self.elapsed_time >= self.max_time:
+            self.stop_app(None)
 
     def toggle(self):
+        """Переключает приложение между состояниями записи и ожидания."""
         if self.started:
             self.stop_app(None)
         else:
@@ -234,47 +448,67 @@ class StatusBarApp(rumps.App):
 
 
 def parse_args():
+    """Разбирает аргументы командной строки.
+
+    Returns:
+        Пространство имен argparse с настройками запуска приложения.
+
+    Raises:
+        SystemExit: Если передана некорректная комбинация клавиш.
+        ValueError: Если выбран несовместимый язык для модели с суффиксом `.en`.
+    """
     parser = argparse.ArgumentParser(
-        description="Dictation app using the MLX OpenAI Whisper model. By default the keyboard shortcut cmd+option "
-        "starts and stops dictation",
+        description=("Приложение диктовки на базе MLX Whisper. По умолчанию комбинация cmd+option запускает и останавливает диктовку.")
     )
     parser.add_argument(
         "-m",
         "--model",
         type=str,
         default=DEFAULT_MODEL_NAME,
-        help="The local MLX model path or Hugging Face repo to use for transcription.",
+        help="Локальный путь к модели MLX или Hugging Face repo для распознавания.",
     )
     parser.add_argument(
         "-k",
         "--key_combination",
         type=str,
         default="cmd_l+alt" if platform.system() == "Darwin" else "ctrl+alt",
-        help="Specify the key combination to toggle the app. Examples: cmd_l+alt, cmd_l+shift+space, ctrl+alt. "
-        "Default: cmd_l+alt on macOS or ctrl+alt on other platforms.",
+        help=(
+            "Комбинация клавиш для запуска и остановки приложения. "
+            "Примеры: cmd_l+alt, cmd_l+shift+space, ctrl+alt. "
+            "По умолчанию: cmd_l+alt на macOS и ctrl+alt на остальных платформах."
+        ),
     )
     parser.add_argument(
         "--k_double_cmd",
         action="store_true",
-        help="If set, use double Right Command key press on macOS to toggle the app (double click to begin recording, single click to stop recording). "
-        "Ignores the --key_combination argument.",
+        help=(
+            "Если флаг включен, приложение использует двойное нажатие правой Command "
+            "для старта записи и одиночное нажатие для остановки. "
+            "Параметр --key_combination при этом игнорируется."
+        ),
     )
     parser.add_argument(
         "-l",
         "--language",
         type=str,
         default=None,
-        help='Specify the two-letter language code (e.g., "en" for English) to improve recognition accuracy. '
-        "This can be especially helpful for smaller model sizes.  To see the full list of supported languages, "
-        "check out the official list [here](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py).",
+        help=(
+            'Двухбуквенный код языка, например "en" или "ru", который помогает '
+            "улучшить точность распознавания. Это особенно полезно для более компактных моделей. "
+            "Полный список языков есть в официальном списке Whisper: "
+            "https://github.com/openai/whisper/blob/main/whisper/tokenizer.py."
+        ),
     )
     parser.add_argument(
         "-t",
         "--max_time",
         type=float,
         default=30,
-        help="Specify the maximum recording time in seconds. The app will automatically stop recording after this duration. "
-        "Default: 30 seconds.",
+        help=(
+            "Максимальная длительность записи в секундах. "
+            "После этого времени приложение автоматически остановит запись. "
+            "По умолчанию: 30 секунд."
+        ),
     )
 
     args = parser.parse_args()
@@ -288,39 +522,37 @@ def parse_args():
     if args.language is not None:
         args.language = args.language.split(",")
 
-    if (
-        args.model.endswith(".en")
-        and args.language is not None
-        and any(lang != "en" for lang in args.language)
-    ):
-        raise ValueError(
-            "If using a model ending in .en, you cannot specify a language other than English."
-        )
+    if args.model.endswith(".en") and args.language is not None and any(lang != "en" for lang in args.language):
+        raise ValueError("Для модели с суффиксом .en нельзя указывать язык, отличный от английского.")
 
     return args
 
 
 def main():
+    """Запускает приложение диктовки и глобальные обработчики клавиш."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     args = parse_args()
 
     transcriber = SpeechTranscriber(args.model)
     recorder = Recorder(transcriber)
 
     app = StatusBarApp(recorder, args.language, args.max_time)
-    if args.k_double_cmd:
-        key_listener = DoubleCommandKeyListener(app)
-    else:
-        key_listener = GlobalKeyListener(app, args.key_combination)
+    key_listener = DoubleCommandKeyListener(app) if args.k_double_cmd else GlobalKeyListener(app, args.key_combination)
     listener = keyboard.Listener(
-        on_press=key_listener.on_key_press, on_release=key_listener.on_key_release
+        on_press=key_listener.on_key_press,
+        on_release=key_listener.on_key_release,
     )
     listener.start()
 
-    print(f"Running with model: {args.model}")
+    print(f"Запуск с моделью: {args.model}")
     if args.k_double_cmd:
-        print("Hotkey: double right command to start, single right command to stop")
+        print("Хоткей: двойное нажатие правой Command для старта и одиночное для остановки")
     else:
-        print(f"Hotkey: {args.key_combination}")
+        print(f"Хоткей: {args.key_combination}")
     app.run()
 
 

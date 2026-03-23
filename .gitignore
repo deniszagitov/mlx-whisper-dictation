@@ -10,3 +10,4 @@ dist/
 *.pyo
 *.egg-info/
 .DS_Store
+.ruff_cache

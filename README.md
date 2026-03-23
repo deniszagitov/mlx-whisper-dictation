@@ -4,15 +4,41 @@
 
 Проект ориентирован на локальный запуск на Mac и упаковывается в `.app` через `py2app`.
 
+Это репозиторий, который можно отдать другим владельцам MacBook Air или Pro на M1, M2, M3 и новее: они смогут клонировать код, собрать `.app` у себя и получить локальную диктовку на устройстве через MLX без облака.
+
 ## Как это работает
 
-1. Приложение запускается как menu bar app.
+1. Приложение запускается как приложение в строке меню.
 2. По глобальному хоткею начинается запись с микрофона.
 3. После остановки записи аудио передается в `mlx_whisper.transcribe(...)`.
 4. Распознанный текст вставляется в активное приложение.
 5. Для вставки используется буфер обмена и `Cmd+V`, поэтому результат не зависит от текущей раскладки клавиатуры.
 
-# TODO: придумать как сделать стриминг слов и может даже исправление голосом
+## Быстрый старт для владельцев Mac M-серии
+
+Если цель простая: быстро поднять рабочее приложение на своем Mac, используйте такой сценарий.
+
+1. Установите Homebrew, если его ещё нет.
+2. Поставьте `portaudio` и `uv`.
+3. Зафиксируйте Homebrew Python 3.11 для проекта.
+4. Установите зависимости и dev-инструменты через `uv`.
+5. Соберите `.app`.
+6. Перенесите `.app` в `Applications`.
+7. Выдайте приложению `Microphone`, `Accessibility` и при необходимости `Input Monitoring`.
+8. Запустите приложение и пользуйтесь через хоткей.
+
+Команды:
+
+```bash
+brew install portaudio
+brew install uv
+git clone <your-fork-or-repo-url>
+cd mlx-whisper-dictation
+uv python pin 3.11.14
+uv sync --dev
+uv run python setup.py py2app -A
+open "dist/MLX Whisper Dictation.app"
+```
 
 Приложение не использует облачную диктовку macOS и не отправляет звук во внешний сервис. Расшифровка идет локально на машине.
 
@@ -31,13 +57,10 @@
 
 ```bash
 brew install portaudio
-pyenv local 3.11.14
-/opt/homebrew/bin/python3.11 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip setuptools wheel
-pip install py2app==0.28.10 modulegraph
-pip install -r requirements.txt
-python setup.py py2app -A
+brew install uv
+uv python pin 3.11.14
+uv sync --dev
+uv run python setup.py py2app -A
 ```
 
 После сборки приложение появится здесь:
@@ -58,21 +81,22 @@ open "dist/MLX Whisper Dictation.app"
 ./dist/MLX\ Whisper\ Dictation.app/Contents/MacOS/MLX\ Whisper\ Dictation
 ```
 
+Команда `uv sync --dev` ставит не только runtime-зависимости, но и инструменты для сборки и проверки кода, включая `py2app`, `modulegraph` и `ruff`.
+
 ## Почему именно Python 3.11
 
 - В проекте зафиксирована `.python-version = 3.11.14`.
 - Homebrew Python 3.11 является framework build, а это заметно лучше работает с `py2app` на macOS.
 - Ранее `pyenv` Python 3.12 без framework давал менее пригодный результат для app bundle.
 
-Если `.venv` уже был создан на другой версии Python, его лучше пересоздать перед сборкой.
+`uv python pin 3.11.14` удерживает проект на нужной версии Python и упрощает воспроизводимую настройку на других машинах.
 
 ## Запуск без упаковки
 
 Если хотите сначала проверить приложение как обычный Python-скрипт:
 
 ```bash
-source .venv/bin/activate
-python whisper-dictation.py
+uv run python whisper-dictation.py
 ```
 
 ## Хоткеи
@@ -86,15 +110,15 @@ cmd_l+alt
 Поддерживаются комбинации из двух и более клавиш. Примеры:
 
 ```bash
-python whisper-dictation.py -k cmd_l+shift+space
-python whisper-dictation.py -k cmd_r+shift
-python whisper-dictation.py -k ctrl+alt
+uv run python whisper-dictation.py -k cmd_l+shift+space
+uv run python whisper-dictation.py -k cmd_r+shift
+uv run python whisper-dictation.py -k ctrl+alt
 ```
 
 Также можно включить режим по правой клавише Command:
 
 ```bash
-python whisper-dictation.py --k_double_cmd
+uv run python whisper-dictation.py --k_double_cmd
 ```
 
 В этом режиме:
@@ -121,7 +145,7 @@ mlx-community/whisper-large-v3-turbo
 Пример запуска:
 
 ```bash
-python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
+uv run python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
 ```
 
 ## Доступы macOS
@@ -136,6 +160,8 @@ python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
 - `Input Monitoring`
 
 Важно: после переноса `.app` в другую папку macOS может считать его новым приложением. В этом случае доступы иногда нужно выдать заново.
+
+Практический совет: после первой сборки лучше перенести приложение в `/Applications`, удалить старую запись из `Accessibility` и добавить уже новую копию оттуда. Это снижает число странных кейсов с правами и старыми путями.
 
 ## Автозапуск при входе
 
@@ -157,6 +183,13 @@ python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
 
 Они полезны, если приложение запускается, но не вставляет текст или не видно ошибок в интерфейсе.
 
+Что обычно видно в логах:
+
+- ошибки доступа к `Accessibility` или `Input Monitoring`
+- проблемы с записью с микрофона
+- ошибки распознавания модели
+- падение вставки через буфер обмена или резервный ввод клавишами
+
 ## Сборка в GitHub Actions
 
 В репозитории есть workflow [ .github/workflows/build-macos-app.yml ](.github/workflows/build-macos-app.yml).
@@ -164,10 +197,21 @@ python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
 Он:
 
 - запускается на `macos-14`
-- ставит `portaudio`
-- устанавливает Python-зависимости и `py2app`
+- ставит `portaudio` и `uv`
+- синхронизирует зависимости из `pyproject.toml`
+- прогоняет `ruff`
 - собирает `.app`
 - загружает артефакт сборки
+
+Это полезно для проверки, что репозиторий вообще собирается после изменений. Но основной способ распространения проекта всё равно лучше оставлять через исходники и локальную сборку на каждом Mac с M-серией.
+
+## Что будет после клона
+
+- локальную диктовку на устройстве без облака
+- хорошую скорость на Apple Silicon за счет MLX
+- нормальную вставку текста в активное поле ввода
+- возможность выбрать модель под свой баланс скорости и качества
+- простой путь к `.app`, который живет в строке меню и не требует LaunchAgent
 
 ## Техническая основа
 

@@ -1,8 +1,9 @@
-from pathlib import Path
+"""Конфигурация сборки macOS-приложения через py2app."""
+
 import sys
+from pathlib import Path
 
 from setuptools import setup
-
 
 sys.setrecursionlimit(10000)
 
@@ -23,7 +24,7 @@ OPTIONS = {
         "CFBundleShortVersionString": "0.1.0",
         "CFBundleVersion": "0.1.0",
         "LSUIElement": True,
-        "NSMicrophoneUsageDescription": "This app records microphone audio for offline dictation.",
+        "NSMicrophoneUsageDescription": ("Приложение записывает звук с микрофона для офлайн-диктовки."),
     },
 }
 
@@ -32,7 +33,7 @@ setup(
     app=APP,
     name="MLX Whisper Dictation",
     version="0.1.0",
-    description="Offline macOS dictation app built on mlx_whisper.",
+    description="Офлайн-приложение диктовки для macOS на базе mlx_whisper.",
     long_description=README,
     long_description_content_type="text/markdown",
     options={"py2app": OPTIONS},

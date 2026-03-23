@@ -5,9 +5,22 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
     paths:
       - .github/workflows/build-macos-app.yml
       - README.md
+      - pyproject.toml
+      - .python-version
+      - requirements.txt
+      - setup.py
+      - whisper-dictation.py
+  pull_request:
+    paths:
+      - .github/workflows/build-macos-app.yml
+      - README.md
+      - pyproject.toml
+      - .python-version
       - requirements.txt
       - setup.py
       - whisper-dictation.py
@@ -23,19 +36,22 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Install system dependency
         run: brew install portaudio
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install py2app==0.28.10 modulegraph
-          python -m pip install -r requirements.txt
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Run Ruff
+        run: uv run ruff check .
 
       - name: Build app bundle
-        run: python setup.py py2app
+        run: uv run python setup.py py2app
 
       - name: Archive app bundle
         run: |
