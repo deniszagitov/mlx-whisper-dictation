@@ -10,24 +10,87 @@ from pynput import keyboard
 
 # added because of MLX
 import mlx_whisper
-from mlx_whisper.load_models import load_model
 
 import platform
 
 
-class SpeechTranscriber:
+DEFAULT_MODEL_NAME = "mlx-community/whisper-turbo"
+SUPPORTED_MODEL_NAMES = [
+    "mlx-community/whisper-large-v3-mlx",
+    "mlx-community/whisper-tiny-mlx-q4",
+    "mlx-community/whisper-large-v2-mlx-fp32",
+    "mlx-community/whisper-tiny.en-mlx-q4",
+    "mlx-community/whisper-base.en-mlx-q4",
+    "mlx-community/whisper-small.en-mlx-q4",
+    "mlx-community/whisper-tiny-mlx-fp32",
+    "mlx-community/whisper-base-mlx-fp32",
+    "mlx-community/whisper-small-mlx-fp32",
+    "mlx-community/whisper-medium-mlx-fp32",
+    "mlx-community/whisper-base-mlx-2bit",
+    "mlx-community/whisper-tiny-mlx-8bit",
+    "mlx-community/whisper-tiny.en-mlx-4bit",
+    "mlx-community/whisper-base-mlx",
+    "mlx-community/whisper-base-mlx-8bit",
+    "mlx-community/whisper-base.en-mlx-4bit",
+    "mlx-community/whisper-small-mlx",
+    "mlx-community/whisper-small-mlx-8bit",
+    "mlx-community/whisper-small.en-mlx-4bit",
+    "mlx-community/whisper-medium-mlx-8bit",
+    "mlx-community/whisper-medium.en-mlx-8bit",
+    "mlx-community/whisper-large-mlx-4bit",
+    "mlx-community/whisper-large-v1-mlx",
+    "mlx-community/whisper-large-v1-mlx-8bit",
+    "mlx-community/whisper-large-v2-mlx-8bit",
+    "mlx-community/whisper-large-v2-mlx-4bit",
+    "mlx-community/whisper-large-v1-mlx-4bit",
+    "mlx-community/whisper-large-mlx-8bit",
+    "mlx-community/whisper-large-mlx",
+    "mlx-community/whisper-medium.en-mlx-4bit",
+    "mlx-community/whisper-small.en-mlx-8bit",
+    "mlx-community/whisper-small.en-mlx",
+    "mlx-community/whisper-small-mlx-4bit",
+    "mlx-community/whisper-base.en-mlx-8bit",
+    "mlx-community/whisper-base.en-mlx",
+    "mlx-community/whisper-base-mlx-4bit",
+    "mlx-community/whisper-tiny.en-mlx-8bit",
+    "mlx-community/whisper-tiny.en-mlx",
+    "mlx-community/whisper-tiny-mlx",
+    "mlx-community/whisper-medium.en-mlx-fp32",
+    "mlx-community/whisper-small.en-mlx-fp32",
+    "mlx-community/whisper-base.en-mlx-fp32",
+    "mlx-community/whisper-tiny.en-mlx-fp32",
+    "mlx-community/whisper-medium-mlx-q4",
+    "mlx-community/whisper-small-mlx-q4",
+    "mlx-community/whisper-base-mlx-q4",
+    "mlx-community/whisper-large-v3-turbo",
+    "mlx-community/whisper-turbo",
+]
 
+
+def parse_key(key_name):
+    return getattr(keyboard.Key, key_name, keyboard.KeyCode(char=key_name))
+
+
+def parse_key_combination(key_combination):
+    parts = [part.strip() for part in key_combination.split("+") if part.strip()]
+    if len(parts) < 2:
+        raise ValueError("Key combination must include at least two keys.")
+    return tuple(parse_key(part) for part in parts)
+
+
+class SpeechTranscriber:
     # removed model from arguments
-    def __init__(self):
+    def __init__(self, model_name):
 
         # self.model = model
         self.pykeyboard = keyboard.Controller()
+        self.model_name = model_name
 
     def transcribe(self, audio_data, language=None):
 
         # changed because of MLX
         result = mlx_whisper.transcribe(
-            audio_data, language=language, path_or_hf_repo=model_name
+            audio_data, language=language, path_or_hf_repo=self.model_name
         )
 
         is_first = True
@@ -39,7 +102,7 @@ class SpeechTranscriber:
             try:
                 self.pykeyboard.type(element)
                 time.sleep(0.0025)
-            except:
+            except Exception:
                 pass
 
 
@@ -50,6 +113,7 @@ class Recorder:
 
     def start(self, language=None):
         thread = threading.Thread(target=self._record_impl, args=(language,))
+        thread.daemon = True
         thread.start()
 
     def stop(self):
@@ -69,7 +133,7 @@ class Recorder:
         frames = []
 
         while self.recording:
-            data = stream.read(frames_per_buffer)
+            data = stream.read(frames_per_buffer, exception_on_overflow=False)
             frames.append(data)
 
         stream.stop_stream()
@@ -84,30 +148,24 @@ class Recorder:
 class GlobalKeyListener:
     def __init__(self, app, key_combination):
         self.app = app
-        self.key1, self.key2 = self.parse_key_combination(key_combination)
-        self.key1_pressed = False
-        self.key2_pressed = False
-
-    def parse_key_combination(self, key_combination):
-        key1_name, key2_name = key_combination.split("+")
-        key1 = getattr(keyboard.Key, key1_name, keyboard.KeyCode(char=key1_name))
-        key2 = getattr(keyboard.Key, key2_name, keyboard.KeyCode(char=key2_name))
-        return key1, key2
+        self.keys = parse_key_combination(key_combination)
+        self.pressed_keys = set()
+        self.triggered = False
 
     def on_key_press(self, key):
-        if key == self.key1:
-            self.key1_pressed = True
-        elif key == self.key2:
-            self.key2_pressed = True
+        if key in self.keys:
+            self.pressed_keys.add(key)
 
-        if self.key1_pressed and self.key2_pressed:
+        if not self.triggered and all(
+            hotkey in self.pressed_keys for hotkey in self.keys
+        ):
+            self.triggered = True
             self.app.toggle()
 
     def on_key_release(self, key):
-        if key == self.key1:
-            self.key1_pressed = False
-        elif key == self.key2:
-            self.key2_pressed = False
+        self.pressed_keys.discard(key)
+        if key in self.keys:
+            self.triggered = False
 
 
 class DoubleCommandKeyListener:
@@ -223,57 +281,8 @@ def parse_args():
         "-m",
         "--model_name",
         type=str,
-        choices=[
-            "mlx-community/whisper-large-v3-mlx",
-            "mlx-community/whisper-tiny-mlx-q4",
-            "mlx-community/whisper-large-v2-mlx-fp32",
-            "mlx-community/whisper-tiny.en-mlx-q4",
-            "mlx-community/whisper-base.en-mlx-q4",
-            "mlx-community/whisper-small.en-mlx-q4",
-            "mlx-community/whisper-tiny-mlx-fp32",
-            "mlx-community/whisper-base-mlx-fp32",
-            "mlx-community/whisper-small-mlx-fp32",
-            "mlx-community/whisper-medium-mlx-fp32",
-            "mlx-community/whisper-base-mlx-2bit",
-            "mlx-community/whisper-tiny-mlx-8bit",
-            "mlx-community/whisper-tiny.en-mlx-4bit",
-            "mlx-community/whisper-base-mlx",
-            "mlx-community/whisper-base-mlx-8bit",
-            "mlx-community/whisper-base.en-mlx-4bit",
-            "mlx-community/whisper-small-mlx",
-            "mlx-community/whisper-small-mlx-8bit",
-            "mlx-community/whisper-small.en-mlx-4bit",
-            "mlx-community/whisper-medium-mlx-8bit",
-            "mlx-community/whisper-medium.en-mlx-8bit",
-            "mlx-community/whisper-large-mlx-4bit",
-            "mlx-community/whisper-large-v1-mlx",
-            "mlx-community/whisper-large-v1-mlx-8bit",
-            "mlx-community/whisper-large-v2-mlx-8bit",
-            "mlx-community/whisper-large-v2-mlx-4bit",
-            "mlx-community/whisper-large-v1-mlx-4bit",
-            "mlx-community/whisper-large-mlx-8bit",
-            "mlx-community/whisper-large-mlx",
-            "mlx-community/whisper-medium.en-mlx-4bit",
-            "mlx-community/whisper-small.en-mlx-8bit",
-            "mlx-community/whisper-small.en-mlx",
-            "mlx-community/whisper-small-mlx-4bit",
-            "mlx-community/whisper-base.en-mlx-8bit",
-            "mlx-community/whisper-base.en-mlx",
-            "mlx-community/whisper-base-mlx-4bit",
-            "mlx-community/whisper-tiny.en-mlx-8bit",
-            "mlx-community/whisper-tiny.en-mlx",
-            "mlx-community/whisper-tiny-mlx",
-            "mlx-community/whisper-medium.en-mlx-fp32",
-            "mlx-community/whisper-small.en-mlx-fp32",
-            "mlx-community/whisper-base.en-mlx-fp32",
-            "mlx-community/whisper-tiny.en-mlx-fp32",
-            "mlx-community/whisper-medium-mlx-q4",
-            "mlx-community/whisper-small-mlx-q4",
-            "mlx-community/whisper-base-mlx-q4",
-            "mlx-community/whisper-large-v3-turbo",
-            "mlx-community/whisper-turbo",
-        ],
-        default="mlx-community/whisper-large-v3-mlx",
+        choices=SUPPORTED_MODEL_NAMES,
+        default=DEFAULT_MODEL_NAME,
         help="""Specify the MLX Whisper model to use. Example: mlx-community/whisper-large-v3-mlx.
         To see the  most up to date list of models visit https://huggingface.co/collections/mlx-community/whisper-663256f9964fbb1177db93dc?utm_source=chatgpt.com. 
         Note that the models ending in .en are trained only on English speech and will perform better on English 
@@ -284,8 +293,8 @@ def parse_args():
         "--key_combination",
         type=str,
         default="cmd_l+alt" if platform.system() == "Darwin" else "ctrl+alt",
-        help="Specify the key combination to toggle the app. Example: cmd_l+alt for macOS "
-        "ctrl+alt for other platforms. Default: cmd_r+alt (macOS) or ctrl+alt (others).",
+        help="Specify the key combination to toggle the app. Examples: cmd_l+alt, cmd_l+shift+space, ctrl+alt. "
+        "Default: cmd_l+alt on macOS or ctrl+alt on other platforms.",
     )
     parser.add_argument(
         "--k_double_cmd",
@@ -312,6 +321,12 @@ def parse_args():
     )
 
     args = parser.parse_args()
+
+    if not args.k_double_cmd:
+        try:
+            parse_key_combination(args.key_combination)
+        except ValueError as error:
+            parser.error(str(error))
 
     if args.language is not None:
         args.language = args.language.split(",")
@@ -344,11 +359,8 @@ if __name__ == "__main__":
     print(f"{model_name} model loaded")
     """
 
-    # delayed order of this line
-    model_name = args.model_name
-
     # removed model argument passing
-    transcriber = SpeechTranscriber()
+    transcriber = SpeechTranscriber(args.model_name)
     recorder = Recorder(transcriber)
 
     app = StatusBarApp(recorder, args.language, args.max_time)
@@ -361,5 +373,9 @@ if __name__ == "__main__":
     )
     listener.start()
 
-    print("Running...")
+    print(f"Running with model: {args.model_name}")
+    if args.k_double_cmd:
+        print("Hotkey: double right command to start, single right command to stop")
+    else:
+        print(f"Hotkey: {args.key_combination}")
     app.run()
