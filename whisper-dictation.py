@@ -5,6 +5,7 @@ import pyaudio
 import numpy as np
 import rumps
 from pynput import keyboard
+from AppKit import NSPasteboard, NSPasteboardTypeString
 
 # from whisper import load_model
 
@@ -33,22 +34,37 @@ class SpeechTranscriber:
         self.pykeyboard = keyboard.Controller()
         self.model_name = model_name
 
+    def _paste_text(self, text):
+        pasteboard = NSPasteboard.generalPasteboard()
+        previous_text = pasteboard.stringForType_(NSPasteboardTypeString)
+
+        pasteboard.clearContents()
+        pasteboard.setString_forType_(text, NSPasteboardTypeString)
+        time.sleep(0.05)
+
+        with self.pykeyboard.pressed(keyboard.Key.cmd):
+            self.pykeyboard.press("v")
+            self.pykeyboard.release("v")
+
+        time.sleep(0.05)
+
+        pasteboard.clearContents()
+        if previous_text is not None:
+            pasteboard.setString_forType_(previous_text, NSPasteboardTypeString)
+
     def transcribe(self, audio_data, language=None):
         result = mlx_whisper.transcribe(
             audio_data, language=language, path_or_hf_repo=self.model_name
         )
+        text = result["text"].lstrip()
 
-        is_first = True
-        for element in result["text"]:
-            if is_first and element == " ":
-                is_first = False
-                continue
+        if not text:
+            return
 
-            try:
-                self.pykeyboard.type(element)
-                time.sleep(0.0025)
-            except Exception:
-                pass
+        try:
+            self._paste_text(text)
+        except Exception:
+            self.pykeyboard.type(text)
 
 
 class Recorder:

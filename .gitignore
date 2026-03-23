@@ -3,3 +3,9 @@ venv/
 t1.py
 __pycache__/
 .eggs/
+.DS_Store
+build/
+dist/
+*.pyc
+*.pyo
+*.egg-info/

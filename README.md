@@ -15,7 +15,7 @@ This repository is tuned for Apple Silicon Macs and packaged as a menu bar appli
 ## Requirements
 
 - macOS on Apple Silicon.
-- Python 3.11 or 3.12.
+- Homebrew Python 3.11.
 - Homebrew.
 - `py2app==0.28.10` and `modulegraph` for local application builds.
 - Accessibility permission.
@@ -23,14 +23,17 @@ This repository is tuned for Apple Silicon Macs and packaged as a menu bar appli
 
 ## Build The App Locally
 
+For local use on your own Mac, the reliable path is an alias app build. This produces a normal `.app` bundle, but it uses the project environment in place instead of trying to fully freeze every dependency into a standalone distributable bundle.
+
 ```bash
 brew install portaudio
-python3.12 -m venv .venv
+pyenv local 3.11.14
+/opt/homebrew/bin/python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install py2app==0.28.10 modulegraph
 pip install -r requirements.txt
-python setup.py py2app
+python setup.py py2app -A
 ```
 
 The built app bundle will appear at:
@@ -38,6 +41,28 @@ The built app bundle will appear at:
 ```bash
 dist/MLX Whisper Dictation.app
 ```
+
+Then launch it with one of these commands:
+
+```bash
+open "dist/MLX Whisper Dictation.app"
+```
+
+or
+
+```bash
+./dist/MLX\ Whisper\ Dictation.app/Contents/MacOS/MLX\ Whisper\ Dictation
+```
+
+The second form is useful for debugging because logs stay in the Terminal.
+
+## Why Python 3.11
+
+- The repository now pins `.python-version` to `3.11.14`.
+- Your Homebrew Python 3.11 is a framework build, which is much better suited for `py2app` on macOS.
+- Your previous `pyenv` Python 3.12 build was not a framework build, and `py2app` did not produce a usable app bundle from it.
+
+If `.venv` already exists from another Python version, recreate it before building.
 
 ## Run During Development
 
