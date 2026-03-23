@@ -1,29 +1,33 @@
 # MLX Whisper Dictation
 
-Offline dictation for macOS that records from the microphone, transcribes with MLX Whisper, and types into the currently focused input field.
+Офлайн-диктовка для macOS на Apple Silicon. Приложение живет в строке меню, записывает звук с микрофона, расшифровывает речь через MLX Whisper и вставляет результат в текущее активное поле ввода.
 
-This repository is tuned for Apple Silicon Macs and packaged as a menu bar application. The transcription path stays close to the MLX examples approach: the app calls `mlx_whisper.transcribe(...)` directly and passes the selected `path_or_hf_repo` model identifier.
+Проект ориентирован на локальный запуск на Mac и упаковывается в `.app` через `py2app`.
 
-## What It Does
+## Как это работает
 
-- Runs as a menu bar app.
-- Listens for a global hotkey.
-- Records microphone input.
-- Transcribes speech with `mlx_whisper.transcribe(...)`.
-- Types the recognized text into the active app.
+1. Приложение запускается как menu bar app.
+2. По глобальному хоткею начинается запись с микрофона.
+3. После остановки записи аудио передается в `mlx_whisper.transcribe(...)`.
+4. Распознанный текст вставляется в активное приложение.
+5. Для вставки используется буфер обмена и `Cmd+V`, поэтому результат не зависит от текущей раскладки клавиатуры.
 
-## Requirements
+# TODO: придумать как сделать стриминг слов и может даже исправление голосом
 
-- macOS on Apple Silicon.
-- Homebrew Python 3.11.
+Приложение не использует облачную диктовку macOS и не отправляет звук во внешний сервис. Расшифровка идет локально на машине.
+
+## Что нужно для работы
+
+- macOS на Apple Silicon.
 - Homebrew.
-- `py2app==0.28.10` and `modulegraph` for local application builds.
-- Accessibility permission.
-- Microphone permission.
+- Homebrew Python 3.11.
+- `portaudio`.
+- Доступы `Microphone` и `Accessibility`.
+- Иногда дополнительно нужен `Input Monitoring`, если macOS блокирует глобальные хоткеи или синтетический ввод.
 
-## Build The App Locally
+## Локальная сборка приложения
 
-For local use on your own Mac, the reliable path is an alias app build. This produces a normal `.app` bundle, but it uses the project environment in place instead of trying to fully freeze every dependency into a standalone distributable bundle.
+Надежный локальный путь для этого проекта сейчас такой: собрать alias `.app` через `py2app -A`. Это обычный `.app`, но он использует текущее окружение проекта вместо полной standalone-заморозки всех зависимостей.
 
 ```bash
 brew install portaudio
@@ -36,52 +40,50 @@ pip install -r requirements.txt
 python setup.py py2app -A
 ```
 
-The built app bundle will appear at:
+После сборки приложение появится здесь:
 
 ```bash
 dist/MLX Whisper Dictation.app
 ```
 
-Then launch it with one of these commands:
+Запуск:
 
 ```bash
 open "dist/MLX Whisper Dictation.app"
 ```
 
-or
+Если нужен запуск с выводом логов в терминал:
 
 ```bash
 ./dist/MLX\ Whisper\ Dictation.app/Contents/MacOS/MLX\ Whisper\ Dictation
 ```
 
-The second form is useful for debugging because logs stay in the Terminal.
+## Почему именно Python 3.11
 
-## Why Python 3.11
+- В проекте зафиксирована `.python-version = 3.11.14`.
+- Homebrew Python 3.11 является framework build, а это заметно лучше работает с `py2app` на macOS.
+- Ранее `pyenv` Python 3.12 без framework давал менее пригодный результат для app bundle.
 
-- The repository now pins `.python-version` to `3.11.14`.
-- Your Homebrew Python 3.11 is a framework build, which is much better suited for `py2app` on macOS.
-- Your previous `pyenv` Python 3.12 build was not a framework build, and `py2app` did not produce a usable app bundle from it.
+Если `.venv` уже был создан на другой версии Python, его лучше пересоздать перед сборкой.
 
-If `.venv` already exists from another Python version, recreate it before building.
+## Запуск без упаковки
 
-## Run During Development
-
-If you want to run the script directly before packaging:
+Если хотите сначала проверить приложение как обычный Python-скрипт:
 
 ```bash
 source .venv/bin/activate
 python whisper-dictation.py
 ```
 
-## Hotkeys
+## Хоткеи
 
-Default on macOS:
+По умолчанию на macOS используется:
 
 ```bash
 cmd_l+alt
 ```
 
-The app now accepts combinations with more than two keys. Examples:
+Поддерживаются комбинации из двух и более клавиш. Примеры:
 
 ```bash
 python whisper-dictation.py -k cmd_l+shift+space
@@ -89,73 +91,90 @@ python whisper-dictation.py -k cmd_r+shift
 python whisper-dictation.py -k ctrl+alt
 ```
 
-You can also use right command as a dictation trigger:
+Также можно включить режим по правой клавише Command:
 
 ```bash
 python whisper-dictation.py --k_double_cmd
 ```
 
-That mode uses:
+В этом режиме:
 
-- double right command to start recording
-- single right command to stop recording
+- двойное нажатие правой `Command` начинает запись
+- одиночное нажатие правой `Command` останавливает запись
 
-If you use this mode, disable the built-in macOS Dictation shortcut first.
+Если используете этот режим, отключите системный shortcut встроенной диктовки macOS, чтобы они не конфликтовали.
 
-## Model Selection
+## Выбор модели
 
-Default:
+Текущий рекомендуемый вариант по умолчанию:
 
 ```bash
 mlx-community/whisper-large-v3-turbo
 ```
 
-Recommended on M3:
+Практические варианты для M3:
 
-- `mlx-community/whisper-large-v3-turbo` for a stronger latency and quality balance
-- `mlx-community/whisper-large-v3-mlx` if quality matters more than responsiveness
-- `mlx-community/whisper-turbo` if you prefer lower latency over quality
+- `mlx-community/whisper-large-v3-turbo` как основной баланс качества и скорости
+- `mlx-community/whisper-large-v3-mlx`, если качество важнее задержки
+- `mlx-community/whisper-turbo`, если нужна минимальная задержка и допустима более слабая точность
 
-Example:
+Пример запуска:
 
 ```bash
 python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
 ```
 
-## Permissions
+## Доступы macOS
 
-Grant these permissions to the built app:
+Для собранного `.app` проверьте доступы:
 
 - `Microphone`
 - `Accessibility`
 
-If global hotkeys still do not react, also check `Input Monitoring` for the built app.
+Если хоткей не реагирует или текст не вставляется, дополнительно проверьте:
 
-## Start At Login
+- `Input Monitoring`
 
-After building, add the app bundle to `Login Items` in macOS:
+Важно: после переноса `.app` в другую папку macOS может считать его новым приложением. В этом случае доступы иногда нужно выдать заново.
 
-1. Open `System Settings`
-2. Open `General`
-3. Open `Login Items & Extensions`
-4. Add `dist/MLX Whisper Dictation.app`
+## Автозапуск при входе
 
-## GitHub Actions Build
+Если приложение уже собрано и работает, добавьте его в `Login Items`:
 
-The repository includes a GitHub Actions workflow at [.github/workflows/build-macos-app.yml](.github/workflows/build-macos-app.yml).
+1. Откройте `System Settings`.
+2. Перейдите в `General`.
+3. Откройте `Login Items & Extensions`.
+4. Добавьте `dist/MLX Whisper Dictation.app` или ту копию `.app`, которую вы перенесли в постоянную папку.
 
-It:
+## Где смотреть логи
 
-- runs on `macos-14`
-- installs `portaudio`
-- installs Python dependencies and `py2app`
-- builds the `.app`
-- uploads a zipped app artifact
+У приложения есть простые пользовательские логи:
 
-## Reference
+```bash
+~/Library/Logs/whisper-dictation/stdout.log
+~/Library/Logs/whisper-dictation/stderr.log
+```
 
-This repository uses the MLX Whisper approach shown in the MLX examples project:
+Они полезны, если приложение запускается, но не вставляет текст или не видно ошибок в интерфейсе.
 
-- `mlx_whisper.transcribe(audio, path_or_hf_repo=...)`
-- MLX Community Whisper models hosted on Hugging Face
-- model selection via direct repo or local model path, similar to the MLX examples CLI and API
+## Сборка в GitHub Actions
+
+В репозитории есть workflow [ .github/workflows/build-macos-app.yml ](.github/workflows/build-macos-app.yml).
+
+Он:
+
+- запускается на `macos-14`
+- ставит `portaudio`
+- устанавливает Python-зависимости и `py2app`
+- собирает `.app`
+- загружает артефакт сборки
+
+## Техническая основа
+
+Проект держится близко к MLX Whisper API:
+
+- используется прямой вызов `mlx_whisper.transcribe(audio, path_or_hf_repo=...)`
+- модель задается как Hugging Face repo или локальный путь
+- аудио пишется через `PyAudio`
+- горячие клавиши и вставка реализованы через `pynput`
+- приложение в строке меню реализовано через `rumps`
