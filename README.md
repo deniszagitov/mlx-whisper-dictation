@@ -23,17 +23,19 @@ This repository is tuned for Apple Silicon Macs. On a MacBook M3, the default mo
 ## Run
 
 ```bash
+./bootstrap.sh
 ./run.sh
 ```
 
-`run.sh` is now the only shell entrypoint. It will:
+`bootstrap.sh` is the one-time environment setup. It will:
 
 - verify Homebrew
 - ensure `portaudio` is installed
 - prefer `python3.12`, otherwise `python3.11`
 - recreate `.venv` automatically if it was built with the wrong Python version
 - install or refresh Python dependencies
-- launch the app
+
+`run.sh` is the normal runtime entrypoint. It only activates `.venv` and starts the app.
 
 If you want to run the Python file directly after bootstrap:
 
@@ -102,9 +104,27 @@ If you start the app from Terminal, grant permissions to Terminal.
 
 ## Autostart
 
-Add [run.sh](run.sh) to Login Items in macOS.
+Install the LaunchAgent:
 
-`run.sh` supports migration from `venv` to `.venv`, works from any current directory, and forwards CLI arguments.
+```bash
+./install-launch-agent.sh
+```
+
+Remove it later with:
+
+```bash
+./uninstall-launch-agent.sh
+```
+
+What this does:
+
+- installs a user LaunchAgent in `~/Library/LaunchAgents`
+- starts the app automatically after login
+- writes logs to `~/Library/Logs/whisper-dictation`
+
+The LaunchAgent uses [run.sh](run.sh) for startup, so it does not reinstall dependencies on every login.
+
+If the environment is missing, `install-launch-agent.sh` runs [bootstrap.sh](bootstrap.sh) once before registering the agent.
 
 ## Reference
 
