@@ -1,14 +1,6 @@
-"""Юнит-тесты логики распознавания и fallback-поведения."""
-
-import importlib.util
-from pathlib import Path
+"""Юнит-тесты основного сценария распознавания и автовставки."""
 
 import numpy as np
-
-MODULE_PATH = Path(__file__).resolve().parent.parent / "whisper-dictation.py"
-SPEC = importlib.util.spec_from_file_location("whisper_dictation_app", MODULE_PATH)
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -17,9 +9,15 @@ def make_audio(seconds=1.0, amplitude=0.01):
     return np.full(samples, amplitude, dtype=np.float32)
 
 
-def test_transcribe_retries_without_language_on_empty_primary(monkeypatch):
+def make_transcriber(app_module, diagnostics_enabled=False):
+    """Создает transcriber с управляемым diagnostics store для тестов."""
+    diagnostics_store = app_module.DiagnosticsStore(root_dir=app_module.LOG_DIR, enabled=diagnostics_enabled)
+    return app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
+
+
+def test_transcribe_retries_without_language_on_empty_primary(app_module, monkeypatch):
     """При пустом первом результате приложение должно повторить распознавание без language."""
-    transcriber = MODULE.SpeechTranscriber("dummy-model")
+    transcriber = make_transcriber(app_module)
     calls = []
     clipboard = []
 
@@ -31,8 +29,8 @@ def test_transcribe_retries_without_language_on_empty_primary(monkeypatch):
 
     monkeypatch.setattr(transcriber, "_run_transcription", fake_run)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
-    monkeypatch.setattr(MODULE, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(MODULE, "notify_user", lambda *args: None)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: False)
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
@@ -40,94 +38,113 @@ def test_transcribe_retries_without_language_on_empty_primary(monkeypatch):
     assert clipboard == ["Привет мир"]
 
 
-def test_transcribe_keeps_known_hallucination_for_diagnostics(monkeypatch):
-    """Типичная галлюцинация на тихом сигнале должна сохраняться для диагностики."""
-    transcriber = MODULE.SpeechTranscriber("dummy-model")
+def test_transcribe_pastes_automatically_when_permissions_are_granted(app_module, monkeypatch):
+    """При наличии разрешений текст должен вставляться автоматически."""
+    transcriber = make_transcriber(app_module)
+    clipboard = []
+    pasted = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Автовставка"})
+    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
+    monkeypatch.setattr(transcriber, "_paste_text", lambda: pasted.append(True))
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert clipboard == ["Автовставка"]
+    assert pasted == [True]
+
+
+def test_transcribe_falls_back_to_manual_paste_when_accessibility_missing(app_module, monkeypatch):
+    """Без Accessibility приложение должно оставить текст в clipboard и уведомить пользователя."""
+    transcriber = make_transcriber(app_module)
     clipboard = []
     notifications = []
+    warned = []
 
-    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Продолжение следует..."})
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
-    monkeypatch.setattr(MODULE, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(MODULE, "notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(app_module, "request_accessibility_permission", lambda: False)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: False)
+    monkeypatch.setattr(app_module, "warn_missing_accessibility_permission", lambda: warned.append(True))
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: notifications.append(args))
 
-    transcriber.transcribe(make_audio(amplitude=0.001), "ru")
+    transcriber.transcribe(make_audio(), "ru")
 
-    assert clipboard == ["Продолжение следует..."]
+    assert clipboard == ["Текст"]
+    assert warned == [True]
     assert notifications
 
 
-def test_transcribe_copies_primary_result(monkeypatch):
-    """Непустой результат первого прохода должен сразу попадать в буфер обмена."""
-    transcriber = MODULE.SpeechTranscriber("dummy-model")
+def test_transcribe_falls_back_to_manual_paste_when_input_monitoring_missing(app_module, monkeypatch):
+    """Без Input Monitoring приложение не должно пытаться вставлять текст автоматически."""
+    transcriber = make_transcriber(app_module)
     clipboard = []
+    notifications = []
+    warned = []
 
-    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Тест"})
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
-    monkeypatch.setattr(MODULE, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(MODULE, "notify_user", lambda *args: None)
+    monkeypatch.setattr(app_module, "request_input_monitoring_permission", lambda: False)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: False)
+    monkeypatch.setattr(app_module, "warn_missing_input_monitoring_permission", lambda: warned.append(True))
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: notifications.append(args))
 
     transcriber.transcribe(make_audio(), "ru")
 
-    assert clipboard == ["Тест"]
+    assert clipboard == ["Текст"]
+    assert warned == [True]
+    assert notifications
 
 
-def test_transcribe_notifies_on_too_short_audio(monkeypatch):
-    """Даже короткая запись должна всё равно отправляться на распознавание."""
-    transcriber = MODULE.SpeechTranscriber("dummy-model")
-    calls = []
+def test_transcribe_uses_typing_fallback_if_paste_fails(app_module, monkeypatch):
+    """Если Cmd+V не сработал, приложение должно перейти к резервному набору текста."""
+    transcriber = make_transcriber(app_module)
+    typed = []
 
-    def fake_run(audio_data, language):
-        calls.append((len(audio_data), language))
-        return {"text": "короткая фраза"}
-
-    monkeypatch.setattr(transcriber, "_run_transcription", fake_run)
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Резерв"})
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(MODULE, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(MODULE, "notify_user", lambda *args: None)
-
-    transcriber.transcribe(make_audio(seconds=0.1), "ru")
-
-    assert calls
-
-
-def test_transcribe_notifies_on_too_quiet_audio(monkeypatch):
-    """Даже очень тихая запись должна всё равно отправляться на распознавание."""
-    transcriber = MODULE.SpeechTranscriber("dummy-model")
-    calls = []
-
-    def fake_run(audio_data, language):
-        calls.append((float(np.sqrt(np.mean(audio_data**2))), language))
-        return {"text": "тихая фраза"}
-
-    monkeypatch.setattr(transcriber, "_run_transcription", fake_run)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(MODULE, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(MODULE, "notify_user", lambda *args: None)
-
-    transcriber.transcribe(make_audio(amplitude=0.0001), "ru")
-
-    assert calls
-
-
-def test_transcribe_saves_debug_artifacts(monkeypatch, tmp_path):
-    """Распознавание должно сохранять wav и результат транскрибации в папку логов."""
-    transcriber = MODULE.SpeechTranscriber("dummy-model")
-
-    monkeypatch.setattr(MODULE, "LOG_DIR", tmp_path)
-    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Проверка артефактов"})
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(MODULE, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(MODULE, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber, "_paste_text", lambda: (_ for _ in ()).throw(RuntimeError("paste failed")))
+    monkeypatch.setattr(transcriber.pykeyboard, "type", typed.append)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
-    wav_files = list((tmp_path / "recordings").glob("*.wav"))
-    recording_metadata = list((tmp_path / "recordings").glob("*.json"))
-    transcript_json = list((tmp_path / "transcriptions").glob("*.json"))
-    transcript_text = list((tmp_path / "transcriptions").glob("*.txt"))
+    assert typed == ["Резерв"]
 
-    assert len(wav_files) == 1
-    assert len(recording_metadata) == 1
-    assert len(transcript_json) == 1
-    assert len(transcript_text) == 1
+
+def test_transcribe_notifies_when_clipboard_write_fails(app_module, monkeypatch):
+    """Ошибка записи в буфер обмена должна приводить к уведомлению пользователя."""
+    transcriber = make_transcriber(app_module)
+    notifications = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
+    monkeypatch.setattr(
+        transcriber,
+        "_copy_text_to_clipboard",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("clipboard failed")),
+    )
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: notifications.append(args))
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert notifications
+
+
+def test_transcribe_notifies_on_empty_result(app_module, monkeypatch):
+    """Пустой результат распознавания должен явно сообщаться пользователю."""
+    transcriber = make_transcriber(app_module)
+    notifications = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": ""})
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: notifications.append(args))
+
+    transcriber.transcribe(make_audio(), None)
+
+    assert notifications

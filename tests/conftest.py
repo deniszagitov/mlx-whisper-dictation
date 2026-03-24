@@ -1,6 +1,11 @@
-"""Конфигурация pytest для проекта MLX Whisper Dictation."""
+"""Общая pytest-конфигурация для Dictator."""
+
+import importlib.util
+from pathlib import Path
 
 import pytest
+
+MODULE_PATH = Path(__file__).resolve().parent.parent / "whisper-dictation.py"
 
 
 def pytest_addoption(parser):
@@ -34,3 +39,13 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_slow)
         if "hardware" in item.keywords and not config.getoption("--run-hardware"):
             item.add_marker(skip_hardware)
+
+
+@pytest.fixture
+def app_module():
+    """Загружает runtime-модуль приложения для unit-тестов."""
+    spec = importlib.util.spec_from_file_location("whisper_dictation_app", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module

@@ -6,6 +6,9 @@
 
 Это репозиторий, который можно отдать другим владельцам MacBook Air или Pro на M1, M2, M3 и новее: они смогут клонировать код, собрать `.app` у себя и получить локальную диктовку на устройстве через MLX без облака.
 
+#TODO: сделать возможность вставлять фото с вебки и трансформировать в эмодзи
+
+
 ## Требования пользователя к приложению
 
 Ниже зафиксированы текущие продуктовые требования к приложению.
@@ -69,7 +72,7 @@ cd mlx-whisper-dictation
 uv python pin 3.11.14
 uv sync --dev
 uv run python setup.py py2app -A
-open "dist/MLX Whisper Dictation.app"
+open "dist/Dictator.app"
 ```
 
 Приложение не использует облачную диктовку macOS и не отправляет звук во внешний сервис. Расшифровка идет локально на машине.
@@ -114,25 +117,25 @@ uv run python setup.py py2app -A
 После сборки приложение появится здесь:
 
 ```bash
-dist/MLX Whisper Dictation.app
+dist/Dictator.app
 ```
 
 Запуск:
 
 ```bash
-open "dist/MLX Whisper Dictation.app"
+open "dist/Dictator.app"
 ```
 
 Обновление установленной версии, которое использует текущий пользователь:
 
 1. Соберите новую версию в `dist`.
-2. Перетащите `dist/MLX Whisper Dictation.app` в `Applications` с заменой.
+2. Перетащите `dist/Dictator.app` в `Applications` с заменой.
 3. При необходимости заново проверьте разрешения в `Privacy & Security`.
 
 Если нужен запуск с выводом логов в терминал:
 
 ```bash
-./dist/MLX\ Whisper\ Dictation.app/Contents/MacOS/MLX\ Whisper\ Dictation
+./dist/Dictator.app/Contents/MacOS/Dictator
 ```
 
 Команда `uv sync --dev` ставит не только runtime-зависимости, но и инструменты для сборки и проверки кода, включая `py2app`, `modulegraph` и `ruff`.
@@ -152,6 +155,36 @@ open "dist/MLX Whisper Dictation.app"
 ```bash
 uv run python whisper-dictation.py
 ```
+
+## Self-check цикл
+
+Чтобы не гонять линт, тесты и сборку вручную по отдельности, используйте единый сценарий:
+
+```bash
+uv run python scripts/selfcheck.py
+```
+
+Что делает команда по умолчанию:
+
+- запускает `ruff check .`
+- запускает основной набор pytest-тестов
+- не трогает slow и hardware тесты
+- не собирает `.app`, если это не нужно
+
+Полезные варианты:
+
+```bash
+uv run python scripts/selfcheck.py --build
+uv run python scripts/selfcheck.py --slow
+uv run python scripts/selfcheck.py --hardware
+uv run python scripts/selfcheck.py --slow --hardware --build
+```
+
+Рекомендуемый цикл разработки теперь такой:
+
+1. Перед крупной правкой: `uv run python scripts/selfcheck.py`
+2. После изменения runtime-логики: `uv run python scripts/selfcheck.py --build`
+3. Перед проверкой на реальном железе: `uv run python scripts/selfcheck.py --hardware`
 
 ## Хоткеи
 

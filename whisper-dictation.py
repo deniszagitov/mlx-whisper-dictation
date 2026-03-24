@@ -72,8 +72,6 @@ class MaxLevelFilter(logging.Filter):
 def setup_logging():
     """Настраивает консольное и файловое логирование приложения."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    (LOG_DIR / "recordings").mkdir(parents=True, exist_ok=True)
-    (LOG_DIR / "transcriptions").mkdir(parents=True, exist_ok=True)
 
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     root_logger = logging.getLogger()
@@ -103,36 +101,102 @@ def looks_like_hallucination(text):
     return text.strip().lower() in KNOWN_HALLUCINATIONS
 
 
-def recordings_dir():
-    """Возвращает директорию для сохранения диагностических аудиозаписей."""
-    return LOG_DIR / "recordings"
+class DiagnosticsStore:
+    """Изолирует сохранение диагностических артефактов от основного runtime-кода."""
 
+    def __init__(self, root_dir=LOG_DIR, enabled=True, max_artifacts=MAX_DEBUG_ARTIFACTS):
+        """Создает хранилище диагностических файлов.
 
-def transcriptions_dir():
-    """Возвращает директорию для сохранения результатов транскрибации."""
-    return LOG_DIR / "transcriptions"
+        Args:
+            root_dir: Корневая директория логов и артефактов.
+            enabled: Нужно ли сохранять диагностические файлы.
+            max_artifacts: Сколько последних наборов артефактов хранить.
+        """
+        self.root_dir = Path(root_dir)
+        self.enabled = enabled
+        self.max_artifacts = max_artifacts
 
+    @property
+    def recordings_dir(self):
+        """Возвращает путь к папке с диагностическими аудиозаписями."""
+        return self.root_dir / "recordings"
 
-def cleanup_old_debug_artifacts(directory):
-    """Оставляет только последние диагностические файлы в указанной директории."""
-    stems_to_mtime = {}
-    for path in directory.iterdir():
-        if path.is_file():
-            stems_to_mtime[path.stem] = max(stems_to_mtime.get(path.stem, 0.0), path.stat().st_mtime)
+    @property
+    def transcriptions_dir(self):
+        """Возвращает путь к папке с диагностическими транскрипциями."""
+        return self.root_dir / "transcriptions"
 
-    sorted_stems = sorted(stems_to_mtime.items(), key=lambda item: item[1], reverse=True)
-    stems_to_keep = {stem for stem, _mtime in sorted_stems[:MAX_DEBUG_ARTIFACTS]}
+    def artifact_stem(self):
+        """Возвращает уникальное имя группы диагностических файлов."""
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        milliseconds = int((time.time() % 1) * 1000)
+        return f"{timestamp}-{milliseconds:03d}"
 
-    for old_file in directory.iterdir():
-        if old_file.is_file() and old_file.stem not in stems_to_keep:
-            old_file.unlink(missing_ok=True)
+    def _cleanup_directory(self, directory):
+        """Оставляет только последние диагностические файлы в указанной директории."""
+        stems_to_mtime = {}
+        for path in directory.iterdir():
+            if path.is_file():
+                stems_to_mtime[path.stem] = max(stems_to_mtime.get(path.stem, 0.0), path.stat().st_mtime)
 
+        sorted_stems = sorted(stems_to_mtime.items(), key=lambda item: item[1], reverse=True)
+        stems_to_keep = {stem for stem, _mtime in sorted_stems[: self.max_artifacts]}
 
-def debug_artifact_stem():
-    """Возвращает уникальное имя группы диагностических файлов."""
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    milliseconds = int((time.time() % 1) * 1000)
-    return f"{timestamp}-{milliseconds:03d}"
+        for old_file in directory.iterdir():
+            if old_file.is_file() and old_file.stem not in stems_to_keep:
+                old_file.unlink(missing_ok=True)
+
+    def build_audio_diagnostics(self, audio_data, language):
+        """Собирает компактную диагностику входного аудиосигнала."""
+        audio_duration_seconds = len(audio_data) / 16000
+        rms_energy = float(np.sqrt(np.mean(audio_data**2)))
+        peak_amplitude = float(np.max(np.abs(audio_data))) if len(audio_data) else 0.0
+        return {
+            "language": language,
+            "duration_seconds": audio_duration_seconds,
+            "rms_energy": rms_energy,
+            "peak_amplitude": peak_amplitude,
+            "silence_threshold": SILENCE_RMS_THRESHOLD,
+            "hallucination_threshold": HALLUCINATION_RMS_THRESHOLD,
+            "sample_rate": 16000,
+            "samples": len(audio_data),
+            "first_samples": audio_data[:16].tolist(),
+        }
+
+    def save_audio_recording(self, stem, audio_data, diagnostics):
+        """Сохраняет аудиозапись и метаданные, если диагностика включена."""
+        if not self.enabled:
+            return None
+
+        self.recordings_dir.mkdir(parents=True, exist_ok=True)
+        wav_path = self.recordings_dir / f"{stem}.wav"
+        with wave.open(str(wav_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            pcm_data = np.clip(audio_data * 32768.0, -32768, 32767).astype(np.int16)
+            wav_file.writeframes(pcm_data.tobytes())
+
+        metadata_path = self.recordings_dir / f"{stem}.json"
+        metadata_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._cleanup_directory(self.recordings_dir)
+        return wav_path
+
+    def save_transcription_artifacts(self, stem, diagnostics, result=None, text="", error_message=None):
+        """Сохраняет результат распознавания и метаданные, если диагностика включена."""
+        if not self.enabled:
+            return None
+
+        self.transcriptions_dir.mkdir(parents=True, exist_ok=True)
+        payload = {"diagnostics": diagnostics, "text": text, "error": error_message, "result": result}
+        json_path = self.transcriptions_dir / f"{stem}.json"
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+        text_path = self.transcriptions_dir / f"{stem}.txt"
+        text_path.write_text(text, encoding="utf-8")
+
+        self._cleanup_directory(self.transcriptions_dir)
+        return json_path
 
 
 def notify_user(title, message):
@@ -502,16 +566,19 @@ class SpeechTranscriber:
 
     Attributes:
         pykeyboard: Контроллер клавиатуры pynput для вставки текста.
+        diagnostics_store: Изолированное хранилище диагностических артефактов.
         model_name: Имя или путь к модели MLX Whisper.
     """
 
-    def __init__(self, model_name):
+    def __init__(self, model_name, diagnostics_store=None):
         """Создает объект распознавания.
 
         Args:
             model_name: Имя модели Hugging Face или локальный путь к модели.
+            diagnostics_store: Необязательное хранилище диагностических файлов.
         """
         self.pykeyboard = keyboard.Controller()
+        self.diagnostics_store = diagnostics_store or DiagnosticsStore()
         self.model_name = model_name
 
     def _copy_text_to_clipboard(self, text):
@@ -558,37 +625,6 @@ class SpeechTranscriber:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, paste_up)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, command_up)
 
-    def _save_audio_recording(self, stem, audio_data, diagnostics):
-        """Сохраняет аудиозапись и сопутствующую диагностику в папку логов."""
-        recordings_dir().mkdir(parents=True, exist_ok=True)
-
-        wav_path = recordings_dir() / f"{stem}.wav"
-        with wave.open(str(wav_path), "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(16000)
-            pcm_data = np.clip(audio_data * 32768.0, -32768, 32767).astype(np.int16)
-            wav_file.writeframes(pcm_data.tobytes())
-
-        metadata_path = recordings_dir() / f"{stem}.json"
-        metadata_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
-        cleanup_old_debug_artifacts(recordings_dir())
-        return wav_path
-
-    def _save_transcription_artifacts(self, stem, diagnostics, result=None, text="", error_message=None):
-        """Сохраняет результат транскрибации и метаданные в папку логов."""
-        transcriptions_dir().mkdir(parents=True, exist_ok=True)
-
-        payload = {"diagnostics": diagnostics, "text": text, "error": error_message, "result": result}
-        json_path = transcriptions_dir() / f"{stem}.json"
-        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-
-        text_path = transcriptions_dir() / f"{stem}.txt"
-        text_path.write_text(text, encoding="utf-8")
-
-        cleanup_old_debug_artifacts(transcriptions_dir())
-        return json_path
-
     def _run_transcription(self, audio_data, language):
         """Запускает один проход распознавания с заданными параметрами языка."""
         return mlx_whisper.transcribe(
@@ -606,30 +642,29 @@ class SpeechTranscriber:
             audio_data: Массив с аудио в формате float32.
             language: Необязательный код языка для улучшения распознавания.
         """
-        stem = debug_artifact_stem()
-        audio_duration_seconds = len(audio_data) / 16000
-        rms_energy = float(np.sqrt(np.mean(audio_data**2)))
-        peak_amplitude = float(np.max(np.abs(audio_data))) if len(audio_data) else 0.0
-        diagnostics = {
-            "language": language,
-            "duration_seconds": audio_duration_seconds,
-            "rms_energy": rms_energy,
-            "peak_amplitude": peak_amplitude,
-            "silence_threshold": SILENCE_RMS_THRESHOLD,
-            "hallucination_threshold": HALLUCINATION_RMS_THRESHOLD,
-            "sample_rate": 16000,
-            "samples": len(audio_data),
-            "first_samples": audio_data[:16].tolist(),
-        }
-        wav_path = self._save_audio_recording(stem, audio_data, diagnostics)
-        LOGGER.info(
-            "Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s, wav=%s",
-            audio_duration_seconds,
-            rms_energy,
-            peak_amplitude,
-            language,
-            wav_path,
-        )
+        stem = self.diagnostics_store.artifact_stem()
+        diagnostics = self.diagnostics_store.build_audio_diagnostics(audio_data, language)
+        audio_duration_seconds = diagnostics["duration_seconds"]
+        rms_energy = diagnostics["rms_energy"]
+        peak_amplitude = diagnostics["peak_amplitude"]
+        wav_path = self.diagnostics_store.save_audio_recording(stem, audio_data, diagnostics)
+        if wav_path is None:
+            LOGGER.info(
+                "Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s",
+                audio_duration_seconds,
+                rms_energy,
+                peak_amplitude,
+                language,
+            )
+        else:
+            LOGGER.info(
+                "Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s, wav=%s",
+                audio_duration_seconds,
+                rms_energy,
+                peak_amplitude,
+                language,
+                wav_path,
+            )
         if audio_duration_seconds < SHORT_AUDIO_WARNING_SECONDS:
             LOGGER.warning("Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
         if rms_energy < SILENCE_RMS_THRESHOLD:
@@ -643,7 +678,7 @@ class SpeechTranscriber:
             result = self._run_transcription(audio_data, language)
         except Exception:
             LOGGER.exception("Ошибка распознавания")
-            self._save_transcription_artifacts(stem, diagnostics, error_message="Ошибка распознавания")
+            self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, error_message="Ошибка распознавания")
             notify_user(
                 "MLX Whisper Dictation",
                 "Ошибка распознавания. Смотрите stderr.log.",
@@ -663,7 +698,7 @@ class SpeechTranscriber:
                 text = str(result.get("text", "")).strip()
                 LOGGER.info("Повторный проход завершен, длина текста=%s, текст=%r", len(text), text[:120])
 
-        self._save_transcription_artifacts(stem, diagnostics, result=result, text=text)
+        self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, result=result, text=text)
 
         if not text:
             LOGGER.warning("Результат распознавания пустой")

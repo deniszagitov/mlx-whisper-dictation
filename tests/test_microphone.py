@@ -6,16 +6,10 @@
 Тесты помечены маркером `hardware`, потому что требуют доступ к микрофону.
 """
 
-import sys
-from pathlib import Path
 
 import numpy as np
 import pyaudio
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-SILENCE_RMS_THRESHOLD = 0.003
 
 
 @pytest.mark.hardware
@@ -154,45 +148,33 @@ class FakePyAudio:
 class TestMicrophoneListing:
     """Тесты перечисления и выбора устройств ввода."""
 
-    def test_list_input_devices_filters_output_only(self, monkeypatch):
+    def test_list_input_devices_filters_output_only(self, app_module, monkeypatch):
         """В список должны попадать только устройства с input channels > 0."""
-        from importlib import import_module
+        monkeypatch.setattr(app_module.pyaudio, "PyAudio", FakePyAudio)
 
-        wd = import_module("whisper-dictation")
-        monkeypatch.setattr(wd.pyaudio, "PyAudio", FakePyAudio)
-
-        devices = wd.list_input_devices()
+        devices = app_module.list_input_devices()
 
         assert [device["index"] for device in devices] == [1, 2]
 
-    def test_list_input_devices_marks_default_first(self, monkeypatch):
+    def test_list_input_devices_marks_default_first(self, app_module, monkeypatch):
         """Устройство по умолчанию должно быть отмечено и идти первым."""
-        from importlib import import_module
+        monkeypatch.setattr(app_module.pyaudio, "PyAudio", FakePyAudio)
 
-        wd = import_module("whisper-dictation")
-        monkeypatch.setattr(wd.pyaudio, "PyAudio", FakePyAudio)
-
-        devices = wd.list_input_devices()
+        devices = app_module.list_input_devices()
 
         assert devices[0]["is_default"] is True
         assert devices[0]["name"] == "Built-in Microphone"
 
-    def test_recorder_can_store_selected_input_device(self):
+    def test_recorder_can_store_selected_input_device(self, app_module):
         """Recorder должен сохранять выбранный индекс и имя микрофона."""
-        from importlib import import_module
-
-        wd = import_module("whisper-dictation")
-        recorder = wd.Recorder(transcriber=None)
+        recorder = app_module.Recorder(transcriber=None)
         recorder.set_input_device({"index": 7, "name": "External Mic"})
 
         assert recorder.input_device_index == 7
         assert recorder.input_device_name == "External Mic"
 
-    def test_microphone_menu_title_contains_index_and_name(self):
+    def test_microphone_menu_title_contains_index_and_name(self, app_module):
         """Подпись микрофона должна содержать индекс и имя устройства."""
-        from importlib import import_module
-
-        wd = import_module("whisper-dictation")
-        title = wd.microphone_menu_title({"index": 3, "name": "USB Mic"})
+        title = app_module.microphone_menu_title({"index": 3, "name": "USB Mic"})
 
         assert title == "[3] USB Mic"
