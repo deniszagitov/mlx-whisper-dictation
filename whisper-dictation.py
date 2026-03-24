@@ -6,6 +6,7 @@
 """
 
 import argparse
+import ctypes
 import logging
 import platform
 import threading
@@ -22,6 +23,9 @@ from pynput import keyboard
 DEFAULT_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
 MIN_HOTKEY_PARTS = 2
 DOUBLE_COMMAND_PRESS_INTERVAL = 0.5
+STATUS_IDLE = "idle"
+STATUS_RECORDING = "recording"
+STATUS_TRANSCRIBING = "transcribing"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -36,6 +40,36 @@ def notify_user(title, message):
         rumps.notification(title, "", message)
     except Exception:
         LOGGER.exception("Не удалось показать системное уведомление macOS")
+
+
+def is_accessibility_trusted():
+    """Проверяет, выдан ли процессу доступ к Accessibility на macOS.
+
+    Returns:
+        True, если приложение может использовать глобальные события клавиатуры,
+        иначе False.
+    """
+    if platform.system() != "Darwin":
+        return True
+
+    try:
+        application_services = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+        application_services.AXIsProcessTrusted.restype = ctypes.c_bool
+        return bool(application_services.AXIsProcessTrusted())
+    except Exception:
+        LOGGER.exception("Не удалось проверить статус Accessibility")
+        return True
+
+
+def warn_missing_accessibility_permission():
+    """Показывает пользователю предупреждение об отсутствии Accessibility-доступа."""
+    message = (
+        "Нет доступа к Accessibility для MLX Whisper Dictation. "
+        "Без него не будут работать глобальный хоткей и вставка текста. "
+        "Откройте System Settings -> Privacy & Security -> Accessibility и включите приложение заново."
+    )
+    LOGGER.error(message)
+    notify_user("MLX Whisper Dictation", message)
 
 
 def parse_key(key_name):
@@ -68,6 +102,61 @@ def parse_key_combination(key_combination):
     return tuple(parse_key(part) for part in parts)
 
 
+def key_matches(expected_key, actual_key):
+    """Проверяет, соответствует ли нажатая клавиша ожидаемой.
+
+    Args:
+        expected_key: Клавиша, описанная в настройке хоткея.
+        actual_key: Фактически нажатая клавиша из pynput.
+
+    Returns:
+        True, если клавиши считаются эквивалентными.
+    """
+    generic_modifier_matches = {
+        keyboard.Key.alt: {keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r},
+        keyboard.Key.shift: {keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r},
+        keyboard.Key.ctrl: {keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r},
+        keyboard.Key.cmd: {keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r},
+    }
+
+    if expected_key == actual_key:
+        return True
+
+    return actual_key in generic_modifier_matches.get(expected_key, set())
+
+
+def format_hotkey_status(key_combination=None, *, use_double_cmd=False):
+    """Преобразует настройку хоткея в строку для меню.
+
+    Args:
+        key_combination: Строка комбинации клавиш.
+        use_double_cmd: Флаг режима двойного нажатия правой Command.
+
+    Returns:
+        Человекочитаемая строка хоткея.
+    """
+    if use_double_cmd:
+        return "двойное нажатие правой ⌘"
+
+    display_names = {
+        "cmd": "⌘",
+        "cmd_l": "левая ⌘",
+        "cmd_r": "правая ⌘",
+        "alt": "⌥",
+        "alt_l": "левая ⌥",
+        "alt_r": "правая ⌥",
+        "shift": "⇧",
+        "shift_l": "левая ⇧",
+        "shift_r": "правая ⇧",
+        "ctrl": "⌃",
+        "ctrl_l": "левая ⌃",
+        "ctrl_r": "правая ⌃",
+        "space": "Space",
+    }
+    parts = [part.strip() for part in (key_combination or "").split("+") if part.strip()]
+    return " + ".join(display_names.get(part, part.upper()) for part in parts)
+
+
 class SpeechTranscriber:
     """Распознает аудио и вставляет текст в активное приложение.
 
@@ -85,32 +174,24 @@ class SpeechTranscriber:
         self.pykeyboard = keyboard.Controller()
         self.model_name = model_name
 
-    def _paste_text(self, text):
-        """Вставляет текст через буфер обмена и Cmd+V.
+    def _copy_text_to_clipboard(self, text):
+        """Копирует текст в системный буфер обмена.
 
         Args:
-            text: Текст для вставки в активное поле ввода.
+            text: Текст для сохранения в буфере обмена.
         """
         appkit = cast("Any", AppKit)
         pasteboard = appkit.NSPasteboard.generalPasteboard()
-        previous_text = pasteboard.stringForType_(appkit.NSPasteboardTypeString)
-
         pasteboard.clearContents()
         pasteboard.setString_forType_(text, appkit.NSPasteboardTypeString)
+
+    def _paste_text(self):
+        """Вставляет текущий текст из буфера обмена через Cmd+V."""
         time.sleep(0.05)
 
         with self.pykeyboard.pressed(keyboard.Key.cmd):
             self.pykeyboard.press("v")
             self.pykeyboard.release("v")
-
-        time.sleep(0.05)
-
-        pasteboard.clearContents()
-        if previous_text is not None:
-            pasteboard.setString_forType_(
-                previous_text,
-                appkit.NSPasteboardTypeString,
-            )
 
     def transcribe(self, audio_data, language=None):
         """Распознает аудио и вставляет результат в активное приложение.
@@ -140,8 +221,18 @@ class SpeechTranscriber:
             LOGGER.info("Результат распознавания пустой")
             return
 
+        self._copy_text_to_clipboard(text)
+        LOGGER.info("Текст сохранен в буфере обмена")
+
+        if not is_accessibility_trusted():
+            notify_user(
+                "MLX Whisper Dictation",
+                "Текст распознан и сохранен в буфер обмена. Вставьте его вручную, потому что у приложения нет доступа к Accessibility.",
+            )
+            return
+
         try:
-            self._paste_text(text)
+            self._paste_text()
             LOGGER.info("Текст вставлен через буфер обмена")
         except Exception:
             LOGGER.exception("Не удалось вставить через буфер обмена, переключаюсь на ввод клавишами")
@@ -152,7 +243,7 @@ class SpeechTranscriber:
                 LOGGER.exception("Резервный ввод клавишами тоже завершился ошибкой")
                 notify_user(
                     "MLX Whisper Dictation",
-                    "Не удалось вставить текст. Проверьте Accessibility и Input Monitoring.",
+                    "Не удалось вставить текст автоматически. Но текст сохранен в буфер обмена, его можно вставить вручную.",
                 )
 
 
@@ -172,6 +263,24 @@ class Recorder:
         """
         self.recording = False
         self.transcriber = transcriber
+        self.status_callback = None
+
+    def set_status_callback(self, status_callback):
+        """Регистрирует callback для обновления UI-статуса.
+
+        Args:
+            status_callback: Функция, принимающая строковый статус.
+        """
+        self.status_callback = status_callback
+
+    def _set_status(self, status):
+        """Передает новый статус во внешний callback.
+
+        Args:
+            status: Идентификатор состояния приложения.
+        """
+        if self.status_callback is not None:
+            self.status_callback(status)
 
     def start(self, language=None):
         """Запускает запись в отдельном потоке.
@@ -226,11 +335,14 @@ class Recorder:
 
         if not frames:
             LOGGER.warning("Запись остановлена без захваченных аудиофреймов")
+            self._set_status(STATUS_IDLE)
             return
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
         audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
+        self._set_status(STATUS_TRANSCRIBING)
         self.transcriber.transcribe(audio_data_fp32, language)
+        self._set_status(STATUS_IDLE)
 
 
 class GlobalKeyListener:
@@ -264,7 +376,10 @@ class GlobalKeyListener:
         if key in self.keys:
             self.pressed_keys.add(key)
 
-        if not self.triggered and all(hotkey in self.pressed_keys for hotkey in self.keys):
+        if any(key_matches(hotkey, key) for hotkey in self.keys):
+            self.pressed_keys.add(key)
+
+        if not self.triggered and all(any(key_matches(hotkey, pressed_key) for pressed_key in self.pressed_keys) for hotkey in self.keys):
             self.triggered = True
             self.app.toggle()
 
@@ -275,7 +390,7 @@ class GlobalKeyListener:
             key: Объект клавиши из pynput.
         """
         self.pressed_keys.discard(key)
-        if key in self.keys:
+        if any(key_matches(hotkey, key) for hotkey in self.keys):
             self.triggered = False
 
 
@@ -333,19 +448,34 @@ class StatusBarApp(rumps.App):
         status_timer: Таймер обновления индикатора в строке меню.
     """
 
-    def __init__(self, recorder, languages=None, max_time=None):
+    def __init__(self, recorder, model_name, hotkey_status, languages=None, max_time=None):
         """Создает menu bar приложение.
 
         Args:
             recorder: Объект Recorder для записи и распознавания.
+            model_name: Имя модели, показываемое в меню приложения.
+            hotkey_status: Строка для отображения текущего хоткея в меню.
             languages: Необязательный список доступных языков.
             max_time: Необязательный лимит длительности записи в секундах.
         """
         super().__init__("whisper", "⏯")
+        self.model_name = model_name.rsplit("/", maxsplit=1)[-1]
+        self.hotkey_status = hotkey_status
         self.languages = languages
         self.current_language = languages[0] if languages is not None else None
+        self.state = STATUS_IDLE
+        self.status_item = rumps.MenuItem(f"Статус: {self._state_label()}")
+        self.model_item = rumps.MenuItem(f"Модель: {self.model_name}")
+        self.hotkey_item = rumps.MenuItem(f"Хоткей: {self.hotkey_status}")
 
-        menu = ["Начать запись", "Остановить запись", None]
+        menu = [
+            "Начать запись",
+            "Остановить запись",
+            self.status_item,
+            self.model_item,
+            self.hotkey_item,
+            None,
+        ]
 
         if languages is not None:
             for lang in languages:
@@ -358,6 +488,7 @@ class StatusBarApp(rumps.App):
 
         self.started = False
         self.recorder = recorder
+        self.recorder.set_status_callback(self.set_state)
         self.max_time = max_time
         self.elapsed_time = 0
         self.status_timer = rumps.Timer(self.on_status_tick, 1)
@@ -373,6 +504,34 @@ class StatusBarApp(rumps.App):
             Объект пункта меню из rumps.
         """
         return cast("Any", self.menu)[title]
+
+    def _state_label(self):
+        """Возвращает человекочитаемое имя текущего состояния."""
+        labels = {
+            STATUS_IDLE: "ожидание",
+            STATUS_RECORDING: "запись",
+            STATUS_TRANSCRIBING: "распознавание",
+        }
+        return labels.get(self.state, "неизвестно")
+
+    def _refresh_title_and_status(self):
+        """Обновляет иконку и строку статуса в меню."""
+        self.status_item.title = f"Статус: {self._state_label()}"
+
+        if self.state == STATUS_TRANSCRIBING:
+            self.title = "🧠"
+            return
+
+        if self.state == STATUS_IDLE:
+            self.title = "⏯"
+
+    def set_state(self, state):
+        """Сохраняет новое состояние приложения.
+
+        Args:
+            state: Новый идентификатор состояния.
+        """
+        self.state = state
 
     def change_language(self, sender):
         """Переключает текущий язык распознавания.
@@ -396,6 +555,11 @@ class StatusBarApp(rumps.App):
         """
         print("Слушаю...")
         LOGGER.info("Запись началась")
+        self.state = STATUS_RECORDING
+        notify_user(
+            "MLX Whisper Dictation",
+            "Запись началась. Говорите, пока в строке меню горит красный индикатор.",
+        )
         self.started = True
         self._menu_item("Начать запись").set_callback(None)
         self._menu_item("Остановить запись").set_callback(self.stop_app)
@@ -416,8 +580,9 @@ class StatusBarApp(rumps.App):
 
         print("Распознаю...")
         LOGGER.info("Запись остановлена, запускаю распознавание")
-        self.title = "⏯"
         self.started = False
+        self.state = STATUS_TRANSCRIBING
+        self._refresh_title_and_status()
         self._menu_item("Остановить запись").set_callback(None)
         self._menu_item("Начать запись").set_callback(self.start_app)
         self.recorder.stop()
@@ -430,11 +595,13 @@ class StatusBarApp(rumps.App):
             _: Аргумент timer callback, который здесь не используется.
         """
         if not self.started:
+            self._refresh_title_and_status()
             return
 
         self.elapsed_time = int(time.time() - self.start_time)
         minutes, seconds = divmod(self.elapsed_time, 60)
         self.title = f"({minutes:02d}:{seconds:02d}) 🔴"
+        self.status_item.title = f"Статус: {self._state_label()}"
 
         if self.max_time is not None and self.elapsed_time >= self.max_time:
             self.stop_app(None)
@@ -537,10 +704,19 @@ def main():
 
     args = parse_args()
 
+    if not is_accessibility_trusted():
+        warn_missing_accessibility_permission()
+
     transcriber = SpeechTranscriber(args.model)
     recorder = Recorder(transcriber)
 
-    app = StatusBarApp(recorder, args.language, args.max_time)
+    app = StatusBarApp(
+        recorder,
+        args.model,
+        format_hotkey_status(args.key_combination, use_double_cmd=args.k_double_cmd),
+        args.language,
+        args.max_time,
+    )
     key_listener = DoubleCommandKeyListener(app) if args.k_double_cmd else GlobalKeyListener(app, args.key_combination)
     listener = keyboard.Listener(
         on_press=key_listener.on_key_press,
