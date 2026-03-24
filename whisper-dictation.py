@@ -7,17 +7,24 @@
 
 import argparse
 import ctypes
+import json
 import logging
 import platform
+import sys
 import threading
 import time
+import wave
+from pathlib import Path
 from typing import Any, cast
 
 import AppKit
 import mlx_whisper
 import numpy as np
+import objc
 import pyaudio
+import Quartz
 import rumps
+from Foundation import NSURL, NSDictionary
 from pynput import keyboard
 
 DEFAULT_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
@@ -29,8 +36,103 @@ STATUS_TRANSCRIBING = "transcribing"
 PERMISSION_GRANTED = "есть"
 PERMISSION_DENIED = "нет"
 PERMISSION_UNKNOWN = "неизвестно"
-SILENCE_RMS_THRESHOLD = 0.003
+SILENCE_RMS_THRESHOLD = 0.0005
+HALLUCINATION_RMS_THRESHOLD = 0.002
+SHORT_AUDIO_WARNING_SECONDS = 0.3
+MAX_DEBUG_ARTIFACTS = 10
+LOG_DIR = Path.home() / "Library/Logs/whisper-dictation"
+ACCESSIBILITY_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+INPUT_MONITORING_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+KEYCODE_COMMAND = 0x37
+KEYCODE_V = 0x09
+KNOWN_HALLUCINATIONS = {
+    "thank you",
+    "thank you.",
+    "продолжение следует",
+    "продолжение следует...",
+    "спасибо за внимание",
+    "спасибо за просмотр",
+}
 LOGGER = logging.getLogger(__name__)
+
+
+class MaxLevelFilter(logging.Filter):
+    """Пропускает записи не выше заданного уровня логирования."""
+
+    def __init__(self, level):
+        """Сохраняет максимальный уровень логов для фильтрации."""
+        super().__init__()
+        self.level = level
+
+    def filter(self, record):
+        """Возвращает True, если запись не превышает допустимый уровень."""
+        return record.levelno < self.level
+
+
+def setup_logging():
+    """Настраивает консольное и файловое логирование приложения."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    (LOG_DIR / "recordings").mkdir(parents=True, exist_ok=True)
+    (LOG_DIR / "transcriptions").mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.handlers.clear()
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+
+    stdout_handler = logging.FileHandler(LOG_DIR / "stdout.log", encoding="utf-8")
+    stdout_handler.setLevel(logging.INFO)
+    stdout_handler.addFilter(MaxLevelFilter(logging.ERROR))
+    stdout_handler.setFormatter(formatter)
+
+    stderr_handler = logging.FileHandler(LOG_DIR / "stderr.log", encoding="utf-8")
+    stderr_handler.setLevel(logging.ERROR)
+    stderr_handler.setFormatter(formatter)
+
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(stdout_handler)
+    root_logger.addHandler(stderr_handler)
+
+
+def looks_like_hallucination(text):
+    """Проверяет, похож ли результат на типичную галлюцинацию Whisper."""
+    return text.strip().lower() in KNOWN_HALLUCINATIONS
+
+
+def recordings_dir():
+    """Возвращает директорию для сохранения диагностических аудиозаписей."""
+    return LOG_DIR / "recordings"
+
+
+def transcriptions_dir():
+    """Возвращает директорию для сохранения результатов транскрибации."""
+    return LOG_DIR / "transcriptions"
+
+
+def cleanup_old_debug_artifacts(directory):
+    """Оставляет только последние диагностические файлы в указанной директории."""
+    stems_to_mtime = {}
+    for path in directory.iterdir():
+        if path.is_file():
+            stems_to_mtime[path.stem] = max(stems_to_mtime.get(path.stem, 0.0), path.stat().st_mtime)
+
+    sorted_stems = sorted(stems_to_mtime.items(), key=lambda item: item[1], reverse=True)
+    stems_to_keep = {stem for stem, _mtime in sorted_stems[:MAX_DEBUG_ARTIFACTS]}
+
+    for old_file in directory.iterdir():
+        if old_file.is_file() and old_file.stem not in stems_to_keep:
+            old_file.unlink(missing_ok=True)
+
+
+def debug_artifact_stem():
+    """Возвращает уникальное имя группы диагностических файлов."""
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    milliseconds = int((time.time() % 1) * 1000)
+    return f"{timestamp}-{milliseconds:03d}"
 
 
 def notify_user(title, message):
@@ -44,6 +146,37 @@ def notify_user(title, message):
         rumps.notification(title, "", message)
     except Exception:
         LOGGER.exception("Не удалось показать системное уведомление macOS")
+
+
+def open_system_settings(url):
+    """Открывает нужный раздел System Settings по специальной ссылке macOS."""
+    if platform.system() != "Darwin":
+        return False
+
+    try:
+        settings_url = NSURL.URLWithString_(url)
+        return bool(AppKit.NSWorkspace.sharedWorkspace().openURL_(settings_url))
+    except Exception:
+        LOGGER.exception("Не удалось открыть System Settings: %s", url)
+        return False
+
+
+def frontmost_application_info():
+    """Возвращает краткую информацию о текущем активном приложении."""
+    try:
+        workspace = AppKit.NSWorkspace.sharedWorkspace()
+        application = workspace.frontmostApplication()
+        if application is None:
+            return None
+
+        return {
+            "name": str(application.localizedName() or ""),
+            "bundle_id": str(application.bundleIdentifier() or ""),
+            "pid": int(application.processIdentifier()),
+        }
+    except Exception:
+        LOGGER.exception("Не удалось определить активное приложение")
+        return None
 
 
 def is_accessibility_trusted():
@@ -97,6 +230,59 @@ def get_input_monitoring_status():
     return permission_preflight_status("CGPreflightListenEventAccess")
 
 
+def request_accessibility_permission():
+    """Запрашивает Accessibility через системный диалог macOS.
+
+    Вызывает AXIsProcessTrustedWithOptions с kAXTrustedCheckOptionPrompt=True,
+    чтобы macOS показала пользователю диалог с предложением открыть настройки.
+
+    Returns:
+        True, если разрешение уже выдано, False если нужно выдать вручную.
+    """
+    if platform.system() != "Darwin":
+        return True
+
+    try:
+        application_services = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+        options = NSDictionary.dictionaryWithObject_forKey_(True, "AXTrustedCheckOptionPrompt")
+        request_function = getattr(application_services, "AXIsProcessTrustedWithOptions", None)
+        if request_function is None:
+            LOGGER.warning("AXIsProcessTrustedWithOptions не найдена")
+            return False
+
+        request_function.restype = ctypes.c_bool
+        request_function.argtypes = [ctypes.c_void_p]
+        result = bool(request_function(objc.pyobjc_id(options)))
+    except Exception:
+        LOGGER.exception("Не удалось запросить Accessibility")
+        return False
+    else:
+        return result
+
+
+def request_input_monitoring_permission():
+    """Запрашивает Input Monitoring через системный диалог macOS.
+
+    Вызывает CGRequestListenEventAccess, чтобы macOS показала пользователю
+    диалог с предложением открыть настройки Input Monitoring.
+
+    Returns:
+        True, если разрешение уже выдано, False если нужно выдать вручную.
+    """
+    if platform.system() != "Darwin":
+        return True
+
+    try:
+        request_function = getattr(Quartz, "CGRequestListenEventAccess", None)
+        if request_function is None:
+            LOGGER.warning("CGRequestListenEventAccess не найдена")
+            return False
+        return bool(request_function())
+    except Exception:
+        LOGGER.exception("Не удалось запросить Input Monitoring")
+        return False
+
+
 def permission_label(status):
     """Преобразует булев статус разрешения в строку для меню.
 
@@ -121,6 +307,19 @@ def warn_missing_accessibility_permission():
         "Откройте System Settings -> Privacy & Security -> Accessibility и включите приложение заново."
     )
     LOGGER.error(message)
+    open_system_settings(ACCESSIBILITY_SETTINGS_URL)
+    notify_user("MLX Whisper Dictation", message)
+
+
+def warn_missing_input_monitoring_permission():
+    """Показывает пользователю предупреждение об отсутствии Input Monitoring."""
+    message = (
+        "Нет доступа к Input Monitoring для MLX Whisper Dictation. "
+        "Без него macOS может блокировать глобальный хоткей или синтетический ввод. "
+        "Откройте System Settings -> Privacy & Security -> Input Monitoring и включите приложение заново."
+    )
+    LOGGER.error(message)
+    open_system_settings(INPUT_MONITORING_SETTINGS_URL)
     notify_user("MLX Whisper Dictation", message)
 
 
@@ -199,6 +398,44 @@ def format_max_time_status(max_time):
     if float(max_time).is_integer():
         return f"{int(max_time)} с"
     return f"{max_time} с"
+
+
+def microphone_menu_title(device_info):
+    """Формирует подпись микрофона для меню приложения."""
+    name = str(device_info.get("name", "Неизвестное устройство"))
+    return f"[{device_info['index']}] {name}"
+
+
+def list_input_devices():
+    """Возвращает список доступных устройств ввода из PyAudio."""
+    audio_interface = pyaudio.PyAudio()
+    devices = []
+    try:
+        default_input = None
+        try:
+            default_info = audio_interface.get_default_input_device_info()
+        except Exception:
+            default_info = None
+        if default_info is not None:
+            default_input = int(default_info.get("index", -1))
+
+        for device_index in range(audio_interface.get_device_count()):
+            info = audio_interface.get_device_info_by_index(device_index)
+            if int(info.get("maxInputChannels", 0)) <= 0:
+                continue
+            normalized = {
+                "index": int(info.get("index", device_index)),
+                "name": str(info.get("name", f"Input {device_index}")),
+                "max_input_channels": int(info.get("maxInputChannels", 0)),
+                "default_sample_rate": float(info.get("defaultSampleRate", 16000.0)),
+                "is_default": int(info.get("index", device_index)) == default_input,
+            }
+            devices.append(normalized)
+    finally:
+        audio_interface.terminate()
+
+    devices.sort(key=lambda item: (not item["is_default"], item["index"]))
+    return devices
 
 
 def hotkey_name_matches(expected_name, actual_name):
@@ -291,10 +528,76 @@ class SpeechTranscriber:
     def _paste_text(self):
         """Вставляет текущий текст из буфера обмена через Cmd+V."""
         time.sleep(0.05)
+        active_app = frontmost_application_info()
+        if active_app is not None:
+            LOGGER.info(
+                "Пытаюсь вставить в активное приложение: name=%s, bundle_id=%s, pid=%s",
+                active_app["name"],
+                active_app["bundle_id"],
+                active_app["pid"],
+            )
 
-        with self.pykeyboard.pressed(keyboard.Key.cmd):
-            self.pykeyboard.press("v")
-            self.pykeyboard.release("v")
+        event_source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+        if event_source is None:
+            raise RuntimeError("Не удалось создать источник системных keyboard events")
+
+        command_down = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_COMMAND, True)
+        paste_down = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_V, True)
+        paste_up = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_V, False)
+        command_up = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_COMMAND, False)
+
+        if not all((command_down, paste_down, paste_up, command_up)):
+            raise RuntimeError("Не удалось создать keyboard events для Cmd+V")
+
+        Quartz.CGEventSetFlags(command_down, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventSetFlags(paste_down, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventSetFlags(paste_up, Quartz.kCGEventFlagMaskCommand)
+
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, command_down)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, paste_down)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, paste_up)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, command_up)
+
+    def _save_audio_recording(self, stem, audio_data, diagnostics):
+        """Сохраняет аудиозапись и сопутствующую диагностику в папку логов."""
+        recordings_dir().mkdir(parents=True, exist_ok=True)
+
+        wav_path = recordings_dir() / f"{stem}.wav"
+        with wave.open(str(wav_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            pcm_data = np.clip(audio_data * 32768.0, -32768, 32767).astype(np.int16)
+            wav_file.writeframes(pcm_data.tobytes())
+
+        metadata_path = recordings_dir() / f"{stem}.json"
+        metadata_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
+        cleanup_old_debug_artifacts(recordings_dir())
+        return wav_path
+
+    def _save_transcription_artifacts(self, stem, diagnostics, result=None, text="", error_message=None):
+        """Сохраняет результат транскрибации и метаданные в папку логов."""
+        transcriptions_dir().mkdir(parents=True, exist_ok=True)
+
+        payload = {"diagnostics": diagnostics, "text": text, "error": error_message, "result": result}
+        json_path = transcriptions_dir() / f"{stem}.json"
+        json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+        text_path = transcriptions_dir() / f"{stem}.txt"
+        text_path.write_text(text, encoding="utf-8")
+
+        cleanup_old_debug_artifacts(transcriptions_dir())
+        return json_path
+
+    def _run_transcription(self, audio_data, language):
+        """Запускает один проход распознавания с заданными параметрами языка."""
+        return mlx_whisper.transcribe(
+            audio_data,
+            language=language,
+            path_or_hf_repo=self.model_name,
+            condition_on_previous_text=False,
+            hallucination_silence_threshold=2.0,
+        )
 
     def transcribe(self, audio_data, language=None):
         """Распознает аудио и вставляет результат в активное приложение.
@@ -303,27 +606,44 @@ class SpeechTranscriber:
             audio_data: Массив с аудио в формате float32.
             language: Необязательный код языка для улучшения распознавания.
         """
-        min_audio_seconds = 0.5
-        if len(audio_data) < 16000 * min_audio_seconds:
-            LOGGER.info("Аудио слишком короткое (%.2f с), пропускаю распознавание", len(audio_data) / 16000)
-            return
-
+        stem = debug_artifact_stem()
+        audio_duration_seconds = len(audio_data) / 16000
         rms_energy = float(np.sqrt(np.mean(audio_data**2)))
-        LOGGER.info("RMS-энергия аудио: %.6f", rms_energy)
+        peak_amplitude = float(np.max(np.abs(audio_data))) if len(audio_data) else 0.0
+        diagnostics = {
+            "language": language,
+            "duration_seconds": audio_duration_seconds,
+            "rms_energy": rms_energy,
+            "peak_amplitude": peak_amplitude,
+            "silence_threshold": SILENCE_RMS_THRESHOLD,
+            "hallucination_threshold": HALLUCINATION_RMS_THRESHOLD,
+            "sample_rate": 16000,
+            "samples": len(audio_data),
+            "first_samples": audio_data[:16].tolist(),
+        }
+        wav_path = self._save_audio_recording(stem, audio_data, diagnostics)
+        LOGGER.info(
+            "Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s, wav=%s",
+            audio_duration_seconds,
+            rms_energy,
+            peak_amplitude,
+            language,
+            wav_path,
+        )
+        if audio_duration_seconds < SHORT_AUDIO_WARNING_SECONDS:
+            LOGGER.warning("Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
         if rms_energy < SILENCE_RMS_THRESHOLD:
-            LOGGER.info("Аудио слишком тихое (RMS=%.6f < %.4f), пропускаю распознавание", rms_energy, SILENCE_RMS_THRESHOLD)
-            return
+            LOGGER.warning(
+                "Аудио очень тихое (RMS=%.6f < %.4f), но распознавание всё равно будет запущено",
+                rms_energy,
+                SILENCE_RMS_THRESHOLD,
+            )
 
         try:
-            result = mlx_whisper.transcribe(
-                audio_data,
-                language=language,
-                path_or_hf_repo=self.model_name,
-                condition_on_previous_text=False,
-                hallucination_silence_threshold=2.0,
-            )
+            result = self._run_transcription(audio_data, language)
         except Exception:
             LOGGER.exception("Ошибка распознавания")
+            self._save_transcription_artifacts(stem, diagnostics, error_message="Ошибка распознавания")
             notify_user(
                 "MLX Whisper Dictation",
                 "Ошибка распознавания. Смотрите stderr.log.",
@@ -331,19 +651,66 @@ class SpeechTranscriber:
             return
 
         text = str(result.get("text", "")).strip()
-        LOGGER.info("Распознавание завершено, длина текста=%s", len(text))
+        LOGGER.info("Первый проход распознавания завершен, длина текста=%s, текст=%r", len(text), text[:120])
+
+        if not text and language is not None:
+            LOGGER.info("Первый проход вернул пустой результат, повторяю распознавание без фиксированного языка")
+            try:
+                result = self._run_transcription(audio_data, None)
+            except Exception:
+                LOGGER.exception("Ошибка повторного распознавания без языка")
+            else:
+                text = str(result.get("text", "")).strip()
+                LOGGER.info("Повторный проход завершен, длина текста=%s, текст=%r", len(text), text[:120])
+
+        self._save_transcription_artifacts(stem, diagnostics, result=result, text=text)
 
         if not text:
-            LOGGER.info("Результат распознавания пустой")
+            LOGGER.warning("Результат распознавания пустой")
+            notify_user(
+                "MLX Whisper Dictation",
+                "Речь не распознана. Проверьте микрофон, уровень сигнала и попробуйте еще раз.",
+            )
             return
 
-        self._copy_text_to_clipboard(text)
-        LOGGER.info("Текст сохранен в буфере обмена")
+        if looks_like_hallucination(text) and rms_energy < HALLUCINATION_RMS_THRESHOLD:
+            LOGGER.warning("Отброшен вероятный галлюцинаторный результат: %r", text)
+
+        try:
+            self._copy_text_to_clipboard(text)
+        except Exception:
+            LOGGER.exception("Не удалось сохранить текст в буфер обмена")
+            notify_user(
+                "MLX Whisper Dictation",
+                "Не удалось сохранить распознанный текст в буфер обмена. Смотрите stderr.log.",
+            )
+            return
+        else:
+            LOGGER.info("Текст сохранен в буфере обмена")
 
         if not is_accessibility_trusted():
+            LOGGER.warning("Перед вставкой нет доступа к Accessibility, повторно запрашиваю разрешение")
+            request_accessibility_permission()
+            time.sleep(0.2)
+
+        if get_input_monitoring_status() is not True:
+            LOGGER.warning("Перед вставкой нет доступа к Input Monitoring, повторно запрашиваю разрешение")
+            request_input_monitoring_permission()
+            time.sleep(0.2)
+
+        if not is_accessibility_trusted():
+            warn_missing_accessibility_permission()
             notify_user(
                 "MLX Whisper Dictation",
                 "Текст распознан и сохранен в буфер обмена. Вставьте его вручную, потому что у приложения нет доступа к Accessibility.",
+            )
+            return
+
+        if get_input_monitoring_status() is False:
+            warn_missing_input_monitoring_permission()
+            notify_user(
+                "MLX Whisper Dictation",
+                "Текст распознан и сохранен в буфер обмена. Вставьте его вручную, потому что macOS не дала доступ к Input Monitoring.",
             )
             return
 
@@ -381,6 +748,8 @@ class Recorder:
         self.transcriber = transcriber
         self.status_callback = None
         self.permission_callback = None
+        self.input_device_index = None
+        self.input_device_name = "системный по умолчанию"
 
     def set_status_callback(self, status_callback):
         """Регистрирует callback для обновления UI-статуса.
@@ -417,6 +786,16 @@ class Recorder:
         if self.permission_callback is not None:
             self.permission_callback(permission_name, status)
 
+    def set_input_device(self, device_info=None):
+        """Сохраняет выбранное устройство ввода для последующей записи."""
+        if device_info is None:
+            self.input_device_index = None
+            self.input_device_name = "системный по умолчанию"
+            return
+
+        self.input_device_index = int(device_info["index"])
+        self.input_device_name = str(device_info["name"])
+
     def start(self, language=None):
         """Запускает запись в отдельном потоке.
 
@@ -444,12 +823,18 @@ class Recorder:
         frames = []
 
         try:
+            LOGGER.info(
+                "Открываю поток записи: input_device_index=%s, input_device_name=%s",
+                self.input_device_index,
+                self.input_device_name,
+            )
             stream = audio_interface.open(
                 format=pyaudio.paInt16,
                 channels=1,
                 rate=16000,
                 frames_per_buffer=frames_per_buffer,
                 input=True,
+                input_device_index=self.input_device_index,
             )
             self._set_permission_status("microphone", True)
 
@@ -477,6 +862,12 @@ class Recorder:
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
         audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
+        LOGGER.info(
+            "Запись завершена: фреймов=%s, сэмплов=%s, длительность=%.2f с",
+            len(frames),
+            len(audio_data_fp32),
+            len(audio_data_fp32) / 16000,
+        )
         self._set_status(STATUS_TRANSCRIBING)
         self.transcriber.transcribe(audio_data_fp32, language)
         self._set_status(STATUS_IDLE)
@@ -696,7 +1087,11 @@ class StatusBarApp(rumps.App):
         self.model_name = model_name.rsplit("/", maxsplit=1)[-1]
         self.hotkey_status = hotkey_status
         self.languages = languages
+        self.input_devices = list_input_devices()
         self.current_language = languages[0] if languages is not None else None
+        self.current_input_device = next((device for device in self.input_devices if device["is_default"]), None)
+        if self.current_input_device is None and self.input_devices:
+            self.current_input_device = self.input_devices[0]
         self.state = STATUS_IDLE
         self.permission_status = {
             "accessibility": get_accessibility_status(),
@@ -707,10 +1102,13 @@ class StatusBarApp(rumps.App):
         self.model_item = rumps.MenuItem(f"Модель: {self.model_name}")
         self.hotkey_item = rumps.MenuItem(f"Хоткей: {self.hotkey_status}")
         self.language_item = rumps.MenuItem(f"Язык: {self._format_language()}")
+        self.input_device_item = rumps.MenuItem(f"Микрофон: {self._format_input_device()}")
         self.max_time_item = rumps.MenuItem(f"Длительность записи: {format_max_time_status(max_time)}")
         self.accessibility_item = rumps.MenuItem(self._permission_title("Accessibility", self.permission_status["accessibility"]))
         self.input_monitoring_item = rumps.MenuItem(self._permission_title("Input Monitoring", self.permission_status["input_monitoring"]))
         self.microphone_item = rumps.MenuItem(self._permission_title("Microphone", self.permission_status["microphone"]))
+        self.request_accessibility_item = rumps.MenuItem("Запросить Accessibility", callback=self.request_accessibility_access)
+        self.request_input_monitoring_item = rumps.MenuItem("Запросить Input Monitoring", callback=self.request_input_monitoring_access)
 
         menu = [
             "Начать запись",
@@ -719,10 +1117,13 @@ class StatusBarApp(rumps.App):
             self.model_item,
             self.hotkey_item,
             self.language_item,
+            self.input_device_item,
             self.max_time_item,
             self.accessibility_item,
             self.input_monitoring_item,
             self.microphone_item,
+            self.request_accessibility_item,
+            self.request_input_monitoring_item,
             None,
         ]
 
@@ -732,12 +1133,20 @@ class StatusBarApp(rumps.App):
                 menu.append(rumps.MenuItem(lang, callback=callback))
             menu.append(None)
 
+        if self.input_devices:
+            for device in self.input_devices:
+                title = microphone_menu_title(device)
+                callback = self.change_input_device if device != self.current_input_device else None
+                menu.append(rumps.MenuItem(title, callback=callback))
+            menu.append(None)
+
         self.menu = menu
         self._menu_item("Остановить запись").set_callback(None)
 
         self.started = False
         self.key_listener = None
         self.recorder = recorder
+        self.recorder.set_input_device(self.current_input_device)
         self.recorder.set_status_callback(self.set_state)
         self.recorder.set_permission_callback(self.set_permission_status)
         self.max_time = max_time
@@ -764,6 +1173,12 @@ class StatusBarApp(rumps.App):
             STATUS_TRANSCRIBING: "распознавание",
         }
         return labels.get(self.state, "неизвестно")
+
+    def _format_input_device(self):
+        """Возвращает строку текущего микрофона для меню."""
+        if self.current_input_device is None:
+            return "системный по умолчанию"
+        return microphone_menu_title(self.current_input_device)
 
     def _format_language(self):
         """Возвращает строку текущего языка для меню."""
@@ -820,6 +1235,27 @@ class StatusBarApp(rumps.App):
         """
         self.permission_status[permission_name] = status
 
+    def change_input_device(self, sender):
+        """Переключает текущее устройство ввода."""
+        selected_device = next(
+            (device for device in self.input_devices if microphone_menu_title(device) == sender.title),
+            None,
+        )
+        if selected_device is None:
+            return
+
+        self.current_input_device = selected_device
+        self.recorder.set_input_device(selected_device)
+        self.input_device_item.title = f"Микрофон: {self._format_input_device()}"
+        LOGGER.info(
+            "Выбран микрофон: index=%s, name=%s",
+            selected_device["index"],
+            selected_device["name"],
+        )
+        for device in self.input_devices:
+            title = microphone_menu_title(device)
+            self._menu_item(title).set_callback(self.change_input_device if device != self.current_input_device else None)
+
     def change_language(self, sender):
         """Переключает текущий язык распознавания.
 
@@ -833,6 +1269,28 @@ class StatusBarApp(rumps.App):
         self.language_item.title = f"Язык: {self._format_language()}"
         for lang in self.languages:
             self._menu_item(lang).set_callback(self.change_language if lang != self.current_language else None)
+
+    def request_accessibility_access(self, _):
+        """Повторно запрашивает у macOS доступ к Accessibility."""
+        granted = request_accessibility_permission()
+        self.permission_status["accessibility"] = get_accessibility_status()
+        self._refresh_permission_items()
+        if granted or self.permission_status["accessibility"] is True:
+            notify_user("MLX Whisper Dictation", "Доступ к Accessibility подтвержден.")
+            return
+
+        warn_missing_accessibility_permission()
+
+    def request_input_monitoring_access(self, _):
+        """Повторно запрашивает у macOS доступ к Input Monitoring."""
+        granted = request_input_monitoring_permission()
+        self.permission_status["input_monitoring"] = get_input_monitoring_status()
+        self._refresh_permission_items()
+        if granted or self.permission_status["input_monitoring"] is True:
+            notify_user("MLX Whisper Dictation", "Доступ к Input Monitoring подтвержден.")
+            return
+
+        warn_missing_input_monitoring_permission()
 
     @rumps.clicked("Начать запись")
     def start_app(self, _):
@@ -988,15 +1446,18 @@ def parse_args():
 
 def main():
     """Запускает приложение диктовки и глобальные обработчики клавиш."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    setup_logging()
 
     args = parse_args()
 
-    if not is_accessibility_trusted():
+    accessibility_granted = request_accessibility_permission()
+    input_monitoring_granted = request_input_monitoring_permission()
+    LOGGER.info("Accessibility: %s, Input Monitoring: %s", accessibility_granted, input_monitoring_granted)
+
+    if not accessibility_granted:
         warn_missing_accessibility_permission()
+    if input_monitoring_granted is False:
+        warn_missing_input_monitoring_permission()
 
     transcriber = SpeechTranscriber(args.model)
     recorder = Recorder(transcriber)
