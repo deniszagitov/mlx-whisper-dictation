@@ -29,6 +29,7 @@ STATUS_TRANSCRIBING = "transcribing"
 PERMISSION_GRANTED = "есть"
 PERMISSION_DENIED = "нет"
 PERMISSION_UNKNOWN = "неизвестно"
+SILENCE_RMS_THRESHOLD = 0.003
 LOGGER = logging.getLogger(__name__)
 
 
@@ -307,14 +308,19 @@ class SpeechTranscriber:
             LOGGER.info("Аудио слишком короткое (%.2f с), пропускаю распознавание", len(audio_data) / 16000)
             return
 
+        rms_energy = float(np.sqrt(np.mean(audio_data**2)))
+        LOGGER.info("RMS-энергия аудио: %.6f", rms_energy)
+        if rms_energy < SILENCE_RMS_THRESHOLD:
+            LOGGER.info("Аудио слишком тихое (RMS=%.6f < %.4f), пропускаю распознавание", rms_energy, SILENCE_RMS_THRESHOLD)
+            return
+
         try:
             result = mlx_whisper.transcribe(
                 audio_data,
                 language=language,
                 path_or_hf_repo=self.model_name,
                 condition_on_previous_text=False,
-                compression_ratio_threshold=2.4,
-                no_speech_threshold=0.6,
+                hallucination_silence_threshold=2.0,
             )
         except Exception:
             LOGGER.exception("Ошибка распознавания")
