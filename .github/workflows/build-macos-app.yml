@@ -5,23 +5,26 @@ on:
   push:
     branches:
       - main
+      - master
     tags:
       - "v*"
     paths:
       - .github/workflows/build-macos-app.yml
       - README.md
+      - AGENTS.md
       - pyproject.toml
       - .python-version
-      - requirements.txt
+      - scripts/selfcheck.py
       - setup.py
       - whisper-dictation.py
   pull_request:
     paths:
       - .github/workflows/build-macos-app.yml
       - README.md
+      - AGENTS.md
       - pyproject.toml
       - .python-version
-      - requirements.txt
+      - scripts/selfcheck.py
       - setup.py
       - whisper-dictation.py
 
@@ -56,11 +59,11 @@ jobs:
       - name: Archive app bundle
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
-            "dist/MLX Whisper Dictation.app" \
-            "dist/MLX-Whisper-Dictation.app.zip"
+            "dist/Dictator.app" \
+            "dist/Dictator.app.zip"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MLX-Whisper-Dictation-macOS
-          path: dist/MLX-Whisper-Dictation.app.zip
+          name: Dictator-macOS
+          path: dist/Dictator.app.zip
