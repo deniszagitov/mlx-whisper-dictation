@@ -302,11 +302,19 @@ class SpeechTranscriber:
             audio_data: Массив с аудио в формате float32.
             language: Необязательный код языка для улучшения распознавания.
         """
+        min_audio_seconds = 0.5
+        if len(audio_data) < 16000 * min_audio_seconds:
+            LOGGER.info("Аудио слишком короткое (%.2f с), пропускаю распознавание", len(audio_data) / 16000)
+            return
+
         try:
             result = mlx_whisper.transcribe(
                 audio_data,
                 language=language,
                 path_or_hf_repo=self.model_name,
+                condition_on_previous_text=False,
+                compression_ratio_threshold=2.4,
+                no_speech_threshold=0.6,
             )
         except Exception:
             LOGGER.exception("Ошибка распознавания")
@@ -316,7 +324,7 @@ class SpeechTranscriber:
             )
             return
 
-        text = str(result.get("text", "")).lstrip()
+        text = str(result.get("text", "")).strip()
         LOGGER.info("Распознавание завершено, длина текста=%s", len(text))
 
         if not text:
@@ -692,6 +700,7 @@ class StatusBarApp(rumps.App):
         self.status_item = rumps.MenuItem(f"Статус: {self._state_label()}")
         self.model_item = rumps.MenuItem(f"Модель: {self.model_name}")
         self.hotkey_item = rumps.MenuItem(f"Хоткей: {self.hotkey_status}")
+        self.language_item = rumps.MenuItem(f"Язык: {self._format_language()}")
         self.max_time_item = rumps.MenuItem(f"Длительность записи: {format_max_time_status(max_time)}")
         self.accessibility_item = rumps.MenuItem(self._permission_title("Accessibility", self.permission_status["accessibility"]))
         self.input_monitoring_item = rumps.MenuItem(self._permission_title("Input Monitoring", self.permission_status["input_monitoring"]))
@@ -703,6 +712,7 @@ class StatusBarApp(rumps.App):
             self.status_item,
             self.model_item,
             self.hotkey_item,
+            self.language_item,
             self.max_time_item,
             self.accessibility_item,
             self.input_monitoring_item,
@@ -710,7 +720,7 @@ class StatusBarApp(rumps.App):
             None,
         ]
 
-        if languages is not None:
+        if languages is not None and len(languages) > 1:
             for lang in languages:
                 callback = self.change_language if lang != self.current_language else None
                 menu.append(rumps.MenuItem(lang, callback=callback))
@@ -748,6 +758,12 @@ class StatusBarApp(rumps.App):
             STATUS_TRANSCRIBING: "распознавание",
         }
         return labels.get(self.state, "неизвестно")
+
+    def _format_language(self):
+        """Возвращает строку текущего языка для меню."""
+        if self.current_language is None:
+            return "автоопределение"
+        return self.current_language
 
     def _permission_title(self, permission_name, permission_status):
         """Формирует строку статуса разрешения для меню.
@@ -808,6 +824,7 @@ class StatusBarApp(rumps.App):
             return
 
         self.current_language = sender.title
+        self.language_item.title = f"Язык: {self._format_language()}"
         for lang in self.languages:
             self._menu_item(lang).set_callback(self.change_language if lang != self.current_language else None)
 
@@ -923,10 +940,13 @@ def parse_args():
         "-l",
         "--language",
         type=str,
-        default=None,
+        default="ru",
         help=(
             'Двухбуквенный код языка, например "en" или "ru", который помогает '
             "улучшить точность распознавания. Это особенно полезно для более компактных моделей. "
+            "Без явного указания языка Whisper пытается определить его автоматически, "
+            "но на коротких фразах может ошибаться и галлюцинировать. "
+            "По умолчанию: ru. "
             "Полный список языков есть в официальном списке Whisper: "
             "https://github.com/openai/whisper/blob/main/whisper/tokenizer.py."
         ),
