@@ -1,24 +1,106 @@
-[tool.poetry]
-name = "whisper-dictation"
+[project]
+name = "mlx-whisper-dictation"
 version = "0.1.0"
-description = "Multilingual Dictation App based on OpenAI Whisper"
-authors = ["Your Name <you@example.com>"]
+description = "Офлайн-диктовка для macOS на базе MLX Whisper"
 readme = "README.md"
+requires-python = ">=3.11,<3.13"
+authors = [{ name = "Denis Zagitov" }]
+license = "MIT"
+keywords = ["whisper", "dictation", "macos", "apple-silicon", "mlx", "speech-to-text", "privacy", "offline"]
+classifiers = [
+	"Operating System :: MacOS",
+	"Programming Language :: Python :: 3.11",
+	"Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+	"mlx-whisper",
+	"numpy>=2.0.0",
+	"pyaudio>=0.2.13",
+	"pynput>=1.7.6",
+	"rumps>=0.4.0",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.10,<3.13"
-pyaudio = "^0.2.13"
-openai = "^0.28.1"
-# without this, poetry will attempt to install `triton` which is not available for macos
-openai-whisper = { git = "https://github.com/openai/whisper.git", rev = "0a60fcaa9b86748389a656aa013c416030287d47" }
-llvmlite = "0.41.0"
-numba = "0.58.0"
-rumps = "^0.4.0"
-pynput = "^1.7.6"
+[project.urls]
+Repository = "https://github.com/zagitov/mlx-whisper-dictation"
 
-[tool.poetry.scripts]
-whisper = "whisper-dictation:main"
+[dependency-groups]
+dev = [
+	"modulegraph",
+	"py2app==0.28.10",
+	"pytest>=8.0",
+	"ruff>=0.11.0",
+    "setuptools<81",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 140
+src = ["src"]
+show-fixes = true
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+# Список включенных проверок
+select = [
+    "E",    # Ошибки стиля (pycodestyle errors) — например, лишние пробелы
+    "W",    # Предупреждения стиля (pycodestyle warnings)
+    "F",    # Логические ошибки (pyflakes) — неиспользуемые переменные, ошибочные импорты
+    "I",    # Сортировка импортов (isort) — группирует и сортирует импорты
+    "B",    # Поиск потенциальных багов (flake8-bugbear) — находит частые грабли
+    "D",    # Требование докстрингов (pydocstyle) — обеспечивает самодокументируемость
+    "N",    # Проверка именования (pep8-naming) — классы CamelCase, функции snake_case
+    "C4",     # flake8-comprehensions (оптимизация comprehensions)
+    "UP",     # pyupgrade (современный синтаксис Python)
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify (упрощение кода)
+    "PTH",    # flake8-use-pathlib (Path вместо os.path)
+    "PL",     # pylint (большой набор проверок)
+    "RUF",    # ruff-specific rules
+    "TC",     # type checking
+    "PERF",   # performance
+    "FURB",   # furious
+    "TRY",    # try-except-raise
+]
+ignore = [
+    "PLR0913",  # too many arguments — иногда неизбежно
+    "PLR0911",  # Too many return statements
+    "PLR0912",  # Too many branches
+    "PLR0915",  # Too many statements — сложные методы streaming/HITL
+    "UP025",    # Unicode in code
+    "RUF001",   # String contains ambiguous symbols
+    "RUF002",   # Docstring contains ambiguous symbols (кириллица — норма)
+    "RUF003",   # Comment contains ambiguous symbols
+    "TRY003",   # Длинные сообщения в raise — допустимо для информативных RuntimeError
+    "TRY301",   # raise внутри try — неизбежно в обёртках стриминга
+    "ARG001",   # Неиспользуемый аргумент функции — требуется интерфейсом/протоколом
+    "ARG002",   # Неиспользуемый аргумент метода — требуется фреймворком (OTEL, Telegram)
+    "E402",     # Импорт не в начале файла — sys.path манипуляция в точках входа
+    "D105",     # Missing docstring in magic method — __aenter__/__aexit__ самоочевидны
+    "D107",     # Missing docstring in __init__ — документируется через docstring класса
+]
+
+# Разрешаем Ruff автоматически исправлять все, что он умеет исправлять
+fixable = ["ALL"]
+
+[tool.ruff.lint.pydocstyle]
+# Используем стиль Google для документации (Args, Returns, Raises)
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG", "PLR2004", "PLC0415", "D104"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "."

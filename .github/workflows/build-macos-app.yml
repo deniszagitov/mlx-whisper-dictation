@@ -1,0 +1,69 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+    paths:
+      - .github/workflows/build-macos-app.yml
+      - README.md
+      - AGENTS.md
+      - pyproject.toml
+      - .python-version
+      - scripts/selfcheck.py
+      - setup.py
+      - whisper-dictation.py
+  pull_request:
+    paths:
+      - .github/workflows/build-macos-app.yml
+      - README.md
+      - AGENTS.md
+      - pyproject.toml
+      - .python-version
+      - scripts/selfcheck.py
+      - setup.py
+      - whisper-dictation.py
+
+jobs:
+  build-app:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install system dependency
+        run: brew install portaudio
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
+      - name: Build app bundle
+        run: uv run python setup.py py2app
+
+      - name: Archive app bundle
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/Dictator.app" \
+            "dist/Dictator.app.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dictator-macOS
+          path: dist/Dictator.app.zip

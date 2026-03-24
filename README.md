@@ -1,260 +1,380 @@
-# MLX Whisper Dictation - Installation and Usage Guide
+# Dictator
 
-[Watch the video on YouTube](https://youtu.be/O1NsoeECVAs?si=JMD7JCvD6LbahQU9)
+MLX Whisper Dictation для macOS на Apple Silicon.
 
-[Watch the video on Odysee](https://odysee.com/mlx-whisper-dictation:f)
+Офлайн-диктовка для macOS на Apple Silicon. Приложение живет в строке меню, записывает звук с микрофона, расшифровывает речь через MLX Whisper и вставляет результат в активное поле ввода.
 
-## Step 1: Install Homebrew
-1. Open your terminal and run:
-   ```bash
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-   ```
-2. Add Homebrew to your `PATH`:
-   ```bash
-   export PATH="/opt/homebrew/bin:$PATH"
-   ```
+Проект ориентирован на локальный запуск на Mac и упаковывается в `.app` через `py2app`.
 
----
+Это репозиторий, который можно отдать другим владельцам MacBook Air или Pro на M1, M2, M3 и новее: они смогут клонировать код, собрать `.app` у себя и получить локальную диктовку на устройстве через MLX без облака.
 
-## Step 2: Configure Zsh
-1. Open the Zsh configuration file:
-   ```bash
-   nano ~/.zshrc
-   ```
-2. Add the following line:
-   ```bash
-   source ~/.zshrc
-   ```
-3. Save and exit:
-   - Press `Ctrl + X`
-   - Press `Y`
-   - Press `Enter`
-4. Reload the configuration:
-   ```bash
-   source ~/.zshrc
-   ```
+#TODO: вставлять фото с вебки и трансформировать в эмодзи
+#TODO: ставить музыку на паузу при записи с микрофона
+#TODO: подключить на кнопку мыши
+#TODO: хранить в логах  транскрибацию, чтобы оно сохранялось, чтобы я мог как будто бы личный дневник вести, мог просто мысли за день потом сохранить. Сделать переключатель в меню типа некоторые запросы я не хочу сохранять. Так же сохранять аудиозаписи и сделать ротацию 
+#TODO: разбить приложение на модули
+#TODO: проверить что вообще наговнокодили агенты
+#TODO: сделать ondevice анализ о чем говорил за день и ротацию логов раз в сутки с суммаризацией, например
+#TODO: настроить сборку в github actions и публикацию артефакта в github
 
----
+## Требования пользователя к приложению
 
-## Step 3: Install Required Packages
-Run this command to install the necessary packages:
-```bash
-brew install portaudio llvm
-```
+Ниже зафиксированы текущие продуктовые требования к приложению.
 
----
+- Приложение должно работать как menubar-приложение без отдельного основного окна.
+- Целевая платформа: macOS на Apple Silicon.
+- Распознавание должно выполняться локально через MLX Whisper.
+- Основной пользовательский сценарий: запись запускается из menu bar или по глобальному хоткею, затем результат вставляется в активное поле ввода.
+- Если пользователь не поставил курсор в поле ввода или macOS не дала доступ к автовставке, распознанный текст должен оставаться доступным в буфере обмена.
+- В меню должны отображаться:
+	- текущий статус приложения;
+	- текущая модель;
+	- текущий хоткей;
+	- максимальная длительность записи;
+	- статусы критичных разрешений macOS.
+- Интерфейс приложения, уведомления и документация должны быть на русском языке.
+- Обновление приложения должно оставаться совместимым со сценарием, когда пользователь просто перетаскивает новую версию `.app` из `dist` в `Applications`.
 
-## Step 4: Clone the Repository
-1. Navigate to your `Documents` folder:
-   ```bash
-   cd ~/Documents
-   ```
-2. Clone the repository:
-   ```bash
-   git clone https://github.com/computerstimulation/mlx-whisper-dictation
-   ```
-3. Navigate into the project folder:
-   ```bash
-   cd mlx-whisper-dictation
-   ```
+## Требования пользователя к агенту
 
----
+Для этого репозитория также зафиксированы ожидания к агенту разработки.
 
-## Step 5: Set Up a Virtual Environment
-1. Create a virtual environment:
-   ```bash
-   python3.12 -m venv venv
-   ```
-2. Activate the virtual environment:
-   ```bash
-   source venv/bin/activate
-   ```
+- Агент должен писать на русском языке.
+- Агент должен учитывать, что пользователь обновляет приложение через drag-and-drop из `dist` в `Applications`.
+- Агент не должен считать LaunchAgent главным способом эксплуатации приложения.
+- При проблемах с хоткеями или вставкой агент должен проверять не только код, но и слой разрешений macOS.
+- При изменениях в поведении приложения агент должен актуализировать документацию.
+- Если автоматическая вставка недоступна, агент должен сохранять надежный fallback через буфер обмена.
 
----
+Подробные правила для агента вынесены в [AGENTS.md](AGENTS.md).
 
-## Step 6: Install Dependencies
-Install the app's required dependencies:
-```bash
-pip install -r requirements.txt
-```
-Wait for the dependencies to finish downloading.
+## Как это работает
 
----
+1. Приложение запускается как приложение в строке меню.
+2. По глобальному хоткею начинается запись с микрофона.
+3. После остановки записи аудио передается в `mlx_whisper.transcribe(...)`.
+4. Распознанный текст сохраняется в буфер обмена.
+5. Если у приложения есть нужные разрешения и активное поле ввода доступно, текст вставляется автоматически.
+6. Если автовставка невозможна, пользователь все равно может вставить результат вручную из буфера обмена.
 
-## Step 7: Run the App
-Run the application:
-```bash
-python whisper-dictation.py
-```
-
----
-
-## Step 8: Use the App
-1. Open a text field and place your cursor in it.
-2. Press `Command + Option` to start dictation.
-3. If prompted with “Terminal would like to access the microphone,” press **Allow**.
-4. Speak into your microphone.
-5. Press `Command + Option` again to stop dictation.
-
----
-
-### Notes:
-- The first time you use the app, the model may take some time to download.
-- The default model is **MLX Whisper Large** (highest quality but slower processing time).
-- You can change the model in the app configuration.
-
-If your cursor is on a text field, transcribed text will be automatically pasted.
-
-To stop the app, press `Ctrl + C` in the terminal.
+🍎 Apple Silicon и Neural Engine
+Apple M-серии (M1/M2/M3/M4) содержат три вычислительных блока: CPU, GPU и Neural Engine (ANE) — выделенный чип для ML-инференса, способный выполнять до 18 TOPS (M3). MLX — это фреймворк Apple, спроектированный специально для этой архитектуры. Ключевое отличие: unified memory — CPU, GPU и ANE делят одно адресное пространство, и данные не копируются между ними, а просто «переключаются» zero-copy. Это значит, что 500 Мб модели Whisper загружаются в память один раз и сразу доступны для инференса на GPU. На обычных компьютерах те же данные пришлось бы сначала скопировать из RAM в VRAM — это задержка и двойной расход памяти. MLX Whisper использует эту архитектуру на полную: модель large-v3-turbo (809M параметров) на M3 транскрибирует 30 секунд речи за ~2–3 секунды, полностью локально, без единого сетевого запроса.
 
 
-# Multilingual Dictation App based on OpenAI Whisper
-Multilingual dictation app based on the powerful OpenAI Whisper ASR model(s) to provide accurate and efficient speech-to-text conversion in any application. The app runs in the background and is triggered through a keyboard shortcut. It is also entirely offline, so no data will be shared. It allows users to set up their own keyboard combinations and choose from different Whisper models, and languages.
+## Быстрый старт для владельцев Mac M-серии
 
-## Prerequisites
-The PortAudio and llvm library is required for this app to work. You can install it on macOS using the following command:
+Если цель простая: быстро поднять рабочее приложение на своем Mac, используйте такой сценарий.
+
+1. Установите Homebrew, если его ещё нет.
+2. Поставьте `portaudio` и `uv`.
+3. Зафиксируйте Homebrew Python 3.11 для проекта.
+4. Установите зависимости и dev-инструменты через `uv`.
+5. Соберите `.app`.
+6. Перенесите `.app` в `Applications`.
+7. Выдайте приложению `Microphone`, `Accessibility` и при необходимости `Input Monitoring`.
+8. Запустите приложение и пользуйтесь через хоткей.
+
+Команды:
 
 ```bash
-brew install portaudio llvm
-```
-
-## Permissions
-The app requires accessibility permissions to register global hotkeys and permission to access your microphone for speech recognition.
-
-## Installation
-Clone the repository:
-
-```bash
-git clone https://github.com/foges/whisper-dictation.git
-cd whisper-dictation
-```
-
-If you use poetry:
-
-```shell
-poetry install
-poetry shell
-```
-
-Or, if you don't use poetry, first create a virtual environment:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-Install the required packages:
-
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-Run the application:
-
-```bash
-python whisper-dictation.py
-```
-
-By default, the app uses the "base" Whisper ASR model and the key combination to toggle dictation is cmd+option on macOS and ctrl+alt on other platforms. You can change the model and the key combination using command-line arguments.  Note that models other than `tiny` and `base` can be slow to transcribe and are not recommended unless you're using a powerful computer, ideally one with a CUDA-enabled GPU. For example:
-
-
-```bash
-python whisper-dictation.py -m large -k cmd_r+shift -l en
-```
-
-The models are multilingual, and you can specify a two-letter language code (e.g., "no" for Norwegian) with the `-l` or `--language` option. Specifying the language can improve recognition accuracy, especially for smaller model sizes.
-
-#### Replace macOS default dictation trigger key
-You can use this app to replace macOS built-in dictation. Trigger to begin recording with a double click of Right Command key and stop recording with a single click of Right Command key.
-```bash
-python whisper-dictation.py -m large --k_double_cmd -l en
-```
-To use this trigger, go to System Settings -> Keyboard, disable Dictation. If you double click Right Command key on any text field, macOS will ask whether you want to enable Dictation, so select Don't Ask Again.
-
-## Setting the App as a Startup Item
-To have the app run automatically when your computer starts, follow these steps:
-
- 1. Open System Preferences.
- 2. Go to Users & Groups.
- 3. Click on your username, then select the Login Items tab.
- 4. Click the + button and add the `run.sh` script from the whisper-dictation folder.
-
-# Installation and Usage Instructions for MLX Whisper Dictation
-
-## Step 1: Install Homebrew
-Run the following command in your terminal to install Homebrew:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-Add Homebrew to your path:
-
-bash
-Copy code
-export PATH="/opt/homebrew/bin:$PATH"
-Step 2: Configure Zsh
-Open your Zsh configuration file:
-
-bash
-Copy code
-nano ~/.zshrc
-Add the following line to the file:
-
-bash
-Copy code
-source ~/.zshrc
-Save and exit the file:
-
-Press Ctrl + X
-Press Y
-Press Enter
-Then reload the Zsh configuration:
-
-bash
-Copy code
-source ~/.zshrc
-Step 3: Install Required Packages
-Run the following command to install required packages:
-
-bash
-Copy code
-brew install portaudio llvm
-Step 4: Clone the Repository
-Navigate to your Documents folder and clone the repository:
-
-bash
-Copy code
-cd ~/Documents
-git clone https://github.com/computerstimulation/mlx-whisper-dictation
-Navigate into the project directory:
-
-bash
-Copy code
+brew install portaudio
+brew install uv
+git clone <your-fork-or-repo-url>
 cd mlx-whisper-dictation
-Step 5: Set Up a Virtual Environment
-Create and activate a virtual environment:
+uv python pin 3.11.14
+uv sync --dev
+uv run python setup.py py2app -A
+open "dist/Dictator.app"
+```
 
-bash
-Copy code
-python3.11 -m venv venv
-source venv/bin/activate
-Step 6: Install Dependencies
-Install the required packages for the app:
+Приложение не использует облачную диктовку macOS и не отправляет звук во внешний сервис. Расшифровка идет локально на машине.
 
-bash
-Copy code
-pip install -r requirements.txt
-Wait for the dependencies to download.
+## 🔒 Приватность
 
-Step 7: Run the App
-Run the application using:
+Всё распознавание происходит на вашем устройстве. Приложение не отправляет аудио, текст или метаданные в интернет. В рантайме нет ни одного сетевого запроса — ни HTTP-клиента, ни сокетов, ни телеметрии.
 
-bash
-Copy code
-python whisper-dictation.py
-Step 8: Use the App
-Open a text field and place your cursor on it.
-Press Command + Option.
-If prompted with “Terminal would like to access the microphone,” press Allow.
-Start speaking into your microphone.
-Press Command + Option again to stop.
+- **Модель** скачивается один раз из Hugging Face при первом запуске и дальше работает полностью офлайн.
+- **Аудио** обрабатывается в оперативной памяти и не сохраняется на диск, если не включён режим диагностики.
+- **Текст** попадает только в системный буфер обмена macOS и в активное поле ввода.
+- **Логи** пишутся локально в `~/Library/Logs/whisper-dictation/` и содержат только техническую информацию о работе приложения.
+- **Диагностические записи**: если диагностика включена, в `~/Library/Logs/whisper-dictation/recordings/` могут временно храниться WAV-файлы с голосом. Они ротируются автоматически (последние 10 записей).
+
+Исходный код открыт — можно убедиться самостоятельно: `grep -r "http\|socket\|requests\|urllib" whisper-dictation.py` не вернёт ни одного совпадения.
+
+## Что видно в меню бара
+
+В нормальном рабочем состоянии меню показывает:
+
+- статус приложения: ожидание, запись или распознавание;
+- модель распознавания;
+- текущий хоткей;
+- лимит длительности записи;
+- переключатель системного уведомления «Запись началась»;
+- статусы `Accessibility`, `Input Monitoring` и `Microphone`.
+
+Иконка в строке меню меняется в зависимости от состояния:
+
+- `⏯` — ожидание;
+- `🔴` с таймером — идет запись;
+- `🧠` — идет распознавание.
+
+## Что нужно для работы
+
+- macOS на Apple Silicon.
+- Homebrew.
+- Homebrew Python 3.11.
+- `portaudio`.
+- Доступы `Microphone` и `Accessibility`.
+- Иногда дополнительно нужен `Input Monitoring`, если macOS блокирует глобальные хоткеи или синтетический ввод.
+
+## Локальная сборка приложения
+
+Надежный локальный путь для этого проекта сейчас такой: собрать alias `.app` через `py2app -A`. Это обычный `.app`, но он использует текущее окружение проекта вместо полной standalone-заморозки всех зависимостей.
+
+```bash
+brew install portaudio
+brew install uv
+uv python pin 3.11.14
+uv sync --dev
+uv run python setup.py py2app -A
+```
+
+После сборки приложение появится здесь:
+
+```bash
+dist/Dictator.app
+```
+
+Запуск:
+
+```bash
+open "dist/Dictator.app"
+```
+
+Обновление установленной версии, которое использует текущий пользователь:
+
+1. Соберите новую версию в `dist`.
+2. Перетащите `dist/Dictator.app` в `Applications` с заменой.
+3. При необходимости заново проверьте разрешения в `Privacy & Security`.
+
+Если нужен запуск с выводом логов в терминал:
+
+```bash
+./dist/Dictator.app/Contents/MacOS/Dictator
+```
+
+Команда `uv sync --dev` ставит не только runtime-зависимости, но и инструменты для сборки и проверки кода, включая `py2app`, `modulegraph` и `ruff`.
+
+## Почему именно Python 3.11
+
+- В проекте зафиксирована `.python-version = 3.11.14`.
+- Homebrew Python 3.11 является framework build, а это заметно лучше работает с `py2app` на macOS.
+- Ранее `pyenv` Python 3.12 без framework давал менее пригодный результат для app bundle.
+
+`uv python pin 3.11.14` удерживает проект на нужной версии Python и упрощает воспроизводимую настройку на других машинах.
+
+## Запуск без упаковки
+
+Если хотите сначала проверить приложение как обычный Python-скрипт:
+
+```bash
+uv run python whisper-dictation.py
+```
+
+## Self-check цикл
+
+Чтобы не гонять линт, тесты и сборку вручную по отдельности, используйте единый сценарий:
+
+```bash
+uv run python scripts/selfcheck.py
+```
+
+Что делает команда по умолчанию:
+
+- запускает `ruff check .`
+- запускает основной набор pytest-тестов
+- не трогает slow и hardware тесты
+- не собирает `.app`, если это не нужно
+
+Полезные варианты:
+
+```bash
+uv run python scripts/selfcheck.py --build
+uv run python scripts/selfcheck.py --slow
+uv run python scripts/selfcheck.py --hardware
+uv run python scripts/selfcheck.py --slow --hardware --build
+```
+
+Рекомендуемый цикл разработки теперь такой:
+
+1. Перед крупной правкой: `uv run python scripts/selfcheck.py`
+2. После изменения runtime-логики: `uv run python scripts/selfcheck.py --build`
+3. Перед проверкой на реальном железе: `uv run python scripts/selfcheck.py --hardware`
+
+## Хоткеи
+
+По умолчанию на macOS используется:
+
+```bash
+cmd_l+alt
+```
+
+Поддерживаются комбинации из двух и более клавиш. Примеры:
+
+```bash
+uv run python whisper-dictation.py -k cmd_l+shift+space
+uv run python whisper-dictation.py -k cmd_r+shift
+uv run python whisper-dictation.py -k ctrl+alt
+```
+
+При необходимости можно включить второй хоткей для тех же действий старта и остановки записи. Это удобно, если кнопка мыши в Logitech Options или другой утилите отправляет отдельное сочетание клавиш:
+
+```bash
+uv run python whisper-dictation.py -k cmd_l+alt --secondary_key_combination ctrl+shift+space
+```
+
+В menu bar оба хоткея показываются отдельно:
+
+- основной хоткей
+- дополнительный хоткей
+
+Их можно менять независимо друг от друга прямо во время работы приложения.
+
+Также можно включить режим по правой клавише Command:
+
+```bash
+uv run python whisper-dictation.py --k_double_cmd
+```
+
+В этом режиме:
+
+- двойное нажатие правой `Command` начинает запись
+- одиночное нажатие правой `Command` останавливает запись
+
+Если используете этот режим, отключите системный shortcut встроенной диктовки macOS, чтобы они не конфликтовали. В режиме `--k_double_cmd` дополнительный хоткей `--secondary_key_combination` недоступен.
+
+Важно: сочетания вида только из modifier-клавиш на macOS зависят от системных разрешений особенно сильно. Если хоткей не срабатывает, сначала проверьте статусы `Accessibility` и `Input Monitoring` прямо в меню приложения и в `System Settings`.
+
+## Выбор модели
+
+Текущий рекомендуемый вариант по умолчанию:
+
+```bash
+mlx-community/whisper-large-v3-turbo
+```
+
+Практические варианты для M3:
+
+- `mlx-community/whisper-large-v3-turbo` как основной баланс качества и скорости
+- `mlx-community/whisper-large-v3-mlx`, если качество важнее задержки
+- `mlx-community/whisper-turbo`, если нужна минимальная задержка и допустима более слабая точность
+
+Пример запуска:
+
+```bash
+uv run python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
+```
+
+Также модель можно переключать прямо в menu bar во время работы приложения: пункт `🧠 Выбрать модель`.
+Там же доступны быстрые списки `🎙️ Выбрать микрофон` и `⏱ Выбрать лимит записи` (в секундах).
+
+## Доступы macOS
+
+Для собранного `.app` проверьте доступы:
+
+- `Microphone`
+- `Accessibility`
+
+Если хоткей не реагирует или текст не вставляется, дополнительно проверьте:
+
+- `Input Monitoring`
+
+Важно: после переноса `.app` в другую папку macOS может считать его новым приложением. В этом случае доступы иногда нужно выдать заново.
+
+То же самое часто происходит при обновлении через простое перетаскивание новой версии `.app` из `dist` в `Applications`: macOS может сбросить доверие к `Accessibility` и `Input Monitoring`, даже если bundle identifier не менялся.
+
+Практический совет: после первой сборки лучше перенести приложение в `/Applications`, удалить старую запись из `Accessibility` и добавить уже новую копию оттуда. Это снижает число странных кейсов с правами и старыми путями.
+
+## Автозапуск при входе
+
+Если приложение уже собрано и работает, добавьте его в `Login Items`:
+
+1. Откройте `System Settings`.
+2. Перейдите в `General`.
+3. Откройте `Login Items & Extensions`.
+4. Добавьте `dist/Dictator.app` или ту копию `.app`, которую вы перенесли в постоянную папку.
+
+## Где смотреть логи
+
+У приложения есть простые пользовательские логи:
+
+```bash
+~/Library/Logs/whisper-dictation/stdout.log
+~/Library/Logs/whisper-dictation/stderr.log
+```
+
+Они полезны, если приложение запускается, но не вставляет текст, не реагирует на хоткей или не видно ошибок в интерфейсе.
+
+Что обычно видно в логах:
+
+- ошибки доступа к `Accessibility` или `Input Monitoring`
+- проблемы с записью с микрофона
+- ошибки распознавания модели
+- падение вставки через буфер обмена или резервный ввод клавишами
+- запуск приложения с текущей моделью и хоткеем
+
+Для просмотра в реальном времени:
+
+```bash
+tail -f ~/Library/Logs/whisper-dictation/stdout.log
+tail -f ~/Library/Logs/whisper-dictation/stderr.log
+```
+
+## Сборка в GitHub Actions
+
+В репозитории есть workflow [.github/workflows/build-macos-app.yml](.github/workflows/build-macos-app.yml).
+
+Он:
+
+- запускается на `macos-14`
+- ставит `portaudio` и `uv`
+- синхронизирует зависимости из `pyproject.toml`
+- прогоняет `ruff`
+- собирает `.app`
+- загружает артефакт сборки
+
+Это полезно для проверки, что репозиторий вообще собирается после изменений. Но основной способ распространения проекта всё равно лучше оставлять через исходники и локальную сборку на каждом Mac с M-серией.
+
+## Что будет после клона
+
+- локальную диктовку на устройстве без облака
+- хорошую скорость на Apple Silicon за счет MLX
+- нормальную вставку текста в активное поле ввода или надежный fallback через буфер обмена
+- возможность выбрать модель под свой баланс скорости и качества
+- простой путь к `.app`, который живет в строке меню и не требует LaunchAgent
+
+## Информация для разработки
+
+Основной runtime-entrypoint проекта: `whisper-dictation.py`.
+
+Базовые команды разработки:
+
+```bash
+uv sync --dev
+uv run ruff check .
+uv run python whisper-dictation.py
+uv run python setup.py py2app -A
+```
+
+Если меняется поведение приложения, желательно обновлять и [AGENTS.md](AGENTS.md), и этот README, чтобы требования к продукту и к агенту оставались синхронизированными.
+
+## Техническая основа
+
+Проект держится близко к MLX Whisper API:
+
+- используется прямой вызов `mlx_whisper.transcribe(audio, path_or_hf_repo=...)`
+- модель задается как Hugging Face repo или локальный путь
+- аудио пишется через `PyAudio`
+- горячие клавиши отслеживаются через `pynput`
+- автоматическая вставка выполняется через системные Quartz keyboard events, с fallback на буфер обмена и резервный посимвольный ввод
+- приложение в строке меню реализовано через `rumps`
