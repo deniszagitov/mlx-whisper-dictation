@@ -22,23 +22,33 @@ def pytest_addoption(parser):
         default=False,
         help="Запустить тесты, требующие доступ к аппаратуре (микрофон)",
     )
+    parser.addoption(
+        "--run-build",
+        action="store_true",
+        default=False,
+        help="Запустить тесты сборки .app через py2app",
+    )
 
 
 def pytest_configure(config):
     """Регистрирует пользовательские маркеры."""
     config.addinivalue_line("markers", "slow: медленные тесты (модель, транскрибация)")
     config.addinivalue_line("markers", "hardware: тесты, требующие доступ к аппаратуре")
+    config.addinivalue_line("markers", "build: тесты сборки .app через py2app")
 
 
 def pytest_collection_modifyitems(config, items):
     """Пропускает тесты с маркерами slow/hardware, если не указаны соответствующие флаги."""
     skip_slow = pytest.mark.skip(reason="нужен флаг --run-slow для запуска")
     skip_hardware = pytest.mark.skip(reason="нужен флаг --run-hardware для запуска")
+    skip_build = pytest.mark.skip(reason="нужен флаг --run-build для запуска")
     for item in items:
         if "slow" in item.keywords and not config.getoption("--run-slow"):
             item.add_marker(skip_slow)
         if "hardware" in item.keywords and not config.getoption("--run-hardware"):
             item.add_marker(skip_hardware)
+        if "build" in item.keywords and not config.getoption("--run-build"):
+            item.add_marker(skip_build)
 
 
 @pytest.fixture

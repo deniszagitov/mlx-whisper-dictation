@@ -58,6 +58,8 @@ def main() -> int:
         pytest_command.append("--run-slow")
     if args.hardware:
         pytest_command.append("--run-hardware")
+    if args.build:
+        pytest_command.append("--run-build")
     run_step("Pytest", pytest_command)
 
     if args.build:

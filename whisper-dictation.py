@@ -9,6 +9,7 @@ import argparse
 import ctypes
 import json
 import logging
+import logging.handlers
 import platform
 import sys
 import threading
@@ -28,6 +29,12 @@ from Foundation import NSURL, NSDictionary
 from pynput import keyboard
 
 DEFAULT_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
+MODEL_PRESETS = [
+    "mlx-community/whisper-large-v3-turbo",
+    "mlx-community/whisper-large-v3-mlx",
+    "mlx-community/whisper-turbo",
+]
+MAX_TIME_PRESETS = [15, 30, 45, 60, 90, None]
 MIN_HOTKEY_PARTS = 2
 DOUBLE_COMMAND_PRESS_INTERVAL = 0.5
 STATUS_IDLE = "idle"
@@ -82,12 +89,22 @@ def setup_logging():
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
 
-    stdout_handler = logging.FileHandler(LOG_DIR / "stdout.log", encoding="utf-8")
+    stdout_handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "stdout.log",
+        maxBytes=5_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
     stdout_handler.setLevel(logging.INFO)
     stdout_handler.addFilter(MaxLevelFilter(logging.ERROR))
     stdout_handler.setFormatter(formatter)
 
-    stderr_handler = logging.FileHandler(LOG_DIR / "stderr.log", encoding="utf-8")
+    stderr_handler = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "stderr.log",
+        maxBytes=5_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
     stderr_handler.setLevel(logging.ERROR)
     stderr_handler.setFormatter(formatter)
 
@@ -209,7 +226,7 @@ def notify_user(title, message):
     try:
         rumps.notification(title, "", message)
     except Exception:
-        LOGGER.exception("Не удалось показать системное уведомление macOS")
+        LOGGER.exception("❌ Не удалось показать системное уведомление macOS")
 
 
 def open_system_settings(url):
@@ -221,7 +238,7 @@ def open_system_settings(url):
         settings_url = NSURL.URLWithString_(url)
         return bool(AppKit.NSWorkspace.sharedWorkspace().openURL_(settings_url))
     except Exception:
-        LOGGER.exception("Не удалось открыть System Settings: %s", url)
+        LOGGER.exception("❌ Не удалось открыть System Settings: %s", url)
         return False
 
 
@@ -239,7 +256,7 @@ def frontmost_application_info():
             "pid": int(application.processIdentifier()),
         }
     except Exception:
-        LOGGER.exception("Не удалось определить активное приложение")
+        LOGGER.exception("❌ Не удалось определить активное приложение")
         return None
 
 
@@ -256,7 +273,7 @@ def is_accessibility_trusted():
     try:
         return permission_preflight_status("AXIsProcessTrusted") is not False
     except Exception:
-        LOGGER.exception("Не удалось проверить статус Accessibility")
+        LOGGER.exception("❌ Не удалось проверить статус Accessibility")
         return True
 
 
@@ -280,7 +297,7 @@ def permission_preflight_status(function_name):
         preflight_function.restype = ctypes.c_bool
         return bool(preflight_function())
     except Exception:
-        LOGGER.exception("Не удалось проверить статус разрешения %s", function_name)
+        LOGGER.exception("❌ Не удалось проверить статус разрешения %s", function_name)
         return None
 
 
@@ -311,14 +328,14 @@ def request_accessibility_permission():
         options = NSDictionary.dictionaryWithObject_forKey_(True, "AXTrustedCheckOptionPrompt")
         request_function = getattr(application_services, "AXIsProcessTrustedWithOptions", None)
         if request_function is None:
-            LOGGER.warning("AXIsProcessTrustedWithOptions не найдена")
+            LOGGER.warning("⚠️ AXIsProcessTrustedWithOptions не найдена")
             return False
 
         request_function.restype = ctypes.c_bool
         request_function.argtypes = [ctypes.c_void_p]
         result = bool(request_function(objc.pyobjc_id(options)))
     except Exception:
-        LOGGER.exception("Не удалось запросить Accessibility")
+        LOGGER.exception("❌ Не удалось запросить Accessibility")
         return False
     else:
         return result
@@ -339,11 +356,11 @@ def request_input_monitoring_permission():
     try:
         request_function = getattr(Quartz, "CGRequestListenEventAccess", None)
         if request_function is None:
-            LOGGER.warning("CGRequestListenEventAccess не найдена")
+            LOGGER.warning("⚠️ CGRequestListenEventAccess не найдена")
             return False
         return bool(request_function())
     except Exception:
-        LOGGER.exception("Не удалось запросить Input Monitoring")
+        LOGGER.exception("❌ Не удалось запросить Input Monitoring")
         return False
 
 
@@ -370,7 +387,7 @@ def warn_missing_accessibility_permission():
         "Без него не будут работать глобальный хоткей и вставка текста. "
         "Откройте System Settings -> Privacy & Security -> Accessibility и включите приложение заново."
     )
-    LOGGER.error(message)
+    LOGGER.error("🔐 %s", message)
     open_system_settings(ACCESSIBILITY_SETTINGS_URL)
     notify_user("MLX Whisper Dictation", message)
 
@@ -382,9 +399,40 @@ def warn_missing_input_monitoring_permission():
         "Без него macOS может блокировать глобальный хоткей или синтетический ввод. "
         "Откройте System Settings -> Privacy & Security -> Input Monitoring и включите приложение заново."
     )
-    LOGGER.error(message)
+    LOGGER.error("🔐 %s", message)
     open_system_settings(INPUT_MONITORING_SETTINGS_URL)
     notify_user("MLX Whisper Dictation", message)
+
+
+KEY_NAME_ALIASES = {
+    "ctrl": "ctrl",
+    "control": "ctrl",
+    "alt": "alt",
+    "option": "alt",
+    "opt": "alt",
+    "shift": "shift",
+    "cmd": "cmd",
+    "command": "cmd",
+    "meta": "cmd",
+    "super": "cmd",
+}
+
+
+def normalize_key_name(raw_name):
+    """Нормализует имя клавиши к каноническому виду.
+
+    Поддерживает человекочитаемые алиасы (Ctrl, Control, Option, Command)
+    и приводит регистр к нижнему.
+
+    Args:
+        raw_name: Строковое имя клавиши, например `Ctrl`, `cmd_l` или `T`.
+
+    Returns:
+        Нормализованное имя клавиши.
+    """
+    lowered = raw_name.strip().lower()
+    alias = KEY_NAME_ALIASES.get(lowered)
+    return alias if alias is not None else lowered
 
 
 def parse_key(key_name):
@@ -399,11 +447,30 @@ def parse_key(key_name):
     return getattr(keyboard.Key, key_name, keyboard.KeyCode(char=key_name))
 
 
+def normalize_key_combination(key_combination):
+    """Нормализует строку комбинации клавиш к внутреннему формату.
+
+    Args:
+        key_combination: Строка вида `cmd_l+alt` или `Command+Option+space`.
+
+    Returns:
+        Нормализованная строка комбинации клавиш.
+
+    Raises:
+        ValueError: Если в комбинации меньше двух клавиш.
+    """
+    parts = [normalize_key_name(part) for part in key_combination.split("+") if part.strip()]
+    if len(parts) < MIN_HOTKEY_PARTS:
+        raise ValueError("Комбинация клавиш должна содержать как минимум две клавиши.")
+    return "+".join(parts)
+
+
 def parse_key_combination(key_combination):
     """Разбирает строку с комбинацией клавиш.
 
     Args:
-        key_combination: Строка вида `cmd_l+alt` или `cmd_l+shift+space`.
+        key_combination: Строка вида `cmd_l+alt`, `ctrl+shift+alt+t`
+            или `Ctrl+Shift+Alt+T`.
 
     Returns:
         Кортеж объектов клавиш в том порядке, в котором они указаны.
@@ -411,41 +478,8 @@ def parse_key_combination(key_combination):
     Raises:
         ValueError: Если в комбинации меньше двух клавиш.
     """
-    parts = [part.strip() for part in key_combination.split("+") if part.strip()]
-    if len(parts) < MIN_HOTKEY_PARTS:
-        raise ValueError("Комбинация клавиш должна содержать как минимум две клавиши.")
+    parts = normalize_key_combination(key_combination).split("+")
     return tuple(parse_key(part) for part in parts)
-
-
-def key_matches(expected_key, actual_key):
-    """Проверяет, соответствует ли нажатая клавиша ожидаемой.
-
-    Args:
-        expected_key: Клавиша, описанная в настройке хоткея.
-        actual_key: Фактически нажатая клавиша из pynput.
-
-    Returns:
-        True, если клавиши считаются эквивалентными.
-    """
-    key_variants = {
-        keyboard.Key.alt: {keyboard.Key.alt, keyboard.Key.alt_l, keyboard.Key.alt_r},
-        keyboard.Key.alt_l: {keyboard.Key.alt, keyboard.Key.alt_l},
-        keyboard.Key.alt_r: {keyboard.Key.alt, keyboard.Key.alt_r},
-        keyboard.Key.shift: {keyboard.Key.shift, keyboard.Key.shift_l, keyboard.Key.shift_r},
-        keyboard.Key.shift_l: {keyboard.Key.shift, keyboard.Key.shift_l},
-        keyboard.Key.shift_r: {keyboard.Key.shift, keyboard.Key.shift_r},
-        keyboard.Key.ctrl: {keyboard.Key.ctrl, keyboard.Key.ctrl_l, keyboard.Key.ctrl_r},
-        keyboard.Key.ctrl_l: {keyboard.Key.ctrl, keyboard.Key.ctrl_l},
-        keyboard.Key.ctrl_r: {keyboard.Key.ctrl, keyboard.Key.ctrl_r},
-        keyboard.Key.cmd: {keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r},
-        keyboard.Key.cmd_l: {keyboard.Key.cmd, keyboard.Key.cmd_l},
-        keyboard.Key.cmd_r: {keyboard.Key.cmd, keyboard.Key.cmd_r},
-    }
-
-    if expected_key == actual_key:
-        return True
-
-    return bool(key_variants.get(expected_key, {expected_key}) & key_variants.get(actual_key, {actual_key}))
 
 
 def format_max_time_status(max_time):
@@ -557,8 +591,8 @@ def format_hotkey_status(key_combination=None, *, use_double_cmd=False):
         "ctrl_r": "правая ⌃",
         "space": "Space",
     }
-    parts = [part.strip() for part in (key_combination or "").split("+") if part.strip()]
-    return " + ".join(display_names.get(part, part.upper()) for part in parts)
+    parts = [normalize_key_name(part) for part in (key_combination or "").split("+") if part.strip()]
+    return " + ".join(display_names[part] if part in display_names else part.upper() for part in parts)
 
 
 class SpeechTranscriber:
@@ -598,7 +632,7 @@ class SpeechTranscriber:
         active_app = frontmost_application_info()
         if active_app is not None:
             LOGGER.info(
-                "Пытаюсь вставить в активное приложение: name=%s, bundle_id=%s, pid=%s",
+                "🎤 Пытаюсь вставить в активное приложение: name=%s, bundle_id=%s, pid=%s",
                 active_app["name"],
                 active_app["bundle_id"],
                 active_app["pid"],
@@ -650,7 +684,7 @@ class SpeechTranscriber:
         wav_path = self.diagnostics_store.save_audio_recording(stem, audio_data, diagnostics)
         if wav_path is None:
             LOGGER.info(
-                "Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s",
+                "🔍 Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s",
                 audio_duration_seconds,
                 rms_energy,
                 peak_amplitude,
@@ -658,7 +692,7 @@ class SpeechTranscriber:
             )
         else:
             LOGGER.info(
-                "Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s, wav=%s",
+                "🔍 Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s, wav=%s",
                 audio_duration_seconds,
                 rms_energy,
                 peak_amplitude,
@@ -666,10 +700,10 @@ class SpeechTranscriber:
                 wav_path,
             )
         if audio_duration_seconds < SHORT_AUDIO_WARNING_SECONDS:
-            LOGGER.warning("Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
+            LOGGER.warning("⚠️ Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
         if rms_energy < SILENCE_RMS_THRESHOLD:
             LOGGER.warning(
-                "Аудио очень тихое (RMS=%.6f < %.4f), но распознавание всё равно будет запущено",
+                "🔇 Аудио очень тихое (RMS=%.6f < %.4f), но распознавание всё равно будет запущено",
                 rms_energy,
                 SILENCE_RMS_THRESHOLD,
             )
@@ -677,7 +711,7 @@ class SpeechTranscriber:
         try:
             result = self._run_transcription(audio_data, language)
         except Exception:
-            LOGGER.exception("Ошибка распознавания")
+            LOGGER.exception("❌ Ошибка распознавания")
             self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, error_message="Ошибка распознавания")
             notify_user(
                 "MLX Whisper Dictation",
@@ -686,22 +720,22 @@ class SpeechTranscriber:
             return
 
         text = str(result.get("text", "")).strip()
-        LOGGER.info("Первый проход распознавания завершен, длина текста=%s, текст=%r", len(text), text[:120])
+        LOGGER.info("🧠 Первый проход распознавания завершен, длина текста=%s, текст=%r", len(text), text[:120])
 
         if not text and language is not None:
-            LOGGER.info("Первый проход вернул пустой результат, повторяю распознавание без фиксированного языка")
+            LOGGER.info("🔄 Первый проход вернул пустой результат, повторяю распознавание без фиксированного языка")
             try:
                 result = self._run_transcription(audio_data, None)
             except Exception:
-                LOGGER.exception("Ошибка повторного распознавания без языка")
+                LOGGER.exception("❌ Ошибка повторного распознавания без языка")
             else:
                 text = str(result.get("text", "")).strip()
-                LOGGER.info("Повторный проход завершен, длина текста=%s, текст=%r", len(text), text[:120])
+                LOGGER.info("🧠 Повторный проход завершен, длина текста=%s, текст=%r", len(text), text[:120])
 
         self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, result=result, text=text)
 
         if not text:
-            LOGGER.warning("Результат распознавания пустой")
+            LOGGER.warning("⚠️ Результат распознавания пустой")
             notify_user(
                 "MLX Whisper Dictation",
                 "Речь не распознана. Проверьте микрофон, уровень сигнала и попробуйте еще раз.",
@@ -709,27 +743,27 @@ class SpeechTranscriber:
             return
 
         if looks_like_hallucination(text) and rms_energy < HALLUCINATION_RMS_THRESHOLD:
-            LOGGER.warning("Отброшен вероятный галлюцинаторный результат: %r", text)
+            LOGGER.warning("👻 Отброшен вероятный галлюцинаторный результат: %r", text)
 
         try:
             self._copy_text_to_clipboard(text)
         except Exception:
-            LOGGER.exception("Не удалось сохранить текст в буфер обмена")
+            LOGGER.exception("❌ Не удалось сохранить текст в буфер обмена")
             notify_user(
                 "MLX Whisper Dictation",
                 "Не удалось сохранить распознанный текст в буфер обмена. Смотрите stderr.log.",
             )
             return
         else:
-            LOGGER.info("Текст сохранен в буфере обмена")
+            LOGGER.info("📋 Текст сохранен в буфере обмена")
 
         if not is_accessibility_trusted():
-            LOGGER.warning("Перед вставкой нет доступа к Accessibility, повторно запрашиваю разрешение")
+            LOGGER.warning("🔐 Перед вставкой нет доступа к Accessibility, повторно запрашиваю разрешение")
             request_accessibility_permission()
             time.sleep(0.2)
 
         if get_input_monitoring_status() is not True:
-            LOGGER.warning("Перед вставкой нет доступа к Input Monitoring, повторно запрашиваю разрешение")
+            LOGGER.warning("🔐 Перед вставкой нет доступа к Input Monitoring, повторно запрашиваю разрешение")
             request_input_monitoring_permission()
             time.sleep(0.2)
 
@@ -751,14 +785,14 @@ class SpeechTranscriber:
 
         try:
             self._paste_text()
-            LOGGER.info("Текст вставлен через буфер обмена")
+            LOGGER.info("📌 Текст вставлен через буфер обмена")
         except Exception:
-            LOGGER.exception("Не удалось вставить через буфер обмена, переключаюсь на ввод клавишами")
+            LOGGER.exception("⚠️ Не удалось вставить через буфер обмена, переключаюсь на ввод клавишами")
             try:
                 self.pykeyboard.type(text)
-                LOGGER.info("Текст вставлен через резервный ввод клавишами")
+                LOGGER.info("⌨️ Текст вставлен через резервный ввод клавишами")
             except Exception:
-                LOGGER.exception("Резервный ввод клавишами тоже завершился ошибкой")
+                LOGGER.exception("❌ Резервный ввод клавишами тоже завершился ошибкой")
                 notify_user(
                     "MLX Whisper Dictation",
                     "Не удалось вставить текст автоматически. Но текст сохранен в буфер обмена, его можно вставить вручную.",
@@ -859,7 +893,7 @@ class Recorder:
 
         try:
             LOGGER.info(
-                "Открываю поток записи: input_device_index=%s, input_device_name=%s",
+                "🎙️ Открываю поток записи: input_device_index=%s, input_device_name=%s",
                 self.input_device_index,
                 self.input_device_name,
             )
@@ -878,7 +912,7 @@ class Recorder:
                 frames.append(data)
         except Exception:
             self._set_permission_status("microphone", False)
-            LOGGER.exception("Ошибка записи")
+            LOGGER.exception("❌ Ошибка записи")
             notify_user(
                 "MLX Whisper Dictation",
                 "Ошибка записи с микрофона. Смотрите stderr.log.",
@@ -891,14 +925,14 @@ class Recorder:
             audio_interface.terminate()
 
         if not frames:
-            LOGGER.warning("Запись остановлена без захваченных аудиофреймов")
+            LOGGER.warning("⚠️ Запись остановлена без захваченных аудиофреймов")
             self._set_status(STATUS_IDLE)
             return
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
         audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
         LOGGER.info(
-            "Запись завершена: фреймов=%s, сэмплов=%s, длительность=%.2f с",
+            "✅ Запись завершена: фреймов=%s, сэмплов=%s, длительность=%.2f с",
             len(frames),
             len(audio_data_fp32),
             len(audio_data_fp32) / 16000,
@@ -906,6 +940,161 @@ class Recorder:
         self._set_status(STATUS_TRANSCRIBING)
         self.transcriber.transcribe(audio_data_fp32, language)
         self._set_status(STATUS_IDLE)
+
+
+MODIFIER_KEYCODES_MAP = {
+    54: "cmd_r",
+    55: "cmd_l",
+    56: "shift_l",
+    58: "alt_l",
+    59: "ctrl_l",
+    60: "shift_r",
+    61: "alt_r",
+    62: "ctrl_r",
+}
+
+MODIFIER_FLAG_MASKS = {
+    "alt_l": 0x00080000,
+    "alt_r": 0x00080000,
+    "ctrl_l": 0x00040000,
+    "ctrl_r": 0x00040000,
+    "shift_l": 0x00020000,
+    "shift_r": 0x00020000,
+    "cmd_l": 0x00100000,
+    "cmd_r": 0x00100000,
+}
+
+NAMED_KEYCODES_MAP = {
+    36: "enter",
+    48: "tab",
+    49: "space",
+    51: "backspace",
+    53: "esc",
+}
+
+MODIFIER_DISPLAY_ORDER = ["ctrl", "ctrl_l", "ctrl_r", "alt", "alt_l", "alt_r", "shift", "shift_l", "shift_r", "cmd", "cmd_l", "cmd_r"]
+
+
+def _event_key_name_static(event):
+    """Извлекает имя обычной клавиши из NSEvent."""
+    key_code = int(event.keyCode())
+    if key_code in NAMED_KEYCODES_MAP:
+        return NAMED_KEYCODES_MAP[key_code]
+    characters = str(event.charactersIgnoringModifiers() or "").lower()
+    return characters[:1] if characters else ""
+
+
+def capture_hotkey_combination(title, message, current_combination=""):
+    """Открывает модальное окно для захвата комбинации клавиш по нажатию.
+
+    Показывает NSAlert с текстовым полем, которое отображает текущую
+    комбинацию по мере нажатия клавиш. Пользователь нажимает модификаторы
+    и обычную клавишу, комбинация фиксируется и показывается в поле.
+
+    Args:
+        title: Заголовок диалогового окна.
+        message: Подсказка для пользователя.
+        current_combination: Текущая комбинация для отображения по умолчанию.
+
+    Returns:
+        Нормализованную строку комбинации клавиш или None, если отменено.
+    """
+    appkit = cast("Any", AppKit)
+
+    captured_parts = []
+    pressed_modifiers = set()
+    confirmed_combination = [None]
+
+    alert = appkit.NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.setInformativeText_(message)
+    alert.addButtonWithTitle_("Применить")
+    alert.addButtonWithTitle_("Отмена")
+
+    input_field = appkit.NSTextField.alloc().initWithFrame_(((0, 0), (280, 24)))
+    input_field.setStringValue_(format_hotkey_status(current_combination) if current_combination else "")
+    input_field.setEditable_(False)
+    input_field.setSelectable_(False)
+    input_field.setAlignment_(appkit.NSTextAlignmentCenter)
+    font = appkit.NSFont.systemFontOfSize_(14)
+    input_field.setFont_(font)
+    alert.setAccessoryView_(input_field)
+
+    def _update_display():
+        """Обновляет текстовое поле с текущей комбинацией."""
+        if captured_parts:
+            combo = "+".join(captured_parts)
+            input_field.setStringValue_(format_hotkey_status(combo))
+        elif pressed_modifiers:
+            sorted_mods = sorted(pressed_modifiers, key=lambda m: MODIFIER_DISPLAY_ORDER.index(m) if m in MODIFIER_DISPLAY_ORDER else 99)
+            combo = "+".join(sorted_mods)
+            input_field.setStringValue_(format_hotkey_status(combo) + " + …")
+
+    def _handle_flags(event):
+        """Обрабатывает нажатия модификаторов внутри диалога."""
+        key_code = int(event.keyCode())
+        modifier_name = MODIFIER_KEYCODES_MAP.get(key_code)
+        if modifier_name is None:
+            return event
+
+        modifier_flags = int(event.modifierFlags())
+        mask = MODIFIER_FLAG_MASKS.get(modifier_name, 0)
+        if modifier_flags & mask:
+            pressed_modifiers.add(modifier_name)
+        else:
+            pressed_modifiers.discard(modifier_name)
+
+        if not captured_parts:
+            _update_display()
+        return event
+
+    def _handle_key_down(event):
+        """Фиксирует обычную клавишу при зажатых модификаторах."""
+        if not pressed_modifiers:
+            return event
+
+        key_name = _event_key_name_static(event)
+        if not key_name:
+            return event
+
+        all_modifier_names = {"alt", "alt_l", "alt_r", "shift", "shift_l", "shift_r", "ctrl", "ctrl_l", "ctrl_r", "cmd", "cmd_l", "cmd_r"}
+        if key_name in all_modifier_names:
+            return event
+
+        sorted_mods = sorted(pressed_modifiers, key=lambda m: MODIFIER_DISPLAY_ORDER.index(m) if m in MODIFIER_DISPLAY_ORDER else 99)
+        captured_parts.clear()
+        captured_parts.extend(sorted_mods)
+        captured_parts.append(key_name)
+        _update_display()
+        return None
+
+    flags_mask = appkit.NSEventMaskFlagsChanged
+    key_down_mask = appkit.NSEventMaskKeyDown
+
+    local_flags_monitor = appkit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(flags_mask, _handle_flags)
+    local_key_monitor = appkit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(key_down_mask, _handle_key_down)
+    global_flags_monitor = appkit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(flags_mask, _handle_flags)
+    global_key_monitor = appkit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(key_down_mask, _handle_key_down)
+
+    try:
+        response = alert.runModal()
+    finally:
+        appkit.NSEvent.removeMonitor_(local_flags_monitor)
+        appkit.NSEvent.removeMonitor_(local_key_monitor)
+        appkit.NSEvent.removeMonitor_(global_flags_monitor)
+        appkit.NSEvent.removeMonitor_(global_key_monitor)
+
+    _nsalert_first_button = 1000
+    if response != _nsalert_first_button:
+        return None
+
+    if captured_parts:
+        confirmed_combination[0] = "+".join(captured_parts)
+    elif pressed_modifiers and len(pressed_modifiers) >= MIN_HOTKEY_PARTS:
+        sorted_mods = sorted(pressed_modifiers, key=lambda m: MODIFIER_DISPLAY_ORDER.index(m) if m in MODIFIER_DISPLAY_ORDER else 99)
+        confirmed_combination[0] = "+".join(sorted_mods)
+
+    return confirmed_combination[0]
 
 
 class GlobalKeyListener:
@@ -926,8 +1115,8 @@ class GlobalKeyListener:
             key_combination: Строка с комбинацией клавиш.
         """
         self.app = app
-        self.key_combination = key_combination
-        self.key_names = [part.strip() for part in key_combination.split("+") if part.strip()]
+        self.key_combination = normalize_key_combination(key_combination)
+        self.key_names = self.key_combination.split("+")
         self.modifier_names = {"alt", "alt_l", "alt_r", "shift", "shift_l", "shift_r", "ctrl", "ctrl_l", "ctrl_r", "cmd", "cmd_l", "cmd_r"}
         self.required_modifiers = [name for name in self.key_names if name in self.modifier_names]
         self.required_key = next((name for name in self.key_names if name not in self.modifier_names), None)
@@ -936,15 +1125,24 @@ class GlobalKeyListener:
         self.flags_monitor = None
         self.key_down_monitor = None
         self.appkit = cast("Any", AppKit)
-        self.modifier_keycodes = {
-            54: "cmd_r",
-            55: "cmd_l",
-            58: "alt_l",
-            59: "ctrl_l",
-            60: "shift_l",
-            61: "alt_r",
-            62: "ctrl_r",
-        }
+
+    def stop(self):
+        """Удаляет глобальные мониторы событий клавиатуры."""
+        if self.flags_monitor is not None:
+            self.appkit.NSEvent.removeMonitor_(self.flags_monitor)
+            self.flags_monitor = None
+        if self.key_down_monitor is not None:
+            self.appkit.NSEvent.removeMonitor_(self.key_down_monitor)
+            self.key_down_monitor = None
+
+    def update_key_combination(self, key_combination):
+        """Обновляет комбинацию клавиш без пересоздания listener."""
+        self.key_combination = normalize_key_combination(key_combination)
+        self.key_names = self.key_combination.split("+")
+        self.required_modifiers = [name for name in self.key_names if name in self.modifier_names]
+        self.required_key = next((name for name in self.key_names if name not in self.modifier_names), None)
+        self.pressed_modifier_names.clear()
+        self.triggered = False
 
     def start(self):
         """Запускает глобальный монитор событий клавиатуры через AppKit."""
@@ -977,17 +1175,8 @@ class GlobalKeyListener:
             True, если соответствующий modifier сейчас зажат.
         """
         modifier_flags = int(event.modifierFlags())
-        flag_masks = {
-            "alt_l": self.appkit.NSEventModifierFlagOption,
-            "alt_r": self.appkit.NSEventModifierFlagOption,
-            "ctrl_l": self.appkit.NSEventModifierFlagControl,
-            "ctrl_r": self.appkit.NSEventModifierFlagControl,
-            "shift_l": self.appkit.NSEventModifierFlagShift,
-            "shift_r": self.appkit.NSEventModifierFlagShift,
-            "cmd_l": self.appkit.NSEventModifierFlagCommand,
-            "cmd_r": self.appkit.NSEventModifierFlagCommand,
-        }
-        return bool(modifier_flags & int(flag_masks.get(modifier_name, 0)))
+        mask = MODIFIER_FLAG_MASKS.get(modifier_name, 0)
+        return bool(modifier_flags & mask)
 
     def _handle_flags_changed(self, event):
         """Обрабатывает глобальные изменения modifier-клавиш.
@@ -996,7 +1185,7 @@ class GlobalKeyListener:
             event: Системное NSEvent.
         """
         key_code = int(event.keyCode())
-        modifier_name = self.modifier_keycodes.get(key_code)
+        modifier_name = MODIFIER_KEYCODES_MAP.get(key_code)
         if modifier_name is None:
             return
 
@@ -1007,32 +1196,13 @@ class GlobalKeyListener:
             self.triggered = False
 
         if self.required_key is None and self._required_modifiers_are_pressed() and not self.triggered:
-            LOGGER.info("Сработал глобальный хоткей: %s", self.key_combination)
+            LOGGER.info("⌨️ Сработал глобальный хоткей: %s", self.key_combination)
             self.triggered = True
             self.app.toggle()
 
     def _event_key_name(self, event):
-        """Преобразует NSEvent в строковое имя клавиши.
-
-        Args:
-            event: Системное NSEvent.
-
-        Returns:
-            Имя клавиши для сравнения с конфигурацией.
-        """
-        key_code = int(event.keyCode())
-        named_keycodes = {
-            36: "enter",
-            48: "tab",
-            49: "space",
-            51: "backspace",
-            53: "esc",
-        }
-        if key_code in named_keycodes:
-            return named_keycodes[key_code]
-
-        characters = str(event.charactersIgnoringModifiers() or "").lower()
-        return characters[:1] if characters else ""
+        """Преобразует NSEvent в строковое имя клавиши."""
+        return _event_key_name_static(event)
 
     def _handle_key_down(self, event):
         """Обрабатывает глобальные события обычных клавиш.
@@ -1047,11 +1217,52 @@ class GlobalKeyListener:
 
         event_key_name = self._event_key_name(event)
         if self._required_modifiers_are_pressed() and hotkey_name_matches(self.required_key, event_key_name) and not self.triggered:
-            LOGGER.info("Сработал глобальный хоткей: %s", self.key_combination)
+            LOGGER.info("⌨️ Сработал глобальный хоткей: %s", self.key_combination)
             self.triggered = True
             self.app.toggle()
         elif event_key_name != self.required_key:
             self.triggered = False
+
+
+class MultiHotkeyListener:
+    """Управляет несколькими глобальными хоткеями одновременно."""
+
+    def __init__(self, app, key_combinations):
+        """Создает набор listener-ов для списка комбинаций клавиш."""
+        self.app = app
+        self.key_combinations = []
+        self.listeners = []
+        self._build_listeners(key_combinations)
+
+    def start(self):
+        """Запускает все глобальные listener-ы."""
+        for listener in self.listeners:
+            listener.start()
+
+    def stop(self):
+        """Останавливает все глобальные listener-ы."""
+        for listener in self.listeners:
+            listener.stop()
+
+    def _build_listeners(self, key_combinations):
+        """Нормализует комбинации и создаёт listener-ы без запуска."""
+        normalized = []
+        for key_combination in key_combinations:
+            if not key_combination:
+                continue
+            normalized.append(normalize_key_combination(key_combination))
+
+        if not normalized:
+            raise ValueError("Нужно указать хотя бы один хоткей.")
+
+        self.key_combinations = normalized
+        self.listeners = [GlobalKeyListener(self.app, key_combination) for key_combination in self.key_combinations]
+
+    def update_key_combinations(self, key_combinations):
+        """Пересоздает listener-ы для нового списка комбинаций и запускает их."""
+        self.stop()
+        self._build_listeners(key_combinations)
+        self.start()
 
 
 class DoubleCommandKeyListener:
@@ -1108,7 +1319,17 @@ class StatusBarApp(rumps.App):
         status_timer: Таймер обновления индикатора в строке меню.
     """
 
-    def __init__(self, recorder, model_name, hotkey_status, languages=None, max_time=None):
+    def __init__(
+        self,
+        recorder,
+        model_name,
+        hotkey_status,
+        languages=None,
+        max_time=None,
+        key_combination=None,
+        secondary_hotkey_status=None,
+        secondary_key_combination=None,
+    ):
         """Создает menu bar приложение.
 
         Args:
@@ -1117,10 +1338,23 @@ class StatusBarApp(rumps.App):
             hotkey_status: Строка для отображения текущего хоткея в меню.
             languages: Необязательный список доступных языков.
             max_time: Необязательный лимит длительности записи в секундах.
+            key_combination: Нормализованная строка комбинации клавиш.
+            secondary_hotkey_status: Строка для отображения дополнительного хоткея.
+            secondary_key_combination: Нормализованная строка дополнительной комбинации.
         """
         super().__init__("whisper", "⏯")
+        self.model_repo = model_name
         self.model_name = model_name.rsplit("/", maxsplit=1)[-1]
         self.hotkey_status = hotkey_status
+        self.secondary_hotkey_status = secondary_hotkey_status or "не задан"
+        self._primary_key_combination = key_combination or ""
+        self._secondary_key_combination = secondary_key_combination or ""
+        self.max_time_options = list(MAX_TIME_PRESETS)
+        if max_time not in self.max_time_options:
+            self.max_time_options.insert(0, max_time)
+        self.model_options = list(MODEL_PRESETS)
+        if self.model_repo not in self.model_options:
+            self.model_options.insert(0, self.model_repo)
         self.languages = languages
         self.input_devices = list_input_devices()
         self.current_language = languages[0] if languages is not None else None
@@ -1133,17 +1367,26 @@ class StatusBarApp(rumps.App):
             "input_monitoring": get_input_monitoring_status(),
             "microphone": None,
         }
-        self.status_item = rumps.MenuItem(f"Статус: {self._state_label()}")
-        self.model_item = rumps.MenuItem(f"Модель: {self.model_name}")
-        self.hotkey_item = rumps.MenuItem(f"Хоткей: {self.hotkey_status}")
-        self.language_item = rumps.MenuItem(f"Язык: {self._format_language()}")
-        self.input_device_item = rumps.MenuItem(f"Микрофон: {self._format_input_device()}")
-        self.max_time_item = rumps.MenuItem(f"Длительность записи: {format_max_time_status(max_time)}")
+        self.status_item = rumps.MenuItem(f"🔄 Статус: {self._state_label()}")
+        self.model_item = rumps.MenuItem(f"🧠 Модель: {self.model_name}")
+        self.hotkey_item = rumps.MenuItem(f"⌨️ Основной хоткей: {self.hotkey_status}")
+        self.secondary_hotkey_item = rumps.MenuItem(f"⌨️ Доп. хоткей: {self.secondary_hotkey_status}")
+        self.change_hotkey_item = rumps.MenuItem("⌨️ Изменить основной хоткей…", callback=self.change_hotkey)
+        self.change_secondary_hotkey_item = rumps.MenuItem("⌨️ Изменить доп. хоткей…", callback=self.change_secondary_hotkey)
+        self.show_recording_notification = True
+        self.recording_notification_item = rumps.MenuItem(
+            "🔔 Уведомление о старте записи",
+            callback=self.toggle_recording_notification,
+        )
+        self.recording_notification_item.state = int(self.show_recording_notification)
+        self.language_item = rumps.MenuItem(f"🌍 Язык: {self._format_language()}")
+        self.input_device_item = rumps.MenuItem(f"🎙️ Микрофон: {self._format_input_device()}")
+        self.max_time_item = rumps.MenuItem(f"⏱ Длительность записи: {format_max_time_status(max_time)}")
         self.accessibility_item = rumps.MenuItem(self._permission_title("Accessibility", self.permission_status["accessibility"]))
         self.input_monitoring_item = rumps.MenuItem(self._permission_title("Input Monitoring", self.permission_status["input_monitoring"]))
         self.microphone_item = rumps.MenuItem(self._permission_title("Microphone", self.permission_status["microphone"]))
-        self.request_accessibility_item = rumps.MenuItem("Запросить Accessibility", callback=self.request_accessibility_access)
-        self.request_input_monitoring_item = rumps.MenuItem("Запросить Input Monitoring", callback=self.request_input_monitoring_access)
+        self.request_accessibility_item = rumps.MenuItem("🛂 Запросить Accessibility", callback=self.request_accessibility_access)
+        self.request_input_monitoring_item = rumps.MenuItem("🛂 Запросить Input Monitoring", callback=self.request_input_monitoring_access)
 
         menu = [
             "Начать запись",
@@ -1151,9 +1394,16 @@ class StatusBarApp(rumps.App):
             self.status_item,
             self.model_item,
             self.hotkey_item,
+            self.secondary_hotkey_item,
+            self.change_hotkey_item,
+            self.change_secondary_hotkey_item,
+            self.recording_notification_item,
             self.language_item,
             self.input_device_item,
             self.max_time_item,
+            "🧠 Выбрать модель",
+            "🎙️ Выбрать микрофон",
+            "⏱ Выбрать лимит записи",
             self.accessibility_item,
             self.input_monitoring_item,
             self.microphone_item,
@@ -1164,22 +1414,31 @@ class StatusBarApp(rumps.App):
 
         if languages is not None and len(languages) > 1:
             for lang in languages:
-                callback = self.change_language if lang != self.current_language else None
+                callback = self.change_language
                 menu.append(rumps.MenuItem(lang, callback=callback))
             menu.append(None)
 
         if self.input_devices:
             for device in self.input_devices:
                 title = microphone_menu_title(device)
-                callback = self.change_input_device if device != self.current_input_device else None
+                callback = self.change_input_device
                 menu.append(rumps.MenuItem(title, callback=callback))
             menu.append(None)
+
+        menu.extend(rumps.MenuItem(self._model_menu_title(model), callback=self.change_model) for model in self.model_options)
+        menu.append(None)
+
+        menu.extend(
+            rumps.MenuItem(self._max_time_menu_title(max_time_value), callback=self.change_max_time)
+            for max_time_value in self.max_time_options
+        )
+        menu.append(None)
 
         self.menu = menu
         self._menu_item("Остановить запись").set_callback(None)
 
         self.started = False
-        self.key_listener = None
+        self.key_listener = cast("Any", None)
         self.recorder = recorder
         self.recorder.set_input_device(self.current_input_device)
         self.recorder.set_status_callback(self.set_state)
@@ -1188,6 +1447,7 @@ class StatusBarApp(rumps.App):
         self.elapsed_time = 0
         self.status_timer = rumps.Timer(self.on_status_tick, 1)
         self.status_timer.start()
+        self._refresh_selection_states()
 
     def _menu_item(self, title):
         """Возвращает пункт меню по заголовку.
@@ -1221,6 +1481,14 @@ class StatusBarApp(rumps.App):
             return "автоопределение"
         return self.current_language
 
+    def _model_menu_title(self, model_repo):
+        """Возвращает подпись пункта меню модели."""
+        return f"Модель: {model_repo.rsplit('/', maxsplit=1)[-1]}"
+
+    def _max_time_menu_title(self, max_time_value):
+        """Возвращает подпись пункта меню лимита записи."""
+        return f"Лимит: {format_max_time_status(max_time_value)}"
+
     def _permission_title(self, permission_name, permission_status):
         """Формирует строку статуса разрешения для меню.
 
@@ -1241,9 +1509,26 @@ class StatusBarApp(rumps.App):
         self.input_monitoring_item.title = self._permission_title("Input Monitoring", self.permission_status["input_monitoring"])
         self.microphone_item.title = self._permission_title("Microphone", self.permission_status["microphone"])
 
+    def _refresh_selection_states(self):
+        """Обновляет отметки выбранных пунктов в списках меню."""
+        for model in self.model_options:
+            self._menu_item(self._model_menu_title(model)).state = int(model == self.model_repo)
+
+        for max_time_value in self.max_time_options:
+            self._menu_item(self._max_time_menu_title(max_time_value)).state = int(max_time_value == self.max_time)
+
+        if self.input_devices:
+            for device in self.input_devices:
+                title = microphone_menu_title(device)
+                self._menu_item(title).state = int(device == self.current_input_device)
+
+        if self.languages is not None and len(self.languages) > 1:
+            for lang in self.languages:
+                self._menu_item(lang).state = int(lang == self.current_language)
+
     def _refresh_title_and_status(self):
         """Обновляет иконку и строку статуса в меню."""
-        self.status_item.title = f"Статус: {self._state_label()}"
+        self.status_item.title = f"🔄 Статус: {self._state_label()}"
         self._refresh_permission_items()
 
         if self.state == STATUS_TRANSCRIBING:
@@ -1252,6 +1537,47 @@ class StatusBarApp(rumps.App):
 
         if self.state == STATUS_IDLE:
             self.title = "⏯"
+
+    def _active_key_combinations(self):
+        """Возвращает список всех включенных комбинаций клавиш."""
+        return [key_combination for key_combination in (self._primary_key_combination, self._secondary_key_combination) if key_combination]
+
+    def _refresh_hotkey_items(self):
+        """Обновляет подписи пунктов меню с основным и дополнительным хоткеями."""
+        if self._primary_key_combination:
+            self.hotkey_status = format_hotkey_status(self._primary_key_combination)
+        if self._secondary_key_combination:
+            self.secondary_hotkey_status = format_hotkey_status(self._secondary_key_combination)
+        else:
+            self.secondary_hotkey_status = "не задан"
+
+        self.hotkey_item.title = f"⌨️ Основной хоткей: {self.hotkey_status}"
+        self.secondary_hotkey_item.title = f"⌨️ Доп. хоткей: {self.secondary_hotkey_status}"
+
+    def _can_update_hotkeys_runtime(self):
+        """Проверяет, поддерживает ли текущий listener горячее обновление хоткеев."""
+        return hasattr(self.key_listener, "update_key_combinations")
+
+    def _apply_hotkey_changes(self):
+        """Применяет обновленные комбинации к меню и активному listener-у."""
+        self._refresh_hotkey_items()
+        if self._can_update_hotkeys_runtime():
+            listener = cast("Any", self.key_listener)
+            listener.update_key_combinations(self._active_key_combinations())
+            return True
+        return False
+
+    def _update_hotkey_value(self, *, is_secondary, new_combination):
+        """Обновляет основную или дополнительную комбинацию с проверкой на дубликаты."""
+        if is_secondary:
+            if new_combination and new_combination == self._primary_key_combination:
+                raise ValueError("Дополнительный хоткей должен отличаться от основного.")
+            self._secondary_key_combination = new_combination
+            return
+
+        if new_combination == self._secondary_key_combination:
+            raise ValueError("Основной хоткей должен отличаться от дополнительного.")
+        self._primary_key_combination = new_combination
 
     def set_state(self, state):
         """Сохраняет новое состояние приложения.
@@ -1279,17 +1605,18 @@ class StatusBarApp(rumps.App):
         if selected_device is None:
             return
 
+        if selected_device == self.current_input_device:
+            return
+
         self.current_input_device = selected_device
         self.recorder.set_input_device(selected_device)
-        self.input_device_item.title = f"Микрофон: {self._format_input_device()}"
+        self.input_device_item.title = f"🎙️ Микрофон: {self._format_input_device()}"
         LOGGER.info(
-            "Выбран микрофон: index=%s, name=%s",
+            "🎙️ Выбран микрофон: index=%s, name=%s",
             selected_device["index"],
             selected_device["name"],
         )
-        for device in self.input_devices:
-            title = microphone_menu_title(device)
-            self._menu_item(title).set_callback(self.change_input_device if device != self.current_input_device else None)
+        self._refresh_selection_states()
 
     def change_language(self, sender):
         """Переключает текущий язык распознавания.
@@ -1300,10 +1627,95 @@ class StatusBarApp(rumps.App):
         if self.languages is None:
             return
 
+        if sender.title == self.current_language:
+            return
+
         self.current_language = sender.title
-        self.language_item.title = f"Язык: {self._format_language()}"
-        for lang in self.languages:
-            self._menu_item(lang).set_callback(self.change_language if lang != self.current_language else None)
+        self.language_item.title = f"🌍 Язык: {self._format_language()}"
+        self._refresh_selection_states()
+
+    def change_model(self, sender):
+        """Переключает модель распознавания из списка доступных."""
+        selected_model = next((model for model in self.model_options if self._model_menu_title(model) == sender.title), None)
+        if selected_model is None or selected_model == self.model_repo:
+            return
+
+        self.model_repo = selected_model
+        self.model_name = selected_model.rsplit("/", maxsplit=1)[-1]
+        self.recorder.transcriber.model_name = selected_model
+        self.model_item.title = f"🧠 Модель: {self.model_name}"
+        self._refresh_selection_states()
+        LOGGER.info("🧠 Выбрана модель: %s", selected_model)
+        notify_user("MLX Whisper Dictation", f"Модель переключена: {self.model_name}")
+
+    def change_max_time(self, sender):
+        """Переключает лимит длительности записи из списка."""
+        title_to_value = {self._max_time_menu_title(value): value for value in self.max_time_options}
+        if sender.title not in title_to_value:
+            return
+        selected_max_time = title_to_value[sender.title]
+        if selected_max_time == self.max_time:
+            return
+
+        self.max_time = selected_max_time
+        self.max_time_item.title = f"⏱ Длительность записи: {format_max_time_status(self.max_time)}"
+        self._refresh_selection_states()
+        LOGGER.info("⏱ Обновлен лимит записи: %s", format_max_time_status(self.max_time))
+
+    def change_hotkey(self, _):
+        """Открывает диалог для смены комбинации клавиш через захват нажатия."""
+        if not self._can_update_hotkeys_runtime():
+            notify_user("MLX Whisper Dictation", "Смена хоткея недоступна в режиме двойного нажатия Command.")
+            return
+
+        result = capture_hotkey_combination(
+            "Изменить основной хоткей",
+            "Нажмите нужную комбинацию клавиш.\nНапример: зажмите Ctrl+Shift+Alt и нажмите T.",
+            current_combination=self._primary_key_combination,
+        )
+        if result is None:
+            return
+
+        try:
+            normalized = normalize_key_combination(result)
+            self._update_hotkey_value(is_secondary=False, new_combination=normalized)
+        except ValueError as error:
+            notify_user("MLX Whisper Dictation", f"Ошибка: {error}")
+            return
+
+        self._apply_hotkey_changes()
+        LOGGER.info("⌨️ Основной хоткей изменён на: %s", normalized)
+        notify_user("MLX Whisper Dictation", f"Основной хоткей изменён: {self.hotkey_status}")
+
+    def change_secondary_hotkey(self, _):
+        """Открывает диалог для смены дополнительной комбинации клавиш через захват."""
+        if not self._can_update_hotkeys_runtime():
+            notify_user("MLX Whisper Dictation", "Смена хоткея недоступна в режиме двойного нажатия Command.")
+            return
+
+        result = capture_hotkey_combination(
+            "Изменить доп. хоткей",
+            "Нажмите нужную комбинацию клавиш.\nОставьте пустым и нажмите Применить, чтобы отключить.",
+            current_combination=self._secondary_key_combination,
+        )
+        if result is None:
+            return
+
+        try:
+            normalized = normalize_key_combination(result) if result else ""
+            self._update_hotkey_value(is_secondary=True, new_combination=normalized)
+        except ValueError as error:
+            notify_user("MLX Whisper Dictation", f"Ошибка: {error}")
+            return
+
+        self._apply_hotkey_changes()
+        if normalized:
+            LOGGER.info("⌨️ Дополнительный хоткей изменён на: %s", normalized)
+            notify_user("MLX Whisper Dictation", f"Доп. хоткей изменён: {self.secondary_hotkey_status}")
+            return
+
+        LOGGER.info("⌨️ Дополнительный хоткей отключён")
+        notify_user("MLX Whisper Dictation", "Доп. хоткей отключён.")
 
     def request_accessibility_access(self, _):
         """Повторно запрашивает у macOS доступ к Accessibility."""
@@ -1327,6 +1739,12 @@ class StatusBarApp(rumps.App):
 
         warn_missing_input_monitoring_permission()
 
+    def toggle_recording_notification(self, sender):
+        """Переключает системное уведомление о старте записи."""
+        self.show_recording_notification = not self.show_recording_notification
+        sender.state = int(self.show_recording_notification)
+        LOGGER.info("🔔 Уведомление о старте записи: %s", "включено" if self.show_recording_notification else "выключено")
+
     @rumps.clicked("Начать запись")
     def start_app(self, _):
         """Запускает запись и обновляет состояние интерфейса.
@@ -1335,12 +1753,13 @@ class StatusBarApp(rumps.App):
             _: Аргумент callback от rumps, который здесь не используется.
         """
         print("Слушаю...")
-        LOGGER.info("Запись началась")
+        LOGGER.info("🎙️ Запись началась")
         self.state = STATUS_RECORDING
-        notify_user(
-            "MLX Whisper Dictation",
-            "Запись началась. Говорите, пока в строке меню горит красный индикатор.",
-        )
+        if self.show_recording_notification:
+            notify_user(
+                "MLX Whisper Dictation",
+                "Запись началась. Говорите, пока в строке меню горит красный индикатор.",
+            )
         self.started = True
         self._menu_item("Начать запись").set_callback(None)
         self._menu_item("Остановить запись").set_callback(self.stop_app)
@@ -1360,7 +1779,7 @@ class StatusBarApp(rumps.App):
             return
 
         print("Распознаю...")
-        LOGGER.info("Запись остановлена, запускаю распознавание")
+        LOGGER.info("⏹ Запись остановлена, запускаю распознавание")
         self.started = False
         self.state = STATUS_TRANSCRIBING
         self._refresh_title_and_status()
@@ -1381,8 +1800,8 @@ class StatusBarApp(rumps.App):
 
         self.elapsed_time = int(time.time() - self.start_time)
         minutes, seconds = divmod(self.elapsed_time, 60)
-        self.title = f"({minutes:02d}:{seconds:02d}) 🔴"
-        self.status_item.title = f"Статус: {self._state_label()}"
+        self.title = f"{minutes:02d}:{seconds:02d} 🔴"
+        self.status_item.title = f"🔄 Статус: {self._state_label()}"
 
         if self.max_time is not None and self.elapsed_time >= self.max_time:
             self.stop_app(None)
@@ -1422,8 +1841,20 @@ def parse_args():
         default="cmd_l+alt" if platform.system() == "Darwin" else "ctrl+alt",
         help=(
             "Комбинация клавиш для запуска и остановки приложения. "
-            "Примеры: cmd_l+alt, cmd_l+shift+space, ctrl+alt. "
+            "Поддерживаются несколько модификаторов одновременно. "
+            "Примеры: cmd_l+alt, cmd_l+shift+space, ctrl+shift+alt+t. "
+            "Регистр не важен, можно писать Ctrl+Shift+Alt+T. "
+            "Допустимые алиасы: Control=ctrl, Option=alt, Command=cmd. "
             "По умолчанию: cmd_l+alt на macOS и ctrl+alt на остальных платформах."
+        ),
+    )
+    parser.add_argument(
+        "--secondary_key_combination",
+        type=str,
+        default="ctrl+shift+alt+t",
+        help=(
+            "Дополнительная комбинация клавиш для тех же действий запуска и остановки записи. "
+            "По умолчанию: ctrl+shift+alt+t. Укажите пустую строку, чтобы отключить."
         ),
     )
     parser.add_argument(
@@ -1464,9 +1895,21 @@ def parse_args():
 
     args = parser.parse_args()
 
+    if args.secondary_key_combination is not None and not args.secondary_key_combination.strip():
+        args.secondary_key_combination = None
+
+    if args.k_double_cmd and args.secondary_key_combination:
+        if "--secondary_key_combination" in sys.argv:
+            parser.error("Параметр --secondary_key_combination нельзя использовать вместе с --k_double_cmd.")
+        args.secondary_key_combination = None
+
     if not args.k_double_cmd:
         try:
-            parse_key_combination(args.key_combination)
+            args.key_combination = normalize_key_combination(args.key_combination)
+            if args.secondary_key_combination:
+                args.secondary_key_combination = normalize_key_combination(args.secondary_key_combination)
+                if args.secondary_key_combination == args.key_combination:
+                    parser.error("Дополнительный хоткей должен отличаться от основного.")
         except ValueError as error:
             parser.error(str(error))
 
@@ -1487,7 +1930,7 @@ def main():
 
     accessibility_granted = request_accessibility_permission()
     input_monitoring_granted = request_input_monitoring_permission()
-    LOGGER.info("Accessibility: %s, Input Monitoring: %s", accessibility_granted, input_monitoring_granted)
+    LOGGER.info("🔓 Accessibility: %s, Input Monitoring: %s", accessibility_granted, input_monitoring_granted)
 
     if not accessibility_granted:
         warn_missing_accessibility_permission()
@@ -1503,6 +1946,9 @@ def main():
         format_hotkey_status(args.key_combination, use_double_cmd=args.k_double_cmd),
         args.language,
         args.max_time,
+        key_combination=args.key_combination if not args.k_double_cmd else None,
+        secondary_hotkey_status=format_hotkey_status(args.secondary_key_combination) if args.secondary_key_combination else "не задан",
+        secondary_key_combination=args.secondary_key_combination,
     )
     if args.k_double_cmd:
         key_listener = DoubleCommandKeyListener(app)
@@ -1513,7 +1959,7 @@ def main():
         listener.start()
         app.key_listener = listener
     else:
-        key_listener = GlobalKeyListener(app, args.key_combination)
+        key_listener = MultiHotkeyListener(app, [args.key_combination, args.secondary_key_combination])
         key_listener.start()
         app.key_listener = key_listener
 
@@ -1521,7 +1967,9 @@ def main():
     if args.k_double_cmd:
         print("Хоткей: двойное нажатие правой Command для старта и одиночное для остановки")
     else:
-        print(f"Хоткей: {args.key_combination}")
+        print(f"Основной хоткей: {args.key_combination}")
+        if args.secondary_key_combination:
+            print(f"Дополнительный хоткей: {args.secondary_key_combination}")
     app.run()
 
 

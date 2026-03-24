@@ -12,3 +12,4 @@ dist/
 .DS_Store
 .ruff_cache
 .vscode/
+.pytest_cache/

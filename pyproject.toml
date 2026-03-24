@@ -5,6 +5,13 @@ description = "Офлайн-диктовка для macOS на базе MLX Whis
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 authors = [{ name = "Denis Zagitov" }]
+license = "MIT"
+keywords = ["whisper", "dictation", "macos", "apple-silicon", "mlx", "speech-to-text", "privacy", "offline"]
+classifiers = [
+	"Operating System :: MacOS",
+	"Programming Language :: Python :: 3.11",
+	"Topic :: Multimedia :: Sound/Audio :: Speech",
+]
 dependencies = [
 	"mlx-whisper",
 	"numpy>=2.0.0",
@@ -12,6 +19,9 @@ dependencies = [
 	"pynput>=1.7.6",
 	"rumps>=0.4.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/zagitov/mlx-whisper-dictation"
 
 [dependency-groups]
 dev = [
