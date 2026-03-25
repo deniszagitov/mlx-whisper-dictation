@@ -48,10 +48,28 @@ APP = ["whisper-dictation.py"]
 ROOT = Path(__file__).parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
+_PY2APP_PACKAGES = ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "tqdm"]
+
+if "py2app" in sys.argv:
+    # py2app внутри использует устаревший imp.find_module, который может не
+    # обнаружить пакеты в venv, созданном uv. Предварительно импортируем каждый
+    # пакет через importlib и добавляем его родительскую директорию в sys.path.
+    import importlib
+
+    for _pkg_name in _PY2APP_PACKAGES:
+        try:
+            _mod = importlib.import_module(_pkg_name)
+        except ImportError:
+            continue
+        for _loc in getattr(_mod, "__path__", []):
+            _parent = str(Path(_loc).parent)
+            if _parent not in sys.path:
+                sys.path.insert(0, _parent)
+
 OPTIONS = {
     "argv_emulation": False,
     "site_packages": False,
-    "packages": ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "tqdm"],
+    "packages": _PY2APP_PACKAGES,
     "includes": ["AppKit", "Foundation", "PyObjCTools", "Quartz", "objc", "pynput.keyboard._darwin"],
     "plist": {
         "CFBundleDisplayName": "Dictator",
