@@ -95,7 +95,7 @@ class TestClipboard:
         monkeypatch.setattr(app_module.Quartz, "CGEventSetFlags", lambda event, flags: event.__setitem__("flags", flags))
         monkeypatch.setattr(app_module.Quartz, "CGEventPost", lambda tap, event: posted_events.append((tap, dict(event))))
 
-        transcriber._paste_text()
+        transcriber._send_cmd_v()
 
         assert [event["keycode"] for event in created_events] == [
             app_module.KEYCODE_COMMAND,

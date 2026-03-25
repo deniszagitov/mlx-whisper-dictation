@@ -25,7 +25,7 @@ import objc
 import pyaudio
 import Quartz
 import rumps
-from Foundation import NSURL, NSDictionary
+from Foundation import NSURL, NSDictionary, NSUserDefaults
 from pynput import keyboard
 
 DEFAULT_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
@@ -52,6 +52,15 @@ ACCESSIBILITY_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.sec
 INPUT_MONITORING_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
 KEYCODE_COMMAND = 0x37
 KEYCODE_V = 0x09
+DEFAULTS_KEY_PASTE_CGEVENT = "paste_method_cgevent"
+DEFAULTS_KEY_PASTE_AX = "paste_method_ax"
+DEFAULTS_KEY_PASTE_CLIPBOARD = "paste_method_clipboard"
+DEFAULTS_KEY_HISTORY = "transcription_history"
+MAX_HISTORY_SIZE = 20
+HISTORY_DISPLAY_LENGTH = 100
+CGEVENT_UNICODE_CHUNK_SIZE = 20
+CGEVENT_CHUNK_DELAY = 0.005
+CLIPBOARD_RESTORE_DELAY = 0.15
 KNOWN_HALLUCINATIONS = {
     "thank you",
     "thank you.",
@@ -61,6 +70,60 @@ KNOWN_HALLUCINATIONS = {
     "спасибо за просмотр",
 }
 LOGGER = logging.getLogger(__name__)
+
+
+def _load_defaults_bool(key, fallback):
+    """Читает булево значение из NSUserDefaults.
+
+    Если ключ ещё не был записан, возвращает fallback.
+
+    Args:
+        key: Строковый ключ в NSUserDefaults.
+        fallback: Значение по умолчанию, если ключ отсутствует.
+
+    Returns:
+        Сохранённое значение или fallback.
+    """
+    defaults = NSUserDefaults.standardUserDefaults()
+    if defaults.objectForKey_(key) is None:
+        return fallback
+    return bool(defaults.boolForKey_(key))
+
+
+def _save_defaults_bool(key, value):
+    """Сохраняет булево значение в NSUserDefaults.
+
+    Args:
+        key: Строковый ключ.
+        value: Булево значение для сохранения.
+    """
+    NSUserDefaults.standardUserDefaults().setBool_forKey_(bool(value), key)
+
+
+def _load_defaults_list(key):
+    """Читает список строк из NSUserDefaults.
+
+    Args:
+        key: Строковый ключ.
+
+    Returns:
+        Список строк или пустой список, если ключ отсутствует.
+    """
+    defaults = NSUserDefaults.standardUserDefaults()
+    value = defaults.arrayForKey_(key)
+    if value is None:
+        return []
+    return [str(item) for item in value]
+
+
+def _save_defaults_list(key, value):
+    """Сохраняет список строк в NSUserDefaults.
+
+    Args:
+        key: Строковый ключ.
+        value: Список строк для сохранения.
+    """
+    NSUserDefaults.standardUserDefaults().setObject_forKey_(list(value), key)
 
 
 class MaxLevelFilter(logging.Filter):
@@ -602,6 +665,11 @@ class SpeechTranscriber:
         pykeyboard: Контроллер клавиатуры pynput для вставки текста.
         diagnostics_store: Изолированное хранилище диагностических артефактов.
         model_name: Имя или путь к модели MLX Whisper.
+        paste_cgevent_enabled: Включён ли метод прямого ввода через CGEvent Unicode.
+        paste_ax_enabled: Включён ли метод ввода через Accessibility API.
+        paste_clipboard_enabled: Включён ли метод ввода через буфер обмена (Cmd+V).
+        history: Список ранее распознанных текстов.
+        history_callback: Callback для уведомления UI об изменении истории.
     """
 
     def __init__(self, model_name, diagnostics_store=None):
@@ -614,6 +682,11 @@ class SpeechTranscriber:
         self.pykeyboard = keyboard.Controller()
         self.diagnostics_store = diagnostics_store or DiagnosticsStore()
         self.model_name = model_name
+        self.paste_cgevent_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_CGEVENT, fallback=True)
+        self.paste_ax_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_AX, fallback=False)
+        self.paste_clipboard_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, fallback=False)
+        self.history = _load_defaults_list(DEFAULTS_KEY_HISTORY)
+        self.history_callback = None
 
     def _copy_text_to_clipboard(self, text):
         """Копирует текст в системный буфер обмена.
@@ -626,8 +699,121 @@ class SpeechTranscriber:
         pasteboard.clearContents()
         pasteboard.setString_forType_(text, appkit.NSPasteboardTypeString)
 
-    def _paste_text(self):
-        """Вставляет текущий текст из буфера обмена через Cmd+V."""
+    def _read_clipboard(self):
+        """Читает текстовое содержимое из системного буфера обмена.
+
+        Returns:
+            Текст из буфера обмена или None, если буфер пуст.
+        """
+        appkit = cast("Any", AppKit)
+        pasteboard = appkit.NSPasteboard.generalPasteboard()
+        return pasteboard.stringForType_(appkit.NSPasteboardTypeString)
+
+    def _type_text_via_cgevent(self, text):
+        """Вставляет текст через отправку Unicode-символов посредством CGEvent.
+
+        Разбивает текст на пакеты и отправляет каждый пакет как пару
+        keyDown/keyUp событий с прикреплённой Unicode-строкой.
+        Не трогает буфер обмена.
+
+        Args:
+            text: Текст для ввода.
+
+        Raises:
+            RuntimeError: Если не удалось создать источник событий.
+        """
+        time.sleep(0.05)
+        active_app = frontmost_application_info()
+        if active_app is not None:
+            LOGGER.info(
+                "⌨️ CGEvent Unicode ввод в приложение: name=%s, bundle_id=%s, pid=%s",
+                active_app["name"],
+                active_app["bundle_id"],
+                active_app["pid"],
+            )
+
+        event_source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+        if event_source is None:
+            raise RuntimeError("Не удалось создать источник системных keyboard events")
+
+        for i in range(0, len(text), CGEVENT_UNICODE_CHUNK_SIZE):
+            chunk = text[i : i + CGEVENT_UNICODE_CHUNK_SIZE]
+
+            event_down = Quartz.CGEventCreateKeyboardEvent(event_source, 0, True)
+            if event_down is None:
+                raise RuntimeError("Не удалось создать keyDown event для CGEvent Unicode ввода")
+            Quartz.CGEventKeyboardSetUnicodeString(event_down, len(chunk), chunk)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
+
+            event_up = Quartz.CGEventCreateKeyboardEvent(event_source, 0, False)
+            if event_up is None:
+                raise RuntimeError("Не удалось создать keyUp event для CGEvent Unicode ввода")
+            Quartz.CGEventKeyboardSetUnicodeString(event_up, len(chunk), chunk)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
+
+            if i + CGEVENT_UNICODE_CHUNK_SIZE < len(text):
+                time.sleep(CGEVENT_CHUNK_DELAY)
+
+    def _insert_text_via_ax(self, text):
+        """Вставляет текст через macOS Accessibility API.
+
+        Находит сфокусированный элемент UI и записывает текст
+        через атрибут kAXSelectedTextAttribute, что вставляет текст
+        в позицию курсора или заменяет выделение.
+        Не трогает буфер обмена.
+
+        Args:
+            text: Текст для вставки.
+
+        Raises:
+            RuntimeError: Если не удалось получить сфокусированный элемент
+                или записать текст через Accessibility API.
+        """
+        import HIServices  # noqa: PLC0415
+
+        system_wide = HIServices.AXUIElementCreateSystemWide()
+
+        err, focused_element = HIServices.AXUIElementCopyAttributeValue(
+            system_wide, HIServices.kAXFocusedUIElementAttribute, None
+        )
+        if err != 0 or focused_element is None:
+            raise RuntimeError(f"Не удалось получить сфокусированный UI-элемент (AXError={err})")
+
+        err = HIServices.AXUIElementSetAttributeValue(
+            focused_element, HIServices.kAXSelectedTextAttribute, text
+        )
+        if err != 0:
+            raise RuntimeError(f"Не удалось записать текст через AX API (AXError={err})")
+
+    def _paste_via_clipboard(self, text):
+        """Вставляет текст через буфер обмена с последующим восстановлением.
+
+        Сохраняет текущее содержимое буфера обмена, записывает новый текст,
+        отправляет Cmd+V, а затем восстанавливает предыдущее содержимое.
+
+        Args:
+            text: Текст для вставки.
+
+        Raises:
+            RuntimeError: Если не удалось создать keyboard events.
+        """
+        old_clipboard = self._read_clipboard()
+        try:
+            self._copy_text_to_clipboard(text)
+            self._send_cmd_v()
+            time.sleep(CLIPBOARD_RESTORE_DELAY)
+        finally:
+            if old_clipboard is not None:
+                try:
+                    self._copy_text_to_clipboard(old_clipboard)
+                    LOGGER.debug("📋 Буфер обмена восстановлен")
+                except Exception:
+                    LOGGER.exception("⚠️ Не удалось восстановить буфер обмена")
+            else:
+                LOGGER.debug("📋 Предыдущее содержимое буфера было пустым, восстановление не требуется")
+
+    def _send_cmd_v(self):
+        """Отправляет системные keyboard events для Cmd+V."""
         time.sleep(0.05)
         active_app = frontmost_application_info()
         if active_app is not None:
@@ -658,6 +844,25 @@ class SpeechTranscriber:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, paste_down)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, paste_up)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, command_up)
+
+    def _add_to_history(self, text):
+        """Добавляет распознанный текст в историю.
+
+        Вставляет текст в начало списка, обрезает до MAX_HISTORY_SIZE,
+        сохраняет в NSUserDefaults и вызывает callback для обновления UI.
+
+        Args:
+            text: Распознанный текст.
+        """
+        self.history.insert(0, text)
+        self.history = self.history[:MAX_HISTORY_SIZE]
+        _save_defaults_list(DEFAULTS_KEY_HISTORY, self.history)
+        LOGGER.debug("📜 Текст добавлен в историю (%d записей)", len(self.history))
+        if self.history_callback is not None:
+            try:
+                self.history_callback()
+            except Exception:
+                LOGGER.exception("⚠️ Ошибка в history_callback")
 
     def _run_transcription(self, audio_data, language):
         """Запускает один проход распознавания с заданными параметрами языка."""
@@ -745,18 +950,10 @@ class SpeechTranscriber:
         if looks_like_hallucination(text) and rms_energy < HALLUCINATION_RMS_THRESHOLD:
             LOGGER.warning("👻 Отброшен вероятный галлюцинаторный результат: %r", text)
 
-        try:
-            self._copy_text_to_clipboard(text)
-        except Exception:
-            LOGGER.exception("❌ Не удалось сохранить текст в буфер обмена")
-            notify_user(
-                "MLX Whisper Dictation",
-                "Не удалось сохранить распознанный текст в буфер обмена. Смотрите stderr.log.",
-            )
-            return
-        else:
-            LOGGER.info("📋 Текст сохранен в буфере обмена")
+        # Сохраняем текст в историю независимо от метода вставки
+        self._add_to_history(text)
 
+        # Проверяем разрешения macOS, необходимые для всех методов автовставки
         if not is_accessibility_trusted():
             LOGGER.warning("🔐 Перед вставкой нет доступа к Accessibility, повторно запрашиваю разрешение")
             request_accessibility_permission()
@@ -771,7 +968,7 @@ class SpeechTranscriber:
             warn_missing_accessibility_permission()
             notify_user(
                 "MLX Whisper Dictation",
-                "Текст распознан и сохранен в буфер обмена. Вставьте его вручную, потому что у приложения нет доступа к Accessibility.",
+                "Текст распознан и сохранён в историю. Вставьте его вручную, потому что у приложения нет доступа к Accessibility.",
             )
             return
 
@@ -779,24 +976,42 @@ class SpeechTranscriber:
             warn_missing_input_monitoring_permission()
             notify_user(
                 "MLX Whisper Dictation",
-                "Текст распознан и сохранен в буфер обмена. Вставьте его вручную, потому что macOS не дала доступ к Input Monitoring.",
+                "Текст распознан и сохранён в историю. Вставьте его вручную, потому что macOS не дала доступ к Input Monitoring.",
             )
             return
 
-        try:
-            self._paste_text()
-            LOGGER.info("📌 Текст вставлен через буфер обмена")
-        except Exception:
-            LOGGER.exception("⚠️ Не удалось вставить через буфер обмена, переключаюсь на ввод клавишами")
+        # Собираем цепочку включённых методов вставки
+        methods = []
+        if self.paste_cgevent_enabled:
+            methods.append(("Прямой ввод (CGEvent)", self._type_text_via_cgevent))
+        if self.paste_ax_enabled:
+            methods.append(("Accessibility API", self._insert_text_via_ax))
+        if self.paste_clipboard_enabled:
+            methods.append(("Буфер обмена (Cmd+V)", self._paste_via_clipboard))
+
+        if not methods:
+            LOGGER.warning("⚠️ Ни один метод вставки не включён")
+            notify_user(
+                "MLX Whisper Dictation",
+                "Текст распознан и сохранён в историю. Включите хотя бы один метод вставки в меню приложения.",
+            )
+            return
+
+        inserted = False
+        for method_name, method_fn in methods:
             try:
-                self.pykeyboard.type(text)
-                LOGGER.info("⌨️ Текст вставлен через резервный ввод клавишами")
+                method_fn(text)
+                LOGGER.info("✅ Текст вставлен через: %s", method_name)
+                inserted = True
+                break
             except Exception:
-                LOGGER.exception("❌ Резервный ввод клавишами тоже завершился ошибкой")
-                notify_user(
-                    "MLX Whisper Dictation",
-                    "Не удалось вставить текст автоматически. Но текст сохранен в буфер обмена, его можно вставить вручную.",
-                )
+                LOGGER.exception("⚠️ Метод «%s» не сработал", method_name)
+
+        if not inserted:
+            notify_user(
+                "MLX Whisper Dictation",
+                "Не удалось вставить текст автоматически. Текст доступен в «📋 История текста» в меню приложения.",
+            )
 
 
 class Recorder:
@@ -1343,6 +1558,7 @@ class StatusBarApp(rumps.App):
             secondary_key_combination: Нормализованная строка дополнительной комбинации.
         """
         super().__init__("whisper", "⏯")
+        self.recorder = recorder
         self.model_repo = model_name
         self.model_name = model_name.rsplit("/", maxsplit=1)[-1]
         self.hotkey_status = hotkey_status
@@ -1379,6 +1595,30 @@ class StatusBarApp(rumps.App):
             callback=self.toggle_recording_notification,
         )
         self.recording_notification_item.state = int(self.show_recording_notification)
+
+        # Подменю «Метод ввода»
+        self.paste_method_menu = rumps.MenuItem("📝 Метод ввода")
+        transcriber = self.recorder.transcriber if hasattr(self.recorder, "transcriber") else None
+        self.paste_cgevent_item = rumps.MenuItem("Прямой ввод (CGEvent)", callback=self.toggle_paste_cgevent)
+        self.paste_ax_item = rumps.MenuItem("Accessibility API", callback=self.toggle_paste_ax)
+        self.paste_clipboard_item = rumps.MenuItem("Буфер обмена (Cmd+V)", callback=self.toggle_paste_clipboard)
+        if transcriber is not None:
+            self.paste_cgevent_item.state = int(transcriber.paste_cgevent_enabled)
+            self.paste_ax_item.state = int(transcriber.paste_ax_enabled)
+            self.paste_clipboard_item.state = int(transcriber.paste_clipboard_enabled)
+        else:
+            self.paste_cgevent_item.state = 1
+        self.paste_method_menu.add(self.paste_cgevent_item)
+        self.paste_method_menu.add(self.paste_ax_item)
+        self.paste_method_menu.add(self.paste_clipboard_item)
+
+        # Подменю «История текста»
+        self.history_menu = rumps.MenuItem("📋 История текста")
+        self._history_title_to_text = {}
+        self._refresh_history_menu()
+        if transcriber is not None:
+            transcriber.history_callback = self._refresh_history_menu
+
         self.language_item = rumps.MenuItem(f"🌍 Язык: {self._format_language()}")
         self.input_device_item = rumps.MenuItem(f"🎙️ Микрофон: {self._format_input_device()}")
         self.max_time_item = rumps.MenuItem(f"⏱ Длительность записи: {format_max_time_status(max_time)}")
@@ -1398,6 +1638,8 @@ class StatusBarApp(rumps.App):
             self.change_hotkey_item,
             self.change_secondary_hotkey_item,
             self.recording_notification_item,
+            self.paste_method_menu,
+            self.history_menu,
             self.language_item,
             self.input_device_item,
             self.max_time_item,
@@ -1439,7 +1681,6 @@ class StatusBarApp(rumps.App):
 
         self.started = False
         self.key_listener = cast("Any", None)
-        self.recorder = recorder
         self.recorder.set_input_device(self.current_input_device)
         self.recorder.set_status_callback(self.set_state)
         self.recorder.set_permission_callback(self.set_permission_status)
@@ -1744,6 +1985,94 @@ class StatusBarApp(rumps.App):
         self.show_recording_notification = not self.show_recording_notification
         sender.state = int(self.show_recording_notification)
         LOGGER.info("🔔 Уведомление о старте записи: %s", "включено" if self.show_recording_notification else "выключено")
+
+    def toggle_paste_cgevent(self, sender):
+        """Переключает метод вставки через CGEvent Unicode."""
+        transcriber = self.recorder.transcriber
+        transcriber.paste_cgevent_enabled = not transcriber.paste_cgevent_enabled
+        sender.state = int(transcriber.paste_cgevent_enabled)
+        _save_defaults_bool(DEFAULTS_KEY_PASTE_CGEVENT, transcriber.paste_cgevent_enabled)
+        LOGGER.info("📝 Прямой ввод (CGEvent): %s", "включён" if transcriber.paste_cgevent_enabled else "выключен")
+
+    def toggle_paste_ax(self, sender):
+        """Переключает метод вставки через Accessibility API."""
+        transcriber = self.recorder.transcriber
+        transcriber.paste_ax_enabled = not transcriber.paste_ax_enabled
+        sender.state = int(transcriber.paste_ax_enabled)
+        _save_defaults_bool(DEFAULTS_KEY_PASTE_AX, transcriber.paste_ax_enabled)
+        LOGGER.info("📝 Accessibility API: %s", "включён" if transcriber.paste_ax_enabled else "выключен")
+
+    def toggle_paste_clipboard(self, sender):
+        """Переключает метод вставки через буфер обмена (Cmd+V)."""
+        transcriber = self.recorder.transcriber
+        transcriber.paste_clipboard_enabled = not transcriber.paste_clipboard_enabled
+        sender.state = int(transcriber.paste_clipboard_enabled)
+        _save_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, transcriber.paste_clipboard_enabled)
+        LOGGER.info("📝 Буфер обмена (Cmd+V): %s", "включён" if transcriber.paste_clipboard_enabled else "выключен")
+
+    def _format_history_title(self, text):
+        """Форматирует текст для отображения в подменю истории.
+
+        Заменяет переносы строк пробелами и обрезает до HISTORY_DISPLAY_LENGTH символов.
+
+        Args:
+            text: Полный текст записи.
+
+        Returns:
+            Сокращённая строка для пункта меню.
+        """
+        single_line = text.replace("\n", " ").replace("\r", " ")
+        if len(single_line) > HISTORY_DISPLAY_LENGTH:
+            return single_line[:HISTORY_DISPLAY_LENGTH] + "…"
+        return single_line
+
+    def _refresh_history_menu(self):
+        """Обновляет подменю «История текста» из данных transcriber.
+
+        Вызывается при каждом добавлении текста в историю.
+        """
+        if getattr(self.history_menu, "_menu", None) is not None:
+            self.history_menu.clear()
+        self._history_title_to_text = {}
+
+        transcriber = self.recorder.transcriber if hasattr(self.recorder, "transcriber") else None
+        history = transcriber.history if transcriber is not None else []
+
+        if not history:
+            empty_item = rumps.MenuItem("(пусто)")
+            empty_item.set_callback(None)
+            self.history_menu.add(empty_item)
+            return
+
+        for _idx, text in enumerate(history):
+            title = self._format_history_title(text)
+            # Гарантируем уникальность заголовков добавлением невидимого суффикса
+            unique_title = title
+            suffix_count = 0
+            while unique_title in self._history_title_to_text:
+                suffix_count += 1
+                unique_title = f"{title} ({suffix_count})"
+            self._history_title_to_text[unique_title] = text
+            item = rumps.MenuItem(unique_title, callback=self._copy_history_item)
+            self.history_menu.add(item)
+
+    def _copy_history_item(self, sender):
+        """Копирует выбранный элемент истории в буфер обмена.
+
+        Args:
+            sender: Пункт меню, по которому кликнули.
+        """
+        full_text = self._history_title_to_text.get(sender.title)
+        if full_text is None:
+            LOGGER.warning("⚠️ Не найден текст для пункта истории: %s", sender.title)
+            return
+        transcriber = self.recorder.transcriber
+        transcriber._copy_text_to_clipboard(full_text)
+        LOGGER.info("📋 Текст из истории скопирован в буфер обмена: %r", full_text[:80])
+        notify_user(
+            "MLX Whisper Dictation",
+            "Текст скопирован в буфер обмена.",
+        )
 
     @rumps.clicked("Начать запись")
     def start_app(self, _):

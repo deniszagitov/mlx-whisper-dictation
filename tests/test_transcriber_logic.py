@@ -19,7 +19,7 @@ def test_transcribe_retries_without_language_on_empty_primary(app_module, monkey
     """При пустом первом результате приложение должно повторить распознавание без language."""
     transcriber = make_transcriber(app_module)
     calls = []
-    clipboard = []
+    history_added = []
 
     def fake_run(audio_data, language):
         calls.append(language)
@@ -28,44 +28,69 @@ def test_transcribe_retries_without_language_on_empty_primary(app_module, monkey
         return {"text": "Привет мир"}
 
     monkeypatch.setattr(transcriber, "_run_transcription", fake_run)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
+    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: False)
     monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
     assert calls == ["ru", None]
-    assert clipboard == ["Привет мир"]
+    assert history_added == ["Привет мир"]
 
 
-def test_transcribe_pastes_automatically_when_permissions_are_granted(app_module, monkeypatch):
-    """При наличии разрешений текст должен вставляться автоматически."""
+def test_transcribe_inserts_via_cgevent_when_enabled(app_module, monkeypatch):
+    """При включённом CGEvent текст должен вставляться через прямой ввод."""
     transcriber = make_transcriber(app_module)
-    clipboard = []
-    pasted = []
+    transcriber.paste_cgevent_enabled = True
+    transcriber.paste_ax_enabled = False
+    transcriber.paste_clipboard_enabled = False
+    inserted = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Автовставка"})
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
-    monkeypatch.setattr(transcriber, "_paste_text", lambda: pasted.append(True))
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", inserted.append)
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
     monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
     monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
-    assert clipboard == ["Автовставка"]
-    assert pasted == [True]
+    assert inserted == ["Автовставка"]
 
 
-def test_transcribe_falls_back_to_manual_paste_when_accessibility_missing(app_module, monkeypatch):
-    """Без Accessibility приложение должно оставить текст в clipboard и уведомить пользователя."""
+def test_transcribe_falls_back_from_cgevent_to_clipboard(app_module, monkeypatch):
+    """При ошибке CGEvent приложение должно переключиться на буфер обмена."""
     transcriber = make_transcriber(app_module)
-    clipboard = []
+    transcriber.paste_cgevent_enabled = True
+    transcriber.paste_ax_enabled = False
+    transcriber.paste_clipboard_enabled = True
+    clipboard_inserted = []
+
+    def failing_cgevent(text):
+        raise RuntimeError("CGEvent failed")
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", failing_cgevent)
+    monkeypatch.setattr(transcriber, "_paste_via_clipboard", clipboard_inserted.append)
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert clipboard_inserted == ["Текст"]
+
+
+def test_transcribe_falls_back_to_history_when_accessibility_missing(app_module, monkeypatch):
+    """Без Accessibility текст должен сохраниться в истории и уведомить пользователя."""
+    transcriber = make_transcriber(app_module)
+    history_added = []
     notifications = []
     warned = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
+    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
     monkeypatch.setattr(app_module, "request_accessibility_permission", lambda: False)
     monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: False)
@@ -74,20 +99,20 @@ def test_transcribe_falls_back_to_manual_paste_when_accessibility_missing(app_mo
 
     transcriber.transcribe(make_audio(), "ru")
 
-    assert clipboard == ["Текст"]
+    assert history_added == ["Текст"]
     assert warned == [True]
     assert notifications
 
 
-def test_transcribe_falls_back_to_manual_paste_when_input_monitoring_missing(app_module, monkeypatch):
-    """Без Input Monitoring приложение не должно пытаться вставлять текст автоматически."""
+def test_transcribe_falls_back_to_history_when_input_monitoring_missing(app_module, monkeypatch):
+    """Без Input Monitoring текст должен сохраниться в истории."""
     transcriber = make_transcriber(app_module)
-    clipboard = []
+    history_added = []
     notifications = []
     warned = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", clipboard.append)
+    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
     monkeypatch.setattr(app_module, "request_input_monitoring_permission", lambda: False)
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
     monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: False)
@@ -96,40 +121,47 @@ def test_transcribe_falls_back_to_manual_paste_when_input_monitoring_missing(app
 
     transcriber.transcribe(make_audio(), "ru")
 
-    assert clipboard == ["Текст"]
+    assert history_added == ["Текст"]
     assert warned == [True]
     assert notifications
 
 
-def test_transcribe_uses_typing_fallback_if_paste_fails(app_module, monkeypatch):
-    """Если Cmd+V не сработал, приложение должно перейти к резервному набору текста."""
+def test_transcribe_notifies_when_all_methods_fail(app_module, monkeypatch):
+    """При ошибке всех включённых методов вставки пользователь получает уведомление."""
     transcriber = make_transcriber(app_module)
-    typed = []
+    transcriber.paste_cgevent_enabled = True
+    transcriber.paste_ax_enabled = False
+    transcriber.paste_clipboard_enabled = False
+    notifications = []
 
-    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Резерв"})
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_paste_text", lambda: (_ for _ in ()).throw(RuntimeError("paste failed")))
-    monkeypatch.setattr(transcriber.pykeyboard, "type", typed.append)
+    def failing_cgevent(text):
+        raise RuntimeError("CGEvent failed")
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", failing_cgevent)
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
     monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: notifications.append(args))
 
     transcriber.transcribe(make_audio(), "ru")
 
-    assert typed == ["Резерв"]
+    assert notifications
+    assert "История текста" in notifications[-1][1]
 
 
-def test_transcribe_notifies_when_clipboard_write_fails(app_module, monkeypatch):
-    """Ошибка записи в буфер обмена должна приводить к уведомлению пользователя."""
+def test_transcribe_notifies_when_no_methods_enabled(app_module, monkeypatch):
+    """Если ни один метод вставки не включён, пользователь получает уведомление."""
     transcriber = make_transcriber(app_module)
+    transcriber.paste_cgevent_enabled = False
+    transcriber.paste_ax_enabled = False
+    transcriber.paste_clipboard_enabled = False
     notifications = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
-    monkeypatch.setattr(
-        transcriber,
-        "_copy_text_to_clipboard",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("clipboard failed")),
-    )
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
     monkeypatch.setattr(app_module, "notify_user", lambda *args: notifications.append(args))
 
     transcriber.transcribe(make_audio(), "ru")
@@ -148,3 +180,41 @@ def test_transcribe_notifies_on_empty_result(app_module, monkeypatch):
     transcriber.transcribe(make_audio(), None)
 
     assert notifications
+
+
+def test_transcribe_always_adds_to_history(app_module, monkeypatch):
+    """Распознанный текст всегда должен сохраняться в историю."""
+    transcriber = make_transcriber(app_module)
+    history_added = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
+    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", lambda *_args: None)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert history_added == ["Текст"]
+
+
+def test_transcribe_clipboard_not_touched_when_disabled(app_module, monkeypatch):
+    """Буфер обмена не должен затрагиваться, если метод 'Буфер обмена' выключен."""
+    transcriber = make_transcriber(app_module)
+    transcriber.paste_cgevent_enabled = True
+    transcriber.paste_ax_enabled = False
+    transcriber.paste_clipboard_enabled = False
+    clipboard_calls = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: clipboard_calls.append(True))
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(app_module, "is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(app_module, "get_input_monitoring_status", lambda: True)
+    monkeypatch.setattr(app_module, "notify_user", lambda *args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert clipboard_calls == []
