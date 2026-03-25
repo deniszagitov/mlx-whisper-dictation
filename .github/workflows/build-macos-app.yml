@@ -35,6 +35,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PYTHON_VERSION: "3.11"
+  APP_NAME: "Dictator.app"
+  ARTIFACT_BASENAME: "Dictator-macos-apple-silicon"
+
 jobs:
   # ── 1. Линтер ──────────────────────────────────────────────
   lint:
@@ -48,16 +53,18 @@ jobs:
       - name: 🐍 Установка Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: 📦 Установка uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: 🔊 Установка portaudio
         run: brew install portaudio
 
       - name: 🔗 Синхронизация зависимостей
-        run: uv sync --dev
+        run: uv sync --dev --frozen
 
       - name: 🔍 Запуск Ruff
         run: uv run ruff check .
@@ -74,16 +81,18 @@ jobs:
       - name: 🐍 Установка Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: 📦 Установка uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: 🔊 Установка portaudio
         run: brew install portaudio
 
       - name: 🔗 Синхронизация зависимостей
-        run: uv sync --dev
+        run: uv sync --dev --frozen
 
       - name: 🧪 Запуск pytest
         run: uv run python -m pytest tests/ -x -q
@@ -93,6 +102,8 @@ jobs:
     name: 🏗️ Сборка приложения
     runs-on: macos-14
     needs: [lint, test]
+    outputs:
+      release_asset_name: ${{ steps.bundle_meta.outputs.release_asset_name }}
 
     steps:
       - name: 📥 Получение кода
@@ -101,16 +112,32 @@ jobs:
       - name: 🐍 Установка Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: 📦 Установка uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: 🔊 Установка portaudio
         run: brew install portaudio
 
       - name: 🔗 Синхронизация зависимостей
-        run: uv sync --dev
+        run: uv sync --dev --frozen
+
+      - name: 🏷️ Подготовка имени артефакта
+        id: bundle_meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            suffix="${GITHUB_REF_NAME}"
+          else
+            suffix="${GITHUB_SHA::7}"
+          fi
+
+          release_asset_name="${ARTIFACT_BASENAME}-${suffix}.zip"
+
+          echo "release_asset_name=${release_asset_name}" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_ASSET_NAME=${release_asset_name}" >> "$GITHUB_ENV"
 
       - name: 🏗️ Сборка app bundle
         run: uv run python setup.py py2app
@@ -118,14 +145,15 @@ jobs:
       - name: 🗜️ Архивирование app bundle
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
-            "dist/Dictator.app" \
-            "dist/Dictator.app.zip"
+            "dist/${APP_NAME}" \
+            "dist/${RELEASE_ASSET_NAME}"
 
       - name: ⬆️ Загрузка артефакта
         uses: actions/upload-artifact@v4
         with:
-          name: Dictator-macOS
-          path: dist/Dictator.app.zip
+          name: ${{ env.ARTIFACT_BASENAME }}
+          path: dist/${{ steps.bundle_meta.outputs.release_asset_name }}
+          if-no-files-found: error
 
   # ── 4. Релиз ───────────────────────────────────────────────
   release:
@@ -140,10 +168,12 @@ jobs:
       - name: ⬇️ Скачивание артефакта
         uses: actions/download-artifact@v4
         with:
-          name: Dictator-macOS
+          name: ${{ env.ARTIFACT_BASENAME }}
+          path: release-assets
 
       - name: 📦 Создание GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Dictator.app.zip
+          files: release-assets/${{ needs.build.outputs.release_asset_name }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
