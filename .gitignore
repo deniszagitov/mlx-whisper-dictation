@@ -14,3 +14,4 @@ dist/
 .vscode/
 .pytest_cache/
 _test_hang.py
+logs/
