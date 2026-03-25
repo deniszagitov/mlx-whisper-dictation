@@ -51,20 +51,30 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 _PY2APP_PACKAGES = ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "tqdm"]
 
 if "py2app" in sys.argv:
-    # py2app внутри использует устаревший imp.find_module, который может не
-    # обнаружить пакеты в venv, созданном uv. Предварительно импортируем каждый
-    # пакет через importlib и добавляем его родительскую директорию в sys.path.
-    import importlib
+    # py2app (через modulegraph) использует устаревший imp.find_module, который
+    # не всегда находит пакеты в venv, созданном uv. Патчим imp_find_module
+    # и в modulegraph.util, и в py2app.build_app (куда он уже скопирован
+    # через «from modulegraph.util import imp_find_module»).
+    import imp
+    import importlib.util
 
-    for _pkg_name in _PY2APP_PACKAGES:
+    import modulegraph.util
+    import py2app.build_app
+
+    _original_imp_find_module = modulegraph.util.imp_find_module
+
+    def _patched_imp_find_module(name, path=None):
         try:
-            _mod = importlib.import_module(_pkg_name)
+            return _original_imp_find_module(name, path)
         except ImportError:
-            continue
-        for _loc in getattr(_mod, "__path__", []):
-            _parent = str(Path(_loc).parent)
-            if _parent not in sys.path:
-                sys.path.insert(0, _parent)
+            spec = importlib.util.find_spec(name)
+            if spec is None or not spec.submodule_search_locations:
+                raise
+            pkg_dir = spec.submodule_search_locations[0]
+            return (None, pkg_dir, ("", "", imp.PKG_DIRECTORY))
+
+    modulegraph.util.imp_find_module = _patched_imp_find_module
+    py2app.build_app.imp_find_module = _patched_imp_find_module
 
 OPTIONS = {
     "argv_emulation": False,
