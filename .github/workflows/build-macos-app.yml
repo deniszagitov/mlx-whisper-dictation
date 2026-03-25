@@ -142,6 +142,23 @@ jobs:
       - name: 🏗️ Сборка app bundle
         run: uv run python setup.py py2app
 
+      - name: ✅ Проверка standalone bundle
+        run: |
+          python - <<'PY'
+          import plistlib
+          from pathlib import Path
+
+          plist_path = Path("dist") / "Dictator.app" / "Contents" / "Info.plist"
+          with plist_path.open("rb") as fp:
+              plist = plistlib.load(fp)
+
+          py_options = plist.get("PyOptions", {})
+          if py_options.get("alias"):
+              raise SystemExit("Собран alias-bundle вместо standalone Dictator.app")
+
+          print("Standalone bundle подтвержден")
+          PY
+
       - name: 🗜️ Архивирование app bundle
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
