@@ -18,7 +18,18 @@ class FakeRecorder:
         self.stopped = False
         self.last_language = None
         self.input_device = None
-        self.transcriber = type("TranscriberStub", (), {"model_name": "mlx-community/whisper-large-v3-turbo"})()
+        self.transcriber = type(
+            "TranscriberStub",
+            (),
+            {
+                "model_name": "mlx-community/whisper-large-v3-turbo",
+                "paste_cgevent_enabled": True,
+                "paste_ax_enabled": False,
+                "paste_clipboard_enabled": False,
+                "history": [],
+                "history_callback": None,
+            },
+        )()
 
     def set_status_callback(self, callback):
         """Сохраняет callback статуса."""
