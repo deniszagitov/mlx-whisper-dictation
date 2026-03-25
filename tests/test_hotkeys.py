@@ -360,10 +360,10 @@ class TestEventKeyNameStatic:
                 self._key_code = kc
                 self._chars = chars
 
-            def keyCode(self):
+            def keyCode(self):  # noqa: N802
                 return self._key_code
 
-            def charactersIgnoringModifiers(self):
+            def charactersIgnoringModifiers(self):  # noqa: N802
                 return self._chars
 
         return FakeEvent(key_code, characters)

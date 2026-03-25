@@ -13,3 +13,4 @@ dist/
 .ruff_cache
 .vscode/
 .pytest_cache/
+_test_hang.py

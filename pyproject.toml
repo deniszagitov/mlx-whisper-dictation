@@ -44,7 +44,7 @@ target-version = "py311"
 line-length = 140
 src = ["src"]
 show-fixes = true
-extend-exclude = ["build", "dist"]
+extend-exclude = ["build", "dist", "_test_hang.py"]
 
 [tool.ruff.lint]
 # Список включенных проверок
