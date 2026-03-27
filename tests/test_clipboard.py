@@ -8,6 +8,8 @@ import sys
 
 import pytest
 
+import transcriber as transcriber_module
+
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Тесты буфера обмена только для macOS")
 class TestClipboard:
@@ -78,22 +80,22 @@ class TestClipboard:
         posted_events = []
         created_events = []
 
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_args: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_args: None)
         monkeypatch.setattr(
-            app_module,
+            transcriber_module,
             "frontmost_application_info",
             lambda: {"name": "Obsidian", "bundle_id": "md.obsidian", "pid": 42},
         )
-        monkeypatch.setattr(app_module.Quartz, "CGEventSourceCreate", lambda *_args: object())
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSourceCreate", lambda *_args: object())
 
         def fake_create(_source, keycode, is_key_down):
             event = {"keycode": keycode, "is_key_down": is_key_down, "flags": None}
             created_events.append(event)
             return event
 
-        monkeypatch.setattr(app_module.Quartz, "CGEventCreateKeyboardEvent", fake_create)
-        monkeypatch.setattr(app_module.Quartz, "CGEventSetFlags", lambda event, flags: event.__setitem__("flags", flags))
-        monkeypatch.setattr(app_module.Quartz, "CGEventPost", lambda tap, event: posted_events.append((tap, dict(event))))
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventCreateKeyboardEvent", fake_create)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSetFlags", lambda event, flags: event.__setitem__("flags", flags))
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventPost", lambda tap, event: posted_events.append((tap, dict(event))))
 
         transcriber._send_cmd_v()
 
@@ -104,6 +106,6 @@ class TestClipboard:
             app_module.KEYCODE_COMMAND,
         ]
         assert [event["is_key_down"] for event in created_events] == [True, True, False, False]
-        assert posted_events[0][0] == app_module.Quartz.kCGHIDEventTap
-        assert posted_events[1][1]["flags"] == app_module.Quartz.kCGEventFlagMaskCommand
-        assert posted_events[2][1]["flags"] == app_module.Quartz.kCGEventFlagMaskCommand
+        assert posted_events[0][0] == transcriber_module.Quartz.kCGHIDEventTap
+        assert posted_events[1][1]["flags"] == transcriber_module.Quartz.kCGEventFlagMaskCommand
+        assert posted_events[2][1]["flags"] == transcriber_module.Quartz.kCGEventFlagMaskCommand

@@ -43,6 +43,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="пропустить ruff check",
     )
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="включить отчет по покрытию тестами",
+    )
+    parser.add_argument(
+        "--min-coverage",
+        type=int,
+        default=56,
+        help="минимальный допустимый процент покрытия при --coverage",
+    )
     return parser.parse_args()
 
 
@@ -54,6 +65,14 @@ def main() -> int:
         run_step("Ruff", ["uv", "run", "ruff", "check", "."])
 
     pytest_command = ["uv", "run", "pytest", "tests/", "-q"]
+    if args.coverage:
+        pytest_command.extend(
+            [
+                "--cov=.",
+                "--cov-report=term-missing",
+                f"--cov-fail-under={args.min_coverage}",
+            ]
+        )
     if args.slow:
         pytest_command.append("--run-slow")
     if args.hardware:

@@ -4,6 +4,8 @@ import sys
 
 import pytest
 
+import transcriber as transcriber_module
+
 
 def make_transcriber(app_module, diagnostics_enabled=False):
     """Создает transcriber с отключённой диагностикой для тестов."""
@@ -15,6 +17,7 @@ def make_transcriber(app_module, diagnostics_enabled=False):
 # CGEvent Unicode
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="CGEvent только на macOS")
 class TestCGEventUnicode:
     """Тесты _type_text_via_cgevent."""
@@ -24,23 +27,23 @@ class TestCGEventUnicode:
         posted_events = []
         sleep_calls = []
 
-        monkeypatch.setattr(app_module.time, "sleep", sleep_calls.append)
+        monkeypatch.setattr(transcriber_module.time, "sleep", sleep_calls.append)
         monkeypatch.setattr(
             app_module,
             "frontmost_application_info",
             lambda: {"name": "Test", "bundle_id": "com.test", "pid": 1},
         )
-        monkeypatch.setattr(app_module.Quartz, "CGEventSourceCreate", lambda *_: object())
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSourceCreate", lambda *_: object())
 
         def fake_create_keyboard(_source, keycode, is_key_down):
             return {"keycode": keycode, "is_key_down": is_key_down, "unicode": None}
 
-        monkeypatch.setattr(app_module.Quartz, "CGEventCreateKeyboardEvent", fake_create_keyboard)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventCreateKeyboardEvent", fake_create_keyboard)
 
         def fake_set_unicode(event, length, string):
             event["unicode"] = string[:length]
 
-        monkeypatch.setattr(app_module.Quartz, "CGEventKeyboardSetUnicodeString", fake_set_unicode)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventKeyboardSetUnicodeString", fake_set_unicode)
         monkeypatch.setattr(
             app_module.Quartz,
             "CGEventPost",
@@ -107,13 +110,13 @@ class TestCGEventUnicode:
     def test_raises_when_event_source_is_none(self, app_module, monkeypatch):
         """RuntimeError при невозможности создать CGEventSource."""
         transcriber = make_transcriber(app_module)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
         monkeypatch.setattr(
             app_module,
             "frontmost_application_info",
             lambda: None,
         )
-        monkeypatch.setattr(app_module.Quartz, "CGEventSourceCreate", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSourceCreate", lambda *_: None)
 
         with pytest.raises(RuntimeError, match="источник"):
             transcriber._type_text_via_cgevent("тест")
@@ -121,16 +124,16 @@ class TestCGEventUnicode:
     def test_raises_when_keydown_event_is_none(self, app_module, monkeypatch):
         """RuntimeError при невозможности создать keyDown event."""
         transcriber = make_transcriber(app_module)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
-        monkeypatch.setattr(app_module, "frontmost_application_info", lambda: None)
-        monkeypatch.setattr(app_module.Quartz, "CGEventSourceCreate", lambda *_: object())
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "frontmost_application_info", lambda: None)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSourceCreate", lambda *_: object())
 
         def fail_on_keydown(_source, _keycode, is_key_down):
             if is_key_down:
                 return None
             return {}
 
-        monkeypatch.setattr(app_module.Quartz, "CGEventCreateKeyboardEvent", fail_on_keydown)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventCreateKeyboardEvent", fail_on_keydown)
 
         with pytest.raises(RuntimeError, match="keyDown"):
             transcriber._type_text_via_cgevent("тест")
@@ -138,18 +141,18 @@ class TestCGEventUnicode:
     def test_raises_when_keyup_event_is_none(self, app_module, monkeypatch):
         """RuntimeError при невозможности создать keyUp event."""
         transcriber = make_transcriber(app_module)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
-        monkeypatch.setattr(app_module, "frontmost_application_info", lambda: None)
-        monkeypatch.setattr(app_module.Quartz, "CGEventSourceCreate", lambda *_: object())
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "frontmost_application_info", lambda: None)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSourceCreate", lambda *_: object())
 
         def fail_on_keyup(_source, _keycode, is_key_down):
             if not is_key_down:
                 return None
             return {}
 
-        monkeypatch.setattr(app_module.Quartz, "CGEventCreateKeyboardEvent", fail_on_keyup)
-        monkeypatch.setattr(app_module.Quartz, "CGEventKeyboardSetUnicodeString", lambda *_: None)
-        monkeypatch.setattr(app_module.Quartz, "CGEventPost", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventCreateKeyboardEvent", fail_on_keyup)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventKeyboardSetUnicodeString", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventPost", lambda *_: None)
 
         with pytest.raises(RuntimeError, match="keyUp"):
             transcriber._type_text_via_cgevent("тест")
@@ -162,12 +165,13 @@ class TestCGEventUnicode:
         transcriber._type_text_via_cgevent("AB")
 
         for tap, _event in posted:
-            assert tap == app_module.Quartz.kCGHIDEventTap
+            assert tap == transcriber_module.Quartz.kCGHIDEventTap
 
 
 # ---------------------------------------------------------------------------
 # Accessibility (AX) API
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="AX API только на macOS")
 class TestAXAPI:
@@ -183,9 +187,7 @@ class TestAXAPI:
         mock_hi.kAXFocusedUIElementAttribute = "AXFocusedUIElement"
         mock_hi.kAXSelectedTextAttribute = "AXSelectedText"
         mock_hi.AXUIElementCopyAttributeValue = lambda _sw, _attr, _none: (0, "focused_el")
-        mock_hi.AXUIElementSetAttributeValue = lambda _el, _attr, text: (
-            set_calls.append(text) or 0
-        )
+        mock_hi.AXUIElementSetAttributeValue = lambda _el, _attr, text: set_calls.append(text) or 0
         monkeypatch.setitem(sys.modules, "HIServices", mock_hi)
 
         transcriber._insert_text_via_ax("Привет мир")
@@ -260,6 +262,7 @@ class TestAXAPI:
 # Clipboard с сохранением/восстановлением
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Буфер обмена только на macOS")
 class TestPasteViaClipboard:
     """Тесты _paste_via_clipboard."""
@@ -276,7 +279,7 @@ class TestPasteViaClipboard:
             clipboard_writes.append,
         )
         monkeypatch.setattr(transcriber, "_send_cmd_v", lambda: None)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
 
         transcriber._paste_via_clipboard("новый текст")
 
@@ -295,7 +298,7 @@ class TestPasteViaClipboard:
             clipboard_writes.append,
         )
         monkeypatch.setattr(transcriber, "_send_cmd_v", lambda: None)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
 
         transcriber._paste_via_clipboard("текст")
 
@@ -313,7 +316,7 @@ class TestPasteViaClipboard:
             "_copy_text_to_clipboard",
             clipboard_writes.append,
         )
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
 
         def failing_cmd_v():
             raise RuntimeError("Cmd+V failed")
@@ -334,7 +337,7 @@ class TestPasteViaClipboard:
         monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
         monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_: None)
         monkeypatch.setattr(transcriber, "_send_cmd_v", lambda: None)
-        monkeypatch.setattr(app_module.time, "sleep", sleep_calls.append)
+        monkeypatch.setattr(transcriber_module.time, "sleep", sleep_calls.append)
 
         transcriber._paste_via_clipboard("текст")
 
@@ -348,7 +351,7 @@ class TestPasteViaClipboard:
         monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
         monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_: None)
         monkeypatch.setattr(transcriber, "_send_cmd_v", lambda: cmd_v_calls.append(True))
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
 
         transcriber._paste_via_clipboard("текст")
 
@@ -367,7 +370,7 @@ class TestPasteViaClipboard:
         monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "old")
         monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", failing_copy)
         monkeypatch.setattr(transcriber, "_send_cmd_v", lambda: None)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
 
         # Не должно выбрасывать исключение
         transcriber._paste_via_clipboard("новый")
@@ -377,6 +380,7 @@ class TestPasteViaClipboard:
 # _send_cmd_v — RuntimeError при невозможности создать события
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="CGEvent только на macOS")
 class TestSendCmdV:
     """Тесты _send_cmd_v."""
@@ -384,9 +388,9 @@ class TestSendCmdV:
     def test_raises_when_event_source_is_none(self, app_module, monkeypatch):
         """RuntimeError при невозможности создать CGEventSource."""
         transcriber = make_transcriber(app_module)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
-        monkeypatch.setattr(app_module, "frontmost_application_info", lambda: None)
-        monkeypatch.setattr(app_module.Quartz, "CGEventSourceCreate", lambda *_: None)
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "frontmost_application_info", lambda: None)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSourceCreate", lambda *_: None)
 
         with pytest.raises(RuntimeError, match="источник"):
             transcriber._send_cmd_v()
@@ -394,9 +398,9 @@ class TestSendCmdV:
     def test_raises_when_keyboard_events_are_none(self, app_module, monkeypatch):
         """RuntimeError при невозможности создать keyboard events."""
         transcriber = make_transcriber(app_module)
-        monkeypatch.setattr(app_module.time, "sleep", lambda *_: None)
-        monkeypatch.setattr(app_module, "frontmost_application_info", lambda: None)
-        monkeypatch.setattr(app_module.Quartz, "CGEventSourceCreate", lambda *_: object())
+        monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "frontmost_application_info", lambda: None)
+        monkeypatch.setattr(transcriber_module.Quartz, "CGEventSourceCreate", lambda *_: object())
         monkeypatch.setattr(
             app_module.Quartz,
             "CGEventCreateKeyboardEvent",

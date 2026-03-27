@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+import transcriber as transcriber_module
+
 
 def make_audio(seconds=1.0, amplitude=0.01):
     """Создает простой тестовый аудиосигнал."""
@@ -36,7 +38,7 @@ class TestTranscriptionIntegration:
             calls.append(kwargs)
             return {"text": "ok", "language": kwargs["language"], "segments": []}
 
-        monkeypatch.setattr(app_module.mlx_whisper, "transcribe", fake_transcribe)
+        monkeypatch.setattr(transcriber_module.mlx_whisper, "transcribe", fake_transcribe)
 
         result = transcriber._run_transcription(make_audio(), "ru")
 

@@ -5,6 +5,9 @@ import zlib
 from pathlib import Path
 from typing import Any, cast
 
+# Добавляем src/ в sys.path, чтобы modulegraph находил модули приложения
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
 from setuptools import setup
 from setuptools.dist import Distribution
 
@@ -103,6 +106,7 @@ if "py2app" in sys.argv:
 OPTIONS = {
     "argv_emulation": False,
     "site_packages": False,
+    "iconfile": "Dictator.icns",
     "packages": _PY2APP_PACKAGES,
     "includes": ["AppKit", "Foundation", "PyObjCTools", "Quartz", "objc", "pynput.keyboard._darwin"],
     "plist": {

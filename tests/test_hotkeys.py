@@ -5,6 +5,7 @@
 """
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -187,6 +188,31 @@ class TestFormatMaxTimeStatus:
 class TestParseArgs:
     """Тесты аргументов командной строки для нескольких хоткеев."""
 
+    @pytest.fixture(autouse=True)
+    def _clean_defaults(self, app_module, monkeypatch):
+        """Изолирует parse_args-тесты от реальных NSUserDefaults пользователя."""
+
+        class EmptyDefaults:
+            def objectForKey_(self, _key):  # noqa: N802
+                return None
+
+            def boolForKey_(self, _key):  # noqa: N802
+                return False
+
+            def integerForKey_(self, _key):  # noqa: N802
+                return -1
+
+        empty_defaults = EmptyDefaults()
+
+        def standard_user_defaults():
+            return empty_defaults
+
+        monkeypatch.setattr(
+            app_module,
+            "NSUserDefaults",
+            SimpleNamespace(standardUserDefaults=standard_user_defaults),
+        )
+
     def test_secondary_hotkey_is_normalized(self, app_module, monkeypatch):
         """Дополнительный хоткей должен нормализоваться так же, как основной."""
         monkeypatch.setattr(
@@ -274,6 +300,49 @@ class TestParseArgs:
         args = app_module.parse_args()
 
         assert args.secondary_key_combination is None
+
+    def test_parse_args_uses_saved_preferences_when_cli_not_overrides(self, app_module, monkeypatch):
+        """При отсутствии явных CLI-флагов приложение должно поднять сохранённые настройки."""
+        import config as config_module
+
+        class FakeDefaults:
+            def __init__(self):
+                self.values = {
+                    app_module.DEFAULTS_KEY_MODEL: "mlx-community/whisper-turbo",
+                    app_module.DEFAULTS_KEY_LANGUAGE: "en",
+                    app_module.DEFAULTS_KEY_MAX_TIME: "60",
+                    app_module.DEFAULTS_KEY_PRIMARY_HOTKEY: "ctrl+alt+d",
+                    app_module.DEFAULTS_KEY_SECONDARY_HOTKEY: "",
+                    app_module.DEFAULTS_KEY_LLM_HOTKEY: "ctrl+shift+l",
+                }
+
+            def objectForKey_(self, key):  # noqa: N802
+                return self.values.get(key)
+
+            def boolForKey_(self, _key):  # noqa: N802
+                return False
+
+            def integerForKey_(self, _key):  # noqa: N802
+                return -1
+
+        fake_defaults = FakeDefaults()
+
+        def standard_user_defaults():
+            return fake_defaults
+
+        fake_ns = SimpleNamespace(standardUserDefaults=standard_user_defaults)
+        monkeypatch.setattr(app_module, "NSUserDefaults", fake_ns)
+        monkeypatch.setattr(config_module, "NSUserDefaults", fake_ns)
+        monkeypatch.setattr(sys, "argv", ["whisper-dictation.py"])
+
+        args = app_module.parse_args()
+
+        assert args.model == "mlx-community/whisper-turbo"
+        assert args.language == ["en"]
+        assert args.max_time == 60
+        assert args.key_combination == "ctrl+alt+d"
+        assert args.secondary_key_combination is None
+        assert args.llm_key_combination == "ctrl+shift+l"
 
 
 class TestMultiHotkeyListener:

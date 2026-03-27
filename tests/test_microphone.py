@@ -6,10 +6,11 @@
 Тесты помечены маркером `hardware`, потому что требуют доступ к микрофону.
 """
 
-
 import numpy as np
 import pyaudio
 import pytest
+
+import audio
 
 
 @pytest.mark.hardware
@@ -150,7 +151,7 @@ class TestMicrophoneListing:
 
     def test_list_input_devices_filters_output_only(self, app_module, monkeypatch):
         """В список должны попадать только устройства с input channels > 0."""
-        monkeypatch.setattr(app_module.pyaudio, "PyAudio", FakePyAudio)
+        monkeypatch.setattr(audio.pyaudio, "PyAudio", FakePyAudio)
 
         devices = app_module.list_input_devices()
 
@@ -158,7 +159,7 @@ class TestMicrophoneListing:
 
     def test_list_input_devices_marks_default_first(self, app_module, monkeypatch):
         """Устройство по умолчанию должно быть отмечено и идти первым."""
-        monkeypatch.setattr(app_module.pyaudio, "PyAudio", FakePyAudio)
+        monkeypatch.setattr(audio.pyaudio, "PyAudio", FakePyAudio)
 
         devices = app_module.list_input_devices()
 
@@ -172,6 +173,30 @@ class TestMicrophoneListing:
 
         assert recorder.input_device_index == 7
         assert recorder.input_device_name == "External Mic"
+
+    def test_recorder_performance_mode_changes_buffer_size(self, app_module):
+        """Режим работы должен менять размер аудиобуфера."""
+
+        class LLMStub:
+            def __init__(self):
+                self.performance_mode = None
+
+            def set_performance_mode(self, performance_mode):
+                self.performance_mode = performance_mode
+
+        recorder = app_module.Recorder(transcriber=None)
+        recorder.llm_processor = LLMStub()
+
+        recorder.set_performance_mode("fast")
+
+        assert recorder.performance_mode == "fast"
+        assert recorder.frames_per_buffer == 512
+        assert recorder.llm_processor.performance_mode == "fast"
+
+        recorder.set_performance_mode("normal")
+
+        assert recorder.performance_mode == "normal"
+        assert recorder.frames_per_buffer == 2048
 
     def test_microphone_menu_title_contains_index_and_name(self, app_module):
         """Подпись микрофона должна содержать индекс и имя устройства."""
