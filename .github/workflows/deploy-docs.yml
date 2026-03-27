@@ -57,20 +57,20 @@ jobs:
           enable-cache: true
 
       - name: ✅ Проверка Ruff для docs-tooling
-        run: uv run --with ruff ruff check scripts/generate_docs.py tests/test_generate_docs.py
+        run: uv run --no-project --with ruff ruff check scripts/generate_docs.py tests/test_generate_docs.py
 
       - name: 🧪 Проверка генератора документации
-        run: uv run --with pytest pytest tests/test_generate_docs.py
+        run: uv run --no-project --with pytest pytest tests/test_generate_docs.py
 
       - name: ⚙️ Генерация API-документации
-        run: uv run python scripts/generate_docs.py
+        run: uv run --no-project python scripts/generate_docs.py
 
       - name: ⚙️ Настройка GitHub Pages
         if: github.event_name == 'push'
         uses: actions/configure-pages@v5
 
       - name: 🏗️ Сборка MkDocs
-        run: uv run --with mkdocs --with mkdocs-material --with pymdown-extensions mkdocs build --strict
+        run: uv run --no-project --with mkdocs --with mkdocs-material --with pymdown-extensions mkdocs build --strict
 
       - name: ⬆️ Загрузка Pages artifact
         if: github.event_name == 'push'
