@@ -69,7 +69,35 @@ jobs:
       - name: 🔍 Запуск Ruff
         run: uv run ruff check .
 
-  # ── 2. Тесты ───────────────────────────────────────────────
+  # ── 2. Security ────────────────────────────────────────────
+  security:
+    name: 🔐 Security checks
+    runs-on: macos-14
+
+    steps:
+      - name: 📥 Получение кода
+        uses: actions/checkout@v4
+
+      - name: 🐍 Установка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📦 Установка uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 🔊 Установка portaudio
+        run: brew install portaudio
+
+      - name: 🔗 Синхронизация зависимостей
+        run: uv sync --dev --frozen
+
+      - name: 🔐 Запуск security self-check
+        run: uv run python scripts/selfcheck.py --security --no-lint --no-tests
+
+  # ── 3. Тесты ───────────────────────────────────────────────
   test:
     name: 🧪 Тесты
     runs-on: macos-14
@@ -97,11 +125,11 @@ jobs:
       - name: 🧪 Запуск pytest
         run: uv run python -m pytest tests/ -x -q
 
-  # ── 3. Сборка ──────────────────────────────────────────────
+  # ── 4. Сборка ──────────────────────────────────────────────
   build:
     name: 🏗️ Сборка приложения
     runs-on: macos-14
-    needs: [lint, test]
+    needs: [lint, security, test]
     outputs:
       release_asset_name: ${{ steps.bundle_meta.outputs.release_asset_name }}
 
@@ -155,7 +183,7 @@ jobs:
           path: dist/${{ steps.bundle_meta.outputs.release_asset_name }}
           if-no-files-found: error
 
-  # ── 4. Релиз ───────────────────────────────────────────────
+  # ── 5. Релиз ───────────────────────────────────────────────
   release:
     name: 📦 Публикация релиза
     runs-on: ubuntu-latest
