@@ -219,7 +219,7 @@ class TestParseArgs:
             sys,
             "argv",
             [
-                "whisper-dictation.py",
+                "main.py",
                 "-k",
                 "Command+Option+Space",
                 "--secondary_key_combination",
@@ -238,7 +238,7 @@ class TestParseArgs:
             sys,
             "argv",
             [
-                "whisper-dictation.py",
+                "main.py",
                 "-k",
                 "cmd_l+alt",
                 "--secondary_key_combination",
@@ -255,7 +255,7 @@ class TestParseArgs:
             sys,
             "argv",
             [
-                "whisper-dictation.py",
+                "main.py",
                 "--k_double_cmd",
                 "--secondary_key_combination",
                 "ctrl+shift+space",
@@ -270,7 +270,7 @@ class TestParseArgs:
         monkeypatch.setattr(
             sys,
             "argv",
-            ["whisper-dictation.py", "--k_double_cmd"],
+            ["main.py", "--k_double_cmd"],
         )
 
         args = app_module.parse_args()
@@ -282,7 +282,7 @@ class TestParseArgs:
         monkeypatch.setattr(
             sys,
             "argv",
-            ["whisper-dictation.py"],
+            ["main.py"],
         )
 
         args = app_module.parse_args()
@@ -294,7 +294,7 @@ class TestParseArgs:
         monkeypatch.setattr(
             sys,
             "argv",
-            ["whisper-dictation.py", "--secondary_key_combination", ""],
+            ["main.py", "--secondary_key_combination", ""],
         )
 
         args = app_module.parse_args()
@@ -333,7 +333,7 @@ class TestParseArgs:
         fake_ns = SimpleNamespace(standardUserDefaults=standard_user_defaults)
         monkeypatch.setattr(app_module, "NSUserDefaults", fake_ns)
         monkeypatch.setattr(config_module, "NSUserDefaults", fake_ns)
-        monkeypatch.setattr(sys, "argv", ["whisper-dictation.py"])
+        monkeypatch.setattr(sys, "argv", ["main.py"])
 
         args = app_module.parse_args()
 

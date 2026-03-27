@@ -13,7 +13,7 @@ on:
       - pyproject.toml
       - scripts/generate_docs.py
       - setup.py
-      - whisper-dictation.py
+      - main.py
       - src/**
       - docs/**
   pull_request:
@@ -24,7 +24,7 @@ on:
       - pyproject.toml
       - scripts/generate_docs.py
       - setup.py
-      - whisper-dictation.py
+      - main.py
       - src/**
       - docs/**
 

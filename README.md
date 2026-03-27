@@ -110,7 +110,7 @@ open "dist/Dictator.app"
 - **Логи** пишутся локально в `~/Library/Logs/whisper-dictation/` и содержат только техническую информацию о работе приложения.
 - **Диагностические записи**: если диагностика включена, в `~/Library/Logs/whisper-dictation/recordings/` могут временно храниться WAV-файлы с голосом. Они ротируются автоматически (последние 10 записей).
 
-Исходный код открыт — можно убедиться самостоятельно: `grep -r "http\|socket\|requests\|urllib" whisper-dictation.py` не вернёт ни одного совпадения.
+Исходный код открыт — можно убедиться самостоятельно: `grep -r "http\|socket\|requests\|urllib" main.py` не вернёт ни одного совпадения.
 
 ## Что видно в меню бара
 
@@ -214,7 +214,7 @@ Workflow дополнительно валидирует, что release bundle 
 Если хотите сначала проверить приложение как обычный Python-скрипт:
 
 ```bash
-uv run python whisper-dictation.py
+uv run python main.py
 ```
 
 ## Self-check цикл
@@ -287,7 +287,7 @@ uv run --group docs mkdocs serve
 uv run --group docs mkdocs build --strict
 ```
 
-Во время сборки MkDocs автоматически запускает pre-build hook `scripts/generate_docs.py`, который читает `whisper-dictation.py`, `setup.py` и runtime-модули в `src/`, вытаскивает module/class/function docstring и обновляет API-страницы в каталоге `docs/`.
+Во время сборки MkDocs автоматически запускает pre-build hook `scripts/generate_docs.py`, который читает `main.py`, `setup.py` и runtime-модули в `src/`, вытаскивает module/class/function docstring и обновляет API-страницы в каталоге `docs/`.
 
 В репозитории также есть workflow [.github/workflows/deploy-docs.yml](.github/workflows/deploy-docs.yml), который на каждом push в `main` или `master` пересобирает сайт и публикует каталог `site/` в GitHub Pages. Это значит, что после merge ветки `docs` в `main` сайт обновится автоматически.
 
@@ -304,15 +304,15 @@ cmd_l+alt
 Поддерживаются комбинации из двух и более клавиш. Примеры:
 
 ```bash
-uv run python whisper-dictation.py -k cmd_l+shift+space
-uv run python whisper-dictation.py -k cmd_r+shift
-uv run python whisper-dictation.py -k ctrl+alt
+uv run python main.py -k cmd_l+shift+space
+uv run python main.py -k cmd_r+shift
+uv run python main.py -k ctrl+alt
 ```
 
 При необходимости можно включить второй хоткей для тех же действий старта и остановки записи. Это удобно, если кнопка мыши в Logitech Options или другой утилите отправляет отдельное сочетание клавиш:
 
 ```bash
-uv run python whisper-dictation.py -k cmd_l+alt --secondary_key_combination ctrl+shift+space
+uv run python main.py -k cmd_l+alt --secondary_key_combination ctrl+shift+space
 ```
 
 В menu bar оба хоткея показываются отдельно:
@@ -325,7 +325,7 @@ uv run python whisper-dictation.py -k cmd_l+alt --secondary_key_combination ctrl
 Также можно включить режим по правой клавише Command:
 
 ```bash
-uv run python whisper-dictation.py --k_double_cmd
+uv run python main.py --k_double_cmd
 ```
 
 В этом режиме:
@@ -378,7 +378,7 @@ mlx-community/whisper-large-v3-turbo
 Пример запуска:
 
 ```bash
-uv run python whisper-dictation.py -m mlx-community/whisper-large-v3-mlx -l ru
+uv run python main.py -m mlx-community/whisper-large-v3-mlx -l ru
 ```
 
 Также модель можно переключать прямо в menu bar во время работы приложения: пункт `🧠 Выбрать модель`.
@@ -470,14 +470,14 @@ tail -f ~/Library/Logs/whisper-dictation/stderr.log
 
 ## Информация для разработки
 
-Основной runtime-entrypoint проекта: `whisper-dictation.py`.
+Основной runtime-entrypoint проекта: `main.py`.
 
 Базовые команды разработки:
 
 ```bash
 uv sync --dev
 uv run ruff check .
-uv run python whisper-dictation.py
+uv run python main.py
 uv run python setup.py py2app -A
 ```
 

@@ -104,7 +104,7 @@ def test_main_adds_coverage_flags(monkeypatch):
     assert len(steps) == 1
     assert steps[0][0] == "Pytest"
     assert "--cov=." in steps[0][1]
-    assert "--cov-report=term-missing" in steps[0][1]
+    assert "--cov-report=term" in steps[0][1]
     assert "--cov-fail-under=77" in steps[0][1]
 
 

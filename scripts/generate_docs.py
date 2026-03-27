@@ -54,7 +54,7 @@ class ModuleTarget:
 
 
 RUNTIME_TARGETS = (
-    ModuleTarget("CLI и запуск", ROOT / "whisper-dictation.py", "api/entrypoint.md"),
+    ModuleTarget("CLI и запуск", ROOT / "main.py", "api/entrypoint.md"),
     ModuleTarget("Конфигурация", ROOT / "src/config.py", "api/modules/config.md"),
     ModuleTarget("Аудио и микрофон", ROOT / "src/audio.py", "api/modules/audio.md"),
     ModuleTarget("Диагностика", ROOT / "src/diagnostics.py", "api/modules/diagnostics.md"),

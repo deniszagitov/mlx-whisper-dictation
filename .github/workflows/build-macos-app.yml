@@ -17,7 +17,7 @@ on:
       - scripts/selfcheck.py
       - setup.py
       - "src/**"
-      - whisper-dictation.py
+      - main.py
       - "tests/**"
   pull_request:
     paths:
@@ -29,7 +29,7 @@ on:
       - scripts/selfcheck.py
       - setup.py
       - "src/**"
-      - whisper-dictation.py
+      - main.py
       - "tests/**"
 
 # Отменяем предыдущие запуски для того же PR/ветки

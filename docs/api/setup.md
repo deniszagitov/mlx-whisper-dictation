@@ -6,7 +6,7 @@
 
 ## Константы
 
-- `APP` = `['whisper-dictation.py']`
+- `APP` = `['main.py']`
 - `ROOT` = `Path(__file__).parent`
 - `README` = `(ROOT / 'README.md').read_text(encoding='utf-8')`
 - `_PY2APP_PACKAGES` = `['mlx', 'mlx_whisper', 'numpy', 'pyaudio', 'pynput', 'rumps', 'tqdm']`

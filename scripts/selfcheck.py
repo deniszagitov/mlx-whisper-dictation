@@ -7,16 +7,23 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+LOGGER = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Настраивает лаконичный вывод self-check через logging."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 def run_step(title: str, command: list[str]) -> None:
     """Запускает отдельный шаг self-check и завершает скрипт при ошибке."""
-    print(f"\n== {title} ==")
-    print("$", " ".join(command))
+    LOGGER.info("\n== %s ==", title)
+    LOGGER.info("$ %s", " ".join(command))
     subprocess.run(command, cwd=ROOT, check=True)
 
 
@@ -59,6 +66,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     """Запускает выбранный набор локальных проверок."""
+    _configure_logging()
     args = parse_args()
 
     if not args.no_lint:
@@ -69,7 +77,7 @@ def main() -> int:
         pytest_command.extend(
             [
                 "--cov=.",
-                "--cov-report=term-missing",
+                "--cov-report=term",
                 f"--cov-fail-under={args.min_coverage}",
             ]
         )
@@ -84,7 +92,7 @@ def main() -> int:
     if args.build:
         run_step("Py2app", ["uv", "run", "python", "setup.py", "py2app", "-A"])
 
-    print("\nSelf-check завершен успешно.")
+    LOGGER.info("\nSelf-check завершен успешно.")
     return 0
 
 
