@@ -17,29 +17,6 @@ def make_transcriber(app_module, diagnostics_enabled=False):
     return app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
 
 
-def test_transcribe_retries_without_language_on_empty_primary(app_module, monkeypatch):
-    """При пустом первом результате приложение должно повторить распознавание без language."""
-    transcriber = make_transcriber(app_module)
-    calls = []
-    history_added = []
-
-    def fake_run(audio_data, language):
-        calls.append(language)
-        if language == "ru":
-            return {"text": ""}
-        return {"text": "Привет мир"}
-
-    monkeypatch.setattr(transcriber, "_run_transcription", fake_run)
-    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
-
-    transcriber.transcribe(make_audio(), "ru")
-
-    assert calls == ["ru", None]
-    assert history_added == ["Привет мир"]
-
-
 def test_transcribe_inserts_via_cgevent_when_enabled(app_module, monkeypatch):
     """При включённом CGEvent текст должен вставляться через прямой ввод."""
     transcriber = make_transcriber(app_module)

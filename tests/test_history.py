@@ -1,4 +1,4 @@
-"""Тесты истории распознанного текста: добавление, лимит, persistence, callback."""
+"""Тесты истории распознанного текста: TTL, persistence, callback."""
 
 import sys
 
@@ -26,25 +26,29 @@ class TestAddToHistory:
         """Новый текст добавляется в начало списка."""
         transcriber = make_transcriber(app_module)
         transcriber.history = ["первый"]
-        monkeypatch.setattr(transcriber_module, "_save_defaults_list", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
 
         transcriber._add_to_history("второй")
 
         assert transcriber.history[0] == "второй"
         assert transcriber.history[1] == "первый"
 
-    def test_caps_at_max_size(self, app_module, monkeypatch):
-        """История не превышает MAX_HISTORY_SIZE записей."""
+    def test_drops_entries_older_than_24_hours(self, app_module, monkeypatch):
+        """При добавлении история очищается от записей старше 24 часов."""
         transcriber = make_transcriber(app_module)
-        transcriber.history = [f"text_{i}" for i in range(app_module.MAX_HISTORY_SIZE)]
-        monkeypatch.setattr(transcriber_module, "_save_defaults_list", lambda *_: None)
+        now = 2_000_000.0
+        transcriber._history_records = [
+            {"text": "старый", "created_at": now - (24 * 60 * 60) - 1},
+            {"text": "свежий", "created_at": now - 60},
+        ]
+        transcriber.history = ["старый", "свежий"]
 
-        transcriber._add_to_history("overflow")
+        monkeypatch.setattr(transcriber, "_current_time", lambda: now)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
 
-        assert len(transcriber.history) == app_module.MAX_HISTORY_SIZE
-        assert transcriber.history[0] == "overflow"
-        # Последний элемент старого списка должен быть вытеснен
-        assert f"text_{app_module.MAX_HISTORY_SIZE - 1}" not in transcriber.history
+        transcriber._add_to_history("новый")
+
+        assert transcriber.history == ["новый", "свежий"]
 
     def test_persists_to_nsuserdefaults(self, app_module, monkeypatch):
         """История сохраняется через _save_defaults_list с правильным ключом."""
@@ -52,17 +56,13 @@ class TestAddToHistory:
         transcriber.history = []
         saved = []
 
-        monkeypatch.setattr(
-            transcriber_module,
-            "_save_defaults_list",
-            lambda key, value: saved.append((key, list(value))),
-        )
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda value: saved.append(list(value)))
 
         transcriber._add_to_history("тест")
 
         assert len(saved) == 1
-        assert saved[0][0] == app_module.DEFAULTS_KEY_HISTORY
-        assert saved[0][1] == ["тест"]
+        assert saved[0][0]["text"] == "тест"
+        assert isinstance(saved[0][0]["created_at"], float)
 
     def test_does_not_persist_history_in_private_mode(self, app_module, monkeypatch):
         """В private mode история остаётся только в памяти текущей сессии."""
@@ -71,11 +71,7 @@ class TestAddToHistory:
         transcriber.private_mode_enabled = True
         saved = []
 
-        monkeypatch.setattr(
-            transcriber_module,
-            "_save_defaults_list",
-            lambda key, value: saved.append((key, list(value))),
-        )
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda value: saved.append(list(value)))
 
         transcriber._add_to_history("секрет")
 
@@ -89,7 +85,11 @@ class TestAddToHistory:
             "_load_defaults_bool",
             lambda key, fallback: True if key == app_module.DEFAULTS_KEY_PRIVATE_MODE else fallback,
         )
-        monkeypatch.setattr(transcriber_module, "_load_defaults_list", lambda *_args: ["старый текст"])
+        monkeypatch.setattr(
+            transcriber_module,
+            "_load_history_records",
+            lambda *_args, **_kwargs: [{"text": "старый текст", "created_at": 2_000_000.0}],
+        )
 
         transcriber = make_transcriber(app_module)
 
@@ -105,7 +105,12 @@ class TestAddToHistory:
         transcriber.history_callback = lambda: callback_calls.append(True)
 
         monkeypatch.setattr(transcriber_module, "_save_defaults_bool", lambda key, value: saved_flags.append((key, value)))
-        monkeypatch.setattr(transcriber_module, "_load_defaults_list", lambda *_args: ["обычная история"])
+        monkeypatch.setattr(
+            transcriber_module,
+            "_load_history_records",
+            lambda *_args, **_kwargs: [{"text": "обычная история", "created_at": 2_000_000.0}],
+        )
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_args: None)
 
         transcriber.set_private_mode(True)
         assert transcriber.history == []
@@ -125,7 +130,7 @@ class TestAddToHistory:
         transcriber.history = []
         callback_calls = []
         transcriber.history_callback = lambda: callback_calls.append(True)
-        monkeypatch.setattr(transcriber_module, "_save_defaults_list", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
 
         transcriber._add_to_history("тест")
 
@@ -136,7 +141,7 @@ class TestAddToHistory:
         transcriber = make_transcriber(app_module)
         transcriber.history = []
         transcriber.history_callback = None
-        monkeypatch.setattr(transcriber_module, "_save_defaults_list", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
 
         # Не должно выбрасывать исключение
         transcriber._add_to_history("тест")
@@ -145,7 +150,7 @@ class TestAddToHistory:
         """Исключение в history_callback не прерывает работу."""
         transcriber = make_transcriber(app_module)
         transcriber.history = []
-        monkeypatch.setattr(transcriber_module, "_save_defaults_list", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
 
         def failing_callback():
             raise ValueError("callback error")
@@ -160,7 +165,7 @@ class TestAddToHistory:
         """Несколько добавлений сохраняют порядок: новейшее первым."""
         transcriber = make_transcriber(app_module)
         transcriber.history = []
-        monkeypatch.setattr(transcriber_module, "_save_defaults_list", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
 
         transcriber._add_to_history("первый")
         transcriber._add_to_history("второй")
@@ -172,11 +177,31 @@ class TestAddToHistory:
         """Пустая строка тоже добавляется в историю (без фильтрации)."""
         transcriber = make_transcriber(app_module)
         transcriber.history = []
-        monkeypatch.setattr(transcriber_module, "_save_defaults_list", lambda *_: None)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
 
         transcriber._add_to_history("")
 
         assert transcriber.history == [""]
+
+    def test_prune_expired_history_removes_old_records(self, app_module, monkeypatch):
+        """Явная очистка истории должна удалять записи старше 24 часов."""
+        transcriber = make_transcriber(app_module)
+        now = 2_000_000.0
+        transcriber._history_records = [
+            {"text": "старый", "created_at": now - (24 * 60 * 60) - 1},
+            {"text": "свежий", "created_at": now - 10},
+        ]
+        transcriber.history = ["старый", "свежий"]
+        saved = []
+
+        monkeypatch.setattr(transcriber, "_current_time", lambda: now)
+        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda value: saved.append(list(value)))
+
+        changed = transcriber.prune_expired_history()
+
+        assert changed is True
+        assert transcriber.history == ["свежий"]
+        assert saved[0][0]["text"] == "свежий"
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="NSUserDefaults только на macOS")

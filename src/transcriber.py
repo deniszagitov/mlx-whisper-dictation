@@ -13,9 +13,11 @@ from typing import Any, cast
 import AppKit
 import mlx_whisper
 import Quartz
+from Foundation import NSUserDefaults
 from pynput import keyboard
 
 from config import (
+    ARTIFACT_TTL_SECONDS,
     CGEVENT_CHUNK_DELAY,
     CGEVENT_UNICODE_CHUNK_SIZE,
     CLIPBOARD_RESTORE_DELAY,
@@ -31,15 +33,12 @@ from config import (
     KEYCODE_V,
     LLM_NOTIFICATION_CHAR_LIMIT,
     LLM_RESPONSE_CHAR_LIMIT,
-    MAX_HISTORY_SIZE,
     SHORT_AUDIO_WARNING_SECONDS,
     SILENCE_RMS_THRESHOLD,
     _load_defaults_bool,
     _load_defaults_int,
-    _load_defaults_list,
     _save_defaults_bool,
     _save_defaults_int,
-    _save_defaults_list,
 )
 from diagnostics import DiagnosticsStore, looks_like_hallucination
 from permissions import (
@@ -61,6 +60,49 @@ _CLIPBOARD_CONTEXT_HINT_RE = re.compile(
     r"what is this|about this|translate|rewrite|fix|summari[sz]e|proofread)",
     re.IGNORECASE,
 )
+
+
+def _normalize_history_record(item, now):
+    """Приводит запись истории к внутреннему формату с TTL."""
+    if isinstance(item, dict):
+        text = item.get("text", "")
+        created_at = item.get("created_at", now)
+    else:
+        text = item
+        created_at = now
+
+    try:
+        created_at = float(created_at)
+    except (TypeError, ValueError):
+        created_at = now
+
+    created_at = min(created_at, now)
+
+    if now - created_at > ARTIFACT_TTL_SECONDS:
+        return None
+
+    return {"text": str(text), "created_at": created_at}
+
+
+def _load_history_records(now=None):
+    """Читает историю из NSUserDefaults с фильтрацией по TTL."""
+    current_time = time.time() if now is None else float(now)
+    defaults = NSUserDefaults.standardUserDefaults()
+    value = defaults.objectForKey_(DEFAULTS_KEY_HISTORY)
+    if value is None:
+        return []
+
+    records = []
+    for item in list(value):
+        normalized = _normalize_history_record(item, current_time)
+        if normalized is not None:
+            records.append(normalized)
+    return records
+
+
+def _save_history_records(records):
+    """Сохраняет историю в NSUserDefaults в формате с timestamp."""
+    NSUserDefaults.standardUserDefaults().setObject_forKey_(list(records), DEFAULTS_KEY_HISTORY)
 
 
 class SpeechTranscriber:
@@ -92,7 +134,10 @@ class SpeechTranscriber:
         self.paste_clipboard_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, fallback=False)
         self.llm_clipboard_enabled = _load_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True)
         self.private_mode_enabled = _load_defaults_bool(DEFAULTS_KEY_PRIVATE_MODE, fallback=False)
-        self.history = [] if self.private_mode_enabled else _load_defaults_list(DEFAULTS_KEY_HISTORY)
+        self._history_records = []
+        self.history = []
+        if not self.private_mode_enabled:
+            self._reload_persisted_history()
         self.history_callback = None
         self.total_tokens = _load_defaults_int(DEFAULTS_KEY_TOTAL_TOKENS, fallback=0)
         self.token_usage_callback = None
@@ -109,12 +154,62 @@ class SpeechTranscriber:
         """
         self.private_mode_enabled = bool(enabled)
         _save_defaults_bool(DEFAULTS_KEY_PRIVATE_MODE, self.private_mode_enabled)
-        self.history = [] if self.private_mode_enabled else _load_defaults_list(DEFAULTS_KEY_HISTORY)
+        if self.private_mode_enabled:
+            self._history_records = []
+            self.history = []
+        else:
+            self._reload_persisted_history()
         if self.history_callback is not None:
             try:
                 self.history_callback()
             except Exception:
                 LOGGER.exception("⚠️ Ошибка в history_callback")
+
+    def _current_time(self):
+        """Возвращает текущее время в Unix timestamp."""
+        return time.time()
+
+    def _sync_history_state(self):
+        """Синхронизирует публичный список истории с внутренними записями."""
+        self.history = [record["text"] for record in self._history_records]
+
+    def _sync_internal_history_from_public_list(self):
+        """Подхватывает прямые изменения self.history, используемые в тестах."""
+        if len(self._history_records) == len(self.history) and all(
+            record["text"] == text for record, text in zip(self._history_records, self.history, strict=False)
+        ):
+            return
+
+        current_time = self._current_time()
+        self._history_records = [{"text": str(text), "created_at": current_time} for text in self.history]
+
+    def _prune_expired_history(self):
+        """Удаляет записи истории старше 24 часов."""
+        current_time = self._current_time()
+        retained_records = []
+        for record in self._history_records:
+            normalized = _normalize_history_record(record, current_time)
+            if normalized is not None:
+                retained_records.append(normalized)
+
+        changed = retained_records != self._history_records
+        self._history_records = retained_records
+        self._sync_history_state()
+        return changed
+
+    def _reload_persisted_history(self):
+        """Перечитывает историю из NSUserDefaults и сразу удаляет просроченные записи."""
+        self._history_records = _load_history_records(now=self._current_time())
+        self._sync_history_state()
+        _save_history_records(self._history_records)
+
+    def prune_expired_history(self):
+        """Публично очищает историю старше 24 часов и сохраняет результат."""
+        self._sync_internal_history_from_public_list()
+        changed = self._prune_expired_history()
+        if changed and not self.private_mode_enabled:
+            _save_history_records(self._history_records)
+        return changed
 
     def _notify_token_usage_changed(self):
         """Вызывает callback обновления UI после изменения счётчика токенов."""
@@ -327,16 +422,18 @@ class SpeechTranscriber:
     def _add_to_history(self, text):
         """Добавляет распознанный текст в историю.
 
-        Вставляет текст в начало списка, обрезает до MAX_HISTORY_SIZE,
+        Вставляет текст в начало списка, удаляет записи старше 24 часов,
         сохраняет в NSUserDefaults и вызывает callback для обновления UI.
 
         Args:
             text: Распознанный текст.
         """
-        self.history.insert(0, text)
-        self.history = self.history[:MAX_HISTORY_SIZE]
+        self._sync_internal_history_from_public_list()
+        self._prune_expired_history()
+        self._history_records.insert(0, {"text": text, "created_at": self._current_time()})
+        self._sync_history_state()
         if not self.private_mode_enabled:
-            _save_defaults_list(DEFAULTS_KEY_HISTORY, self.history)
+            _save_history_records(self._history_records)
         LOGGER.debug("📜 Текст добавлен в историю (%d записей)", len(self.history))
         if self.history_callback is not None:
             try:

@@ -1147,6 +1147,8 @@ class StatusBarApp(rumps.App):
         self._history_title_to_text = {}
 
         transcriber = self.recorder.transcriber if hasattr(self.recorder, "transcriber") else None
+        if transcriber is not None and hasattr(transcriber, "prune_expired_history"):
+            transcriber.prune_expired_history()
         history = transcriber.history if transcriber is not None else []
 
         if not history:

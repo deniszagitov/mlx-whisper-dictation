@@ -1,8 +1,8 @@
 site_name: Dictator
 site_description: Автогенерируемая документация menubar-приложения офлайн-диктовки для macOS
-site_url: https://zagitov.github.io/mlx-whisper-dictation/
-repo_url: https://github.com/zagitov/mlx-whisper-dictation
-repo_name: zagitov/mlx-whisper-dictation
+site_url: https://deniszagitov.github.io/mlx-whisper-dictation/
+repo_url: https://github.com/deniszagitov/mlx-whisper-dictation
+repo_name: deniszagitov/mlx-whisper-dictation
 
 theme:
   name: material

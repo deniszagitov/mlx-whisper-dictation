@@ -106,7 +106,7 @@ if "py2app" in sys.argv:
 OPTIONS = {
     "argv_emulation": False,
     "site_packages": False,
-    "iconfile": "Dictator.icns",
+    "iconfile": "assets/icons/Dictator.icns",
     "packages": _PY2APP_PACKAGES,
     "includes": ["AppKit", "Foundation", "PyObjCTools", "Quartz", "objc", "pynput.keyboard._darwin"],
     "plist": {

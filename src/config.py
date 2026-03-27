@@ -28,6 +28,7 @@ HALLUCINATION_RMS_THRESHOLD = 0.002
 SHORT_AUDIO_WARNING_SECONDS = 0.3
 MAX_DEBUG_ARTIFACTS = 10
 LOG_DIR = Path.home() / "Library/Logs/whisper-dictation"
+ARTIFACT_TTL_SECONDS = 24 * 60 * 60
 ACCESSIBILITY_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 INPUT_MONITORING_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
 KEYCODE_COMMAND = 0x37
