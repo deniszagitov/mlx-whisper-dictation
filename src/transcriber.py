@@ -6,6 +6,7 @@
 """
 
 import logging
+import re
 import time
 from typing import Any, cast
 
@@ -19,6 +20,7 @@ from config import (
     CGEVENT_UNICODE_CHUNK_SIZE,
     CLIPBOARD_RESTORE_DELAY,
     DEFAULTS_KEY_HISTORY,
+    DEFAULTS_KEY_LLM_CLIPBOARD,
     DEFAULTS_KEY_PASTE_AX,
     DEFAULTS_KEY_PASTE_CGEVENT,
     DEFAULTS_KEY_PASTE_CLIPBOARD,
@@ -28,6 +30,7 @@ from config import (
     KEYCODE_COMMAND,
     KEYCODE_V,
     LLM_NOTIFICATION_CHAR_LIMIT,
+    LLM_RESPONSE_CHAR_LIMIT,
     MAX_HISTORY_SIZE,
     SHORT_AUDIO_WARNING_SECONDS,
     SILENCE_RMS_THRESHOLD,
@@ -51,6 +54,13 @@ from permissions import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+_CLIPBOARD_CONTEXT_HINT_RE = re.compile(
+    r"(этот|это|здесь|выше|ниже|буфер|clipboard|text|текст|сообщени|документ|"
+    r"перевед|исправ|отредакт|сократ|резюм|перескаж|перефраз|объясни|о чем|"
+    r"what is this|about this|translate|rewrite|fix|summari[sz]e|proofread)",
+    re.IGNORECASE,
+)
 
 
 class SpeechTranscriber:
@@ -80,6 +90,7 @@ class SpeechTranscriber:
         self.paste_cgevent_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_CGEVENT, fallback=True)
         self.paste_ax_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_AX, fallback=False)
         self.paste_clipboard_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, fallback=False)
+        self.llm_clipboard_enabled = _load_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True)
         self.private_mode_enabled = _load_defaults_bool(DEFAULTS_KEY_PRIVATE_MODE, fallback=False)
         self.history = [] if self.private_mode_enabled else _load_defaults_list(DEFAULTS_KEY_HISTORY)
         self.history_callback = None
@@ -159,6 +170,28 @@ class SpeechTranscriber:
         pasteboard = appkit.NSPasteboard.generalPasteboard()
         return pasteboard.stringForType_(appkit.NSPasteboardTypeString)
 
+    def _should_use_clipboard_context(self, request_text, clipboard_text):
+        """Решает, нужно ли передавать буфер обмена как контекст для LLM."""
+        if not clipboard_text:
+            return False
+
+        normalized_request = str(request_text or "").strip()
+        if not normalized_request:
+            return False
+
+        return _CLIPBOARD_CONTEXT_HINT_RE.search(normalized_request) is not None
+
+    def _can_deliver_llm_result(self, should_deliver_result):
+        """Проверяет, можно ли выводить ответ LLM в текущий момент."""
+        if should_deliver_result is None:
+            return True
+
+        try:
+            return bool(should_deliver_result())
+        except Exception:
+            LOGGER.exception("⚠️ Ошибка в should_deliver_result для LLM")
+            return False
+
     def _type_text_via_cgevent(self, text):
         """Вставляет текст через отправку Unicode-символов посредством CGEvent.
 
@@ -219,7 +252,7 @@ class SpeechTranscriber:
             RuntimeError: Если не удалось получить сфокусированный элемент
                 или записать текст через Accessibility API.
         """
-        import HIServices  # noqa: PLC0415
+        import HIServices
 
         system_wide = HIServices.AXUIElementCreateSystemWide()
 
@@ -461,7 +494,16 @@ class SpeechTranscriber:
                 "Не удалось вставить текст автоматически. Текст доступен в «📋 История текста» в меню приложения.",
             )
 
-    def transcribe_for_llm(self, audio_data, language=None, *, llm_processor, system_prompt):
+    def transcribe_for_llm(
+        self,
+        audio_data,
+        language=None,
+        *,
+        llm_processor,
+        system_prompt,
+        on_llm_processing_started=None,
+        should_deliver_result=None,
+    ):
         """Распознаёт аудио через Whisper и отправляет результат в LLM.
 
         После получения транскрипции передаёт текст в LLM-модель
@@ -473,6 +515,10 @@ class SpeechTranscriber:
             language: Необязательный код языка для распознавания.
             llm_processor: Экземпляр LLMProcessor для обработки текста.
             system_prompt: Системный промпт для LLM.
+            on_llm_processing_started: Необязательный callback, вызываемый
+                перед запуском LLM-обработки для обновления UI-статуса.
+            should_deliver_result: Необязательный callback, который решает,
+                можно ли показывать и копировать итоговый ответ LLM.
         """
         stem = self.diagnostics_store.artifact_stem()
         diagnostics = self.diagnostics_store.build_audio_diagnostics(audio_data, language)
@@ -505,32 +551,69 @@ class SpeechTranscriber:
             LOGGER.warning("👻 Отброшен галлюцинаторный результат в LLM-пайплайне: %r", text)
             return
 
-        clipboard_context = self._read_clipboard()
-        if clipboard_context:
+        raw_clipboard_context = self._read_clipboard() if self.llm_clipboard_enabled else None
+        if not self.llm_clipboard_enabled:
+            clipboard_context = None
+            LOGGER.info("📋 Буфер обмена для LLM выключен, работаю без контекста")
+        elif self._should_use_clipboard_context(text, raw_clipboard_context):
+            clipboard_context = raw_clipboard_context
             LOGGER.info("📋 Буфер обмена передан как контекст для LLM, длина=%d", len(clipboard_context))
         else:
-            LOGGER.info("📋 Буфер обмена пуст, LLM работает без контекста")
+            clipboard_context = None
+            if raw_clipboard_context:
+                LOGGER.info("📋 Буфер обмена есть, но пропущен: запрос не ссылается на внешний текст")
+            else:
+                LOGGER.info("📋 Буфер обмена пуст, LLM работает без контекста")
+
+        if on_llm_processing_started is not None:
+            try:
+                on_llm_processing_started()
+            except Exception:
+                LOGGER.exception("⚠️ Ошибка в on_llm_processing_started")
 
         try:
             llm_response = llm_processor.process_text(text, system_prompt, context=clipboard_context)
         except Exception:
             LOGGER.exception("❌ Ошибка LLM")
-            self._copy_text_to_clipboard(text)
-            notify_user(
-                "MLX Whisper Dictation",
-                "Ошибка LLM. Транскрипция сохранена в буфер обмена.",
-            )
+            if self.llm_clipboard_enabled:
+                self._copy_text_to_clipboard(text)
+                notify_user(
+                    "MLX Whisper Dictation",
+                    "Ошибка LLM. Транскрипция сохранена в буфер обмена.",
+                )
+            else:
+                self._add_to_history(text)
+                notify_user(
+                    "MLX Whisper Dictation",
+                    "Ошибка LLM. Транскрипция сохранена в историю.",
+                )
             return
 
         self._add_token_usage(getattr(llm_processor, "last_token_usage", 0))
 
         if not llm_response:
             LOGGER.warning("⚠️ LLM вернула пустой ответ")
-            self._copy_text_to_clipboard(text)
-            notify_user("MLX Whisper Dictation", "LLM вернула пустой ответ. Транскрипция в буфере обмена.")
+            if self.llm_clipboard_enabled:
+                self._copy_text_to_clipboard(text)
+                notify_user("MLX Whisper Dictation", "LLM вернула пустой ответ. Транскрипция в буфере обмена.")
+            else:
+                self._add_to_history(text)
+                notify_user("MLX Whisper Dictation", "LLM вернула пустой ответ. Транскрипция сохранена в историю.")
             return
 
         self._add_to_history(f"🤖 {llm_response}")
 
-        self._copy_text_to_clipboard(llm_response)
-        notify_user("🤖 LLM", llm_response[:LLM_NOTIFICATION_CHAR_LIMIT])
+        if not self._can_deliver_llm_result(should_deliver_result):
+            LOGGER.info("🤖 Ответ LLM сохранён без вывода: появился более новый запрос")
+            notify_user(
+                "MLX Whisper Dictation",
+                "Ответ LLM сохранён в историю. Новый запрос диктовки получил приоритет.",
+            )
+            return
+
+        LOGGER.info("🤖 Агентский ответ для вставки: длина=%d, текст=%r", len(llm_response), llm_response)
+        if self.llm_clipboard_enabled:
+            self._copy_text_to_clipboard(llm_response)
+        else:
+            LOGGER.info("📋 Буфер обмена для LLM выключен, ответ не копируется")
+        notify_user("🤖 LLM", llm_response[: min(LLM_NOTIFICATION_CHAR_LIMIT, LLM_RESPONSE_CHAR_LIMIT)])

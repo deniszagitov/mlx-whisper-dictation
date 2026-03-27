@@ -193,13 +193,13 @@ class TestParseArgs:
         """Изолирует parse_args-тесты от реальных NSUserDefaults пользователя."""
 
         class EmptyDefaults:
-            def objectForKey_(self, _key):  # noqa: N802
+            def objectForKey_(self, _key):
                 return None
 
-            def boolForKey_(self, _key):  # noqa: N802
+            def boolForKey_(self, _key):
                 return False
 
-            def integerForKey_(self, _key):  # noqa: N802
+            def integerForKey_(self, _key):
                 return -1
 
         empty_defaults = EmptyDefaults()
@@ -316,13 +316,13 @@ class TestParseArgs:
                     app_module.DEFAULTS_KEY_LLM_HOTKEY: "ctrl+shift+l",
                 }
 
-            def objectForKey_(self, key):  # noqa: N802
+            def objectForKey_(self, key):
                 return self.values.get(key)
 
-            def boolForKey_(self, _key):  # noqa: N802
+            def boolForKey_(self, _key):
                 return False
 
-            def integerForKey_(self, _key):  # noqa: N802
+            def integerForKey_(self, _key):
                 return -1
 
         fake_defaults = FakeDefaults()
@@ -429,10 +429,10 @@ class TestEventKeyNameStatic:
                 self._key_code = kc
                 self._chars = chars
 
-            def keyCode(self):  # noqa: N802
+            def keyCode(self):
                 return self._key_code
 
-            def charactersIgnoringModifiers(self):  # noqa: N802
+            def charactersIgnoringModifiers(self):
                 return self._chars
 
         return FakeEvent(key_code, characters)

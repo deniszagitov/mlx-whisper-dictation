@@ -15,23 +15,23 @@ class FakeDefaults:
         self.saved_bool = None
         self.saved_object = None
 
-    def objectForKey_(self, _key):  # noqa: N802
+    def objectForKey_(self, _key):
         """Эмулирует Objective-C API чтения объекта по ключу."""
         return self.object_value
 
-    def boolForKey_(self, _key):  # noqa: N802
+    def boolForKey_(self, _key):
         """Эмулирует Objective-C API чтения bool по ключу."""
         return self.bool_value
 
-    def setBool_forKey_(self, value, _key):  # noqa: N802
+    def setBool_forKey_(self, value, _key):
         """Эмулирует Objective-C API сохранения bool по ключу."""
         self.saved_bool = value
 
-    def arrayForKey_(self, _key):  # noqa: N802
+    def arrayForKey_(self, _key):
         """Эмулирует Objective-C API чтения списка по ключу."""
         return self.array_value
 
-    def setObject_forKey_(self, value, _key):  # noqa: N802
+    def setObject_forKey_(self, value, _key):
         """Эмулирует Objective-C API сохранения объекта по ключу."""
         self.saved_object = value
 

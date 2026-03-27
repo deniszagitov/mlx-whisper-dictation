@@ -29,6 +29,7 @@ class FakeRecorder:
                 "paste_cgevent_enabled": True,
                 "paste_ax_enabled": False,
                 "paste_clipboard_enabled": False,
+                "llm_clipboard_enabled": True,
                 "private_mode_enabled": False,
                 "history": [],
                 "history_callback": None,
@@ -192,6 +193,12 @@ class TestStatusBarInit:
         app, _ = make_app(languages=["ru"])
         assert app.show_recording_notification is True
         assert app.recording_notification_item.state == 1
+
+    def test_llm_clipboard_enabled_by_default(self, make_app):
+        """Буфер обмена для LLM включён по умолчанию."""
+        app, recorder = make_app(languages=["ru"])
+        assert recorder.transcriber.llm_clipboard_enabled is True
+        assert app.llm_clipboard_item.state == 1
 
 
 class TestStatusBarStateTransitions:
@@ -484,6 +491,7 @@ class TestStatusBarMenuSelections:
         app, recorder = make_app(languages=["ru"], max_time=30)
         recorder.transcriber.paste_ax_enabled = True
         recorder.transcriber.paste_clipboard_enabled = True
+        recorder.transcriber.llm_clipboard_enabled = False
 
         app.add_current_microphone_profile(None)
 
@@ -492,6 +500,7 @@ class TestStatusBarMenuSelections:
         assert saved_profiles[-1][0]["input_device_index"] == 0
         assert saved_profiles[-1][0]["paste_ax"] is True
         assert saved_profiles[-1][0]["paste_clipboard"] is True
+        assert saved_profiles[-1][0]["llm_clipboard"] is False
 
     def test_apply_microphone_profile_updates_basic_settings(self, patched_app_module, monkeypatch):
         """Профиль микрофона должен применять устройство и базовые настройки."""
@@ -530,6 +539,7 @@ class TestStatusBarMenuSelections:
                     "paste_cgevent": False,
                     "paste_ax": True,
                     "paste_clipboard": True,
+                    "llm_clipboard": False,
                 },
             ],
         )
@@ -558,6 +568,7 @@ class TestStatusBarMenuSelections:
         assert recorder.transcriber.paste_cgevent_enabled is False
         assert recorder.transcriber.paste_ax_enabled is True
         assert recorder.transcriber.paste_clipboard_enabled is True
+        assert recorder.transcriber.llm_clipboard_enabled is False
         assert saved_device_indexes == [4]
         assert (patched_app_module.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_strings
         assert (patched_app_module.DEFAULTS_KEY_PERFORMANCE_MODE, patched_app_module.PERFORMANCE_MODE_FAST) in saved_strings
@@ -565,6 +576,19 @@ class TestStatusBarMenuSelections:
         assert (patched_app_module.DEFAULTS_KEY_PASTE_CGEVENT, False) in saved_bools
         assert (patched_app_module.DEFAULTS_KEY_PASTE_AX, True) in saved_bools
         assert (patched_app_module.DEFAULTS_KEY_PASTE_CLIPBOARD, True) in saved_bools
+        assert (patched_app_module.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
+
+    def test_toggle_llm_clipboard_updates_transcriber_and_defaults(self, make_app, patched_app_module, monkeypatch):
+        """Переключатель LLM-буфера должен менять runtime-state и сохраняться."""
+        saved_bools = []
+        monkeypatch.setattr(ui_module, "_save_defaults_bool", lambda key, value: saved_bools.append((key, value)))
+        app, recorder = make_app(languages=["ru"])
+
+        app.toggle_llm_clipboard(app.llm_clipboard_item)
+
+        assert recorder.transcriber.llm_clipboard_enabled is False
+        assert app.llm_clipboard_item.state == 0
+        assert (patched_app_module.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
 
     def test_delete_microphone_profile_removes_it(self, patched_app_module, monkeypatch):
         """Сохранённый профиль можно удалить из подменю быстрых профилей."""

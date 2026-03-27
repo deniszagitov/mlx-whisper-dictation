@@ -10,7 +10,7 @@ import threading
 import numpy as np
 import pyaudio
 
-from config import STATUS_IDLE, STATUS_TRANSCRIBING
+from config import STATUS_IDLE, STATUS_LLM_PROCESSING, STATUS_TRANSCRIBING
 from permissions import notify_user
 
 LOGGER = logging.getLogger(__name__)
@@ -83,6 +83,9 @@ class Recorder:
         self.input_device_name = "системный по умолчанию"
         self.performance_mode = PERFORMANCE_MODE_NORMAL
         self.frames_per_buffer = NORMAL_FRAMES_PER_BUFFER
+        self._request_lock = threading.Lock()
+        self._next_request_id = 0
+        self._latest_request_id = 0
 
     def set_status_callback(self, status_callback):
         """Регистрирует callback для обновления UI-статуса.
@@ -144,7 +147,8 @@ class Recorder:
         Args:
             language: Необязательный код языка для последующего распознавания.
         """
-        thread = threading.Thread(target=self._record_impl, args=(language,))
+        request_id = self._begin_request()
+        thread = threading.Thread(target=self._record_impl, args=(language, request_id))
         thread.daemon = True
         thread.start()
 
@@ -154,7 +158,8 @@ class Recorder:
         Args:
             language: Необязательный код языка для последующего распознавания.
         """
-        thread = threading.Thread(target=self._record_llm_impl, args=(language,))
+        request_id = self._begin_request()
+        thread = threading.Thread(target=self._record_llm_impl, args=(language, request_id))
         thread.daemon = True
         thread.start()
 
@@ -162,7 +167,28 @@ class Recorder:
         """Останавливает активную запись."""
         self.recording = False
 
-    def _record_impl(self, language):
+    def _begin_request(self):
+        """Регистрирует новый запрос записи и возвращает его идентификатор."""
+        with self._request_lock:
+            self._next_request_id += 1
+            self._latest_request_id = self._next_request_id
+            return self._latest_request_id
+
+    def _is_request_current(self, request_id):
+        """Проверяет, что запрос всё ещё последний и может менять UI/вывод."""
+        with self._request_lock:
+            return request_id == self._latest_request_id
+
+    def _set_status_if_current(self, request_id, status):
+        """Обновляет статус только для актуального запроса."""
+        if self._is_request_current(request_id):
+            self._set_status(status)
+
+    def should_deliver_llm_result(self, request_id):
+        """Разрешает вывод результата LLM только для актуального запроса."""
+        return self._is_request_current(request_id)
+
+    def _record_impl(self, language, request_id):
         """Выполняет запись, конвертацию аудио и запуск распознавания.
 
         Args:
@@ -209,7 +235,7 @@ class Recorder:
 
         if not frames:
             LOGGER.warning("⚠️ Запись остановлена без захваченных аудиофреймов")
-            self._set_status(STATUS_IDLE)
+            self._set_status_if_current(request_id, STATUS_IDLE)
             return
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
@@ -220,11 +246,11 @@ class Recorder:
             len(audio_data_fp32),
             len(audio_data_fp32) / 16000,
         )
-        self._set_status(STATUS_TRANSCRIBING)
+        self._set_status_if_current(request_id, STATUS_TRANSCRIBING)
         self.transcriber.transcribe(audio_data_fp32, language)
-        self._set_status(STATUS_IDLE)
+        self._set_status_if_current(request_id, STATUS_IDLE)
 
-    def _record_llm_impl(self, language):
+    def _record_llm_impl(self, language, request_id):
         """Выполняет запись и передаёт аудио в LLM-пайплайн.
 
         Args:
@@ -268,7 +294,7 @@ class Recorder:
 
         if not frames:
             LOGGER.warning("⚠️ Запись остановлена без аудиофреймов (LLM-пайплайн)")
-            self._set_status(STATUS_IDLE)
+            self._set_status_if_current(request_id, STATUS_IDLE)
             return
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
@@ -278,11 +304,13 @@ class Recorder:
             len(frames),
             len(audio_data_fp32) / 16000,
         )
-        self._set_status(STATUS_TRANSCRIBING)
+        self._set_status_if_current(request_id, STATUS_TRANSCRIBING)
         self.transcriber.transcribe_for_llm(
             audio_data_fp32,
             language,
             llm_processor=self.llm_processor,
             system_prompt=self.llm_system_prompt,
+            on_llm_processing_started=lambda: self._set_status_if_current(request_id, STATUS_LLM_PROCESSING),
+            should_deliver_result=lambda: self.should_deliver_llm_result(request_id),
         )
-        self._set_status(STATUS_IDLE)
+        self._set_status_if_current(request_id, STATUS_IDLE)

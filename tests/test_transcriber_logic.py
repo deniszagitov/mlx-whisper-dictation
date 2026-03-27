@@ -316,6 +316,147 @@ def test_transcribe_for_llm_passes_none_context_when_clipboard_empty(app_module,
     assert captured_context["context"] is None
 
 
+def test_transcribe_for_llm_disables_clipboard_io_when_option_off(app_module, monkeypatch):
+    """При выключенном LLM-буфере контекст не читается и ответ не пишется в clipboard."""
+    transcriber = make_transcriber(app_module)
+    transcriber.llm_clipboard_enabled = False
+    copied = []
+    read_calls = []
+    captured_context = {}
+    notifications = []
+
+    class LLMStub:
+        def __init__(self):
+            self.last_token_usage = 2
+
+        def process_text(self, text, system_prompt, *, context=None):
+            del text, system_prompt
+            captured_context["context"] = context
+            return "Готово 🙂"
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "О чем этот текст?", "segments": [{"tokens": [1]}]},
+    )
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: read_calls.append(True) or "Текст из буфера")
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
+    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+
+    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
+
+    assert read_calls == []
+    assert captured_context["context"] is None
+    assert copied == []
+    assert notifications == [("🤖 LLM", "Готово 🙂")]
+
+
+def test_transcribe_for_llm_skips_clipboard_for_unrelated_request(app_module, monkeypatch):
+    """Нерелевантный запрос не должен тащить в LLM содержимое буфера обмена."""
+    transcriber = make_transcriber(app_module)
+
+    captured_context = {}
+
+    class LLMStub:
+        def __init__(self):
+            self.last_token_usage = 0
+
+        def process_text(self, text, system_prompt, *, context=None):
+            del text, system_prompt
+            captured_context["context"] = context
+            self.last_token_usage = 5
+            return "Анекдот 🙂"
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "Расскажи анекдот.", "segments": [{"tokens": [1]}]},
+    )
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "технические логи LLM")
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+
+    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
+
+    assert captured_context["context"] is None
+
+
+def test_transcribe_for_llm_copies_clean_answer_and_notifies(app_module, monkeypatch):
+    """LLM-пайплайн должен отдавать в буфер и уведомление уже очищенный короткий ответ."""
+    transcriber = make_transcriber(app_module)
+    copied = []
+    notifications = []
+
+    class LLMStub:
+        def __init__(self):
+            self.last_token_usage = 3
+
+        def process_text(self, text, system_prompt, *, context=None):
+            del text, system_prompt, context
+            return "Привет! Всё готово 🙂"
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "Скажи красиво", "segments": [{"tokens": [1]}]},
+    )
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
+    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+
+    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь")
+
+    assert copied == ["Привет! Всё готово 🙂"]
+    assert notifications == [("🤖 LLM", "Привет! Всё готово 🙂")]
+
+
+def test_transcribe_for_llm_defers_stale_response_when_newer_request_exists(app_module, monkeypatch):
+    """Устаревший ответ LLM не должен перетирать буфер обмена поверх нового запроса."""
+    transcriber = make_transcriber(app_module)
+    copied = []
+    notifications = []
+    history_added = []
+
+    class LLMStub:
+        def __init__(self):
+            self.last_token_usage = 4
+
+        def process_text(self, text, system_prompt, *, context=None):
+            del text, system_prompt, context
+            return "Ответ агента"
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "Подготовь ответ", "segments": [{"tokens": [1]}]},
+    )
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
+    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
+    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
+    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+
+    transcriber.transcribe_for_llm(
+        make_audio(),
+        "ru",
+        llm_processor=LLMStub(),
+        system_prompt="Исправь",
+        should_deliver_result=lambda: False,
+    )
+
+    assert copied == []
+    assert history_added == ["🤖 Ответ агента"]
+    assert notifications == [
+        ("MLX Whisper Dictation", "Ответ LLM сохранён в историю. Новый запрос диктовки получил приоритет."),
+    ]
+
+
 def test_transcribe_clipboard_not_touched_when_disabled(app_module, monkeypatch):
     """Буфер обмена не должен затрагиваться, если метод 'Буфер обмена' выключен."""
     transcriber = make_transcriber(app_module)

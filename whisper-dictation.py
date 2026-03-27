@@ -13,87 +13,89 @@ from pathlib import Path
 # Добавляем src/ в sys.path для импорта модулей приложения
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-import time  # noqa: F401 — реэкспорт для тестов
+import time
 
-import mlx_whisper  # noqa: F401 — реэкспорт для тестов
-import Quartz  # noqa: F401 — реэкспорт для тестов
+import mlx_whisper
+import Quartz
 from Foundation import NSUserDefaults
 from pynput import keyboard
 
-from audio import Recorder, list_input_devices, microphone_menu_title  # noqa: F401 — реэкспорт для тестов
+from audio import Recorder, list_input_devices, microphone_menu_title
 from config import (
-    CGEVENT_CHUNK_DELAY,  # noqa: F401 — реэкспорт для тестов
-    CGEVENT_UNICODE_CHUNK_SIZE,  # noqa: F401 — реэкспорт для тестов
-    CLIPBOARD_RESTORE_DELAY,  # noqa: F401 — реэкспорт для тестов
+    CGEVENT_CHUNK_DELAY,
+    CGEVENT_UNICODE_CHUNK_SIZE,
+    CLIPBOARD_RESTORE_DELAY,
     DEFAULT_LLM_MODEL_NAME,
     DEFAULT_MODEL_NAME,
-    DEFAULTS_KEY_HISTORY,  # noqa: F401 — реэкспорт для тестов
+    DEFAULTS_KEY_HISTORY,
     DEFAULTS_KEY_LANGUAGE,
+    DEFAULTS_KEY_LLM_CLIPBOARD,
     DEFAULTS_KEY_LLM_HOTKEY,
-    DEFAULTS_KEY_LLM_PROMPT,  # noqa: F401 — реэкспорт для тестов
-    DEFAULTS_KEY_MAX_TIME,  # noqa: F401 — реэкспорт для тестов
+    DEFAULTS_KEY_LLM_PROMPT,
+    DEFAULTS_KEY_MAX_TIME,
     DEFAULTS_KEY_MODEL,
-    DEFAULTS_KEY_PASTE_AX,  # noqa: F401 — реэкспорт для тестов
-    DEFAULTS_KEY_PASTE_CGEVENT,  # noqa: F401 — реэкспорт для тестов
-    DEFAULTS_KEY_PASTE_CLIPBOARD,  # noqa: F401 — реэкспорт для тестов
-    DEFAULTS_KEY_PERFORMANCE_MODE,  # noqa: F401 — реэкспорт для тестов
+    DEFAULTS_KEY_PASTE_AX,
+    DEFAULTS_KEY_PASTE_CGEVENT,
+    DEFAULTS_KEY_PASTE_CLIPBOARD,
+    DEFAULTS_KEY_PERFORMANCE_MODE,
     DEFAULTS_KEY_PRIMARY_HOTKEY,
-    DEFAULTS_KEY_PRIVATE_MODE,  # noqa: F401 — реэкспорт для тестов
-    DEFAULTS_KEY_RECORDING_NOTIFICATION,  # noqa: F401 — реэкспорт для тестов
+    DEFAULTS_KEY_PRIVATE_MODE,
+    DEFAULTS_KEY_RECORDING_NOTIFICATION,
     DEFAULTS_KEY_SECONDARY_HOTKEY,
-    DEFAULTS_KEY_TOTAL_TOKENS,  # noqa: F401 — реэкспорт для тестов
-    HISTORY_DISPLAY_LENGTH,  # noqa: F401 — реэкспорт для тестов
-    KEYCODE_COMMAND,  # noqa: F401 — реэкспорт для тестов
-    KEYCODE_V,  # noqa: F401 — реэкспорт для тестов
-    LLM_PROMPT_PRESETS,  # noqa: F401 — реэкспорт для тестов
-    LOG_DIR,  # noqa: F401 — реэкспорт для тестов
-    MAX_HISTORY_SIZE,  # noqa: F401 — реэкспорт для тестов
-    PERFORMANCE_MODE_FAST,  # noqa: F401 — реэкспорт для тестов
-    PERFORMANCE_MODE_NORMAL,  # noqa: F401 — реэкспорт для тестов
-    STATUS_IDLE,  # noqa: F401 — реэкспорт для тестов
-    STATUS_RECORDING,  # noqa: F401 — реэкспорт для тестов
-    STATUS_TRANSCRIBING,  # noqa: F401 — реэкспорт для тестов
+    DEFAULTS_KEY_TOTAL_TOKENS,
+    HISTORY_DISPLAY_LENGTH,
+    KEYCODE_COMMAND,
+    KEYCODE_V,
+    LLM_PROMPT_PRESETS,
+    LOG_DIR,
+    MAX_HISTORY_SIZE,
+    PERFORMANCE_MODE_FAST,
+    PERFORMANCE_MODE_NORMAL,
+    STATUS_IDLE,
+    STATUS_LLM_PROCESSING,
+    STATUS_RECORDING,
+    STATUS_TRANSCRIBING,
     _load_defaults_max_time,
     _load_defaults_str,
-    format_max_time_status,  # noqa: F401 — реэкспорт для тестов
+    format_max_time_status,
 )
 from diagnostics import (
-    DiagnosticsStore,  # noqa: F401 — реэкспорт для тестов
-    looks_like_hallucination,  # noqa: F401 — реэкспорт для тестов
+    DiagnosticsStore,
+    looks_like_hallucination,
     setup_logging,
 )
 from hotkeys import (
-    MODIFIER_DISPLAY_ORDER,  # noqa: F401 — реэкспорт для тестов
-    MODIFIER_FLAG_MASKS,  # noqa: F401 — реэкспорт для тестов
-    MODIFIER_KEYCODES_MAP,  # noqa: F401 — реэкспорт для тестов
+    MODIFIER_DISPLAY_ORDER,
+    MODIFIER_FLAG_MASKS,
+    MODIFIER_KEYCODES_MAP,
     DoubleCommandKeyListener,
     GlobalKeyListener,
     MultiHotkeyListener,
-    _event_key_name_static,  # noqa: F401 — реэкспорт для тестов
-    capture_hotkey_combination,  # noqa: F401 — реэкспорт для тестов
+    _event_key_name_static,
+    capture_hotkey_combination,
     format_hotkey_status,
-    hotkey_name_matches,  # noqa: F401 — реэкспорт для тестов
+    hotkey_name_matches,
     normalize_key_combination,
-    normalize_key_name,  # noqa: F401 — реэкспорт для тестов
-    parse_key,  # noqa: F401 — реэкспорт для тестов
-    parse_key_combination,  # noqa: F401 — реэкспорт для тестов
+    normalize_key_name,
+    parse_key,
+    parse_key_combination,
 )
-from llm import LLMProcessor, strip_think_blocks  # noqa: F401 — реэкспорт для тестов
+from llm import LLMProcessor, strip_think_blocks
 from permissions import (
-    frontmost_application_info,  # noqa: F401 — реэкспорт для тестов
-    get_accessibility_status,  # noqa: F401 — реэкспорт для тестов
-    get_input_monitoring_status,  # noqa: F401 — реэкспорт для тестов
-    is_accessibility_trusted,  # noqa: F401 — реэкспорт для тестов
-    notify_user,  # noqa: F401 — реэкспорт для тестов
-    permission_label,  # noqa: F401 — реэкспорт для тестов
-    permission_preflight_status,  # noqa: F401 — реэкспорт для тестов
+    frontmost_application_info,
+    get_accessibility_status,
+    get_input_monitoring_status,
+    is_accessibility_trusted,
+    notify_user,
+    permission_label,
+    permission_preflight_status,
     request_accessibility_permission,
     request_input_monitoring_permission,
     warn_missing_accessibility_permission,
     warn_missing_input_monitoring_permission,
 )
 from transcriber import SpeechTranscriber
-from ui import StatusBarApp, _load_microphone_profiles  # noqa: F401 — реэкспорт для тестов
+from ui import StatusBarApp, _load_microphone_profiles
 
 
 def _cli_option_was_provided(*option_names):

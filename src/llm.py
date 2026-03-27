@@ -8,25 +8,29 @@ import gc
 import logging
 import re
 
-from config import DEFAULT_LLM_MODEL_NAME, DOWNLOAD_COMPLETE_PCT, LLM_MAX_TOKENS
+from config import DEFAULT_LLM_MODEL_NAME, DOWNLOAD_COMPLETE_PCT, LLM_MAX_TOKENS, LLM_RESPONSE_CHAR_LIMIT
 
 LOGGER = logging.getLogger(__name__)
 
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _THINK_TAIL_RE = re.compile(r"^.*?</think>", re.DOTALL)
 _FINAL_ANSWER_MARKER_RE = re.compile(r"(?:^|\n)\s*(?:final answer|answer|ответ)\s*[:：]\s*", re.IGNORECASE)
-_REASONING_HEADER_RE = re.compile(
-    r"^\s*(?:\d+\.\s*)?(?:\*\*)?"
-    r"(?:analyze the request|analysis|reasoning|thought process|"
-    r"анализ запроса|разбор запроса|рассуждение|рассуждения)"
-    r"(?:\*\*)?\s*:?[ \t]*$",
+_SECTION_LINE_RE = re.compile(
+    r"^\s*(?:\d+\.\s*)?(?:[*-]\s*)?(?P<label>[^:\n]{1,80}?)\s*[:：]\s*(?P<value>.+?)\s*$",
     re.IGNORECASE,
 )
-_REASONING_FIELD_RE = re.compile(
-    r"^\s*(?:[*-]\s*)?(?:\*\*)?(?:context|query|constraints|контекст|запрос|ограничения)(?:\*\*)?\s*:",
-    re.IGNORECASE,
+_ANSWER_SECTION_LABELS = frozenset(
+    {
+        "draft",
+        "final answer",
+        "answer",
+        "response",
+        "черновик",
+        "определение ответа",
+        "ответ",
+    }
 )
-_MIN_REASONING_FIELDS = 2
+_STRUCTURED_PREFIX_RE = re.compile(r"^\s*(?:\d+\.|[*#>-]|[-*]\s)")
 PERFORMANCE_MODE_NORMAL = "normal"
 PERFORMANCE_MODE_FAST = "fast"
 
@@ -61,52 +65,91 @@ def _extract_final_answer_segment(text):
     return text[matches[-1].end() :].strip()
 
 
-def _looks_like_reasoning_response(text):
-    """Определяет ответы, где модель вывела служебные шаги вместо результата."""
-    if not text:
-        return False
+def _strip_markdown_emphasis(text):
+    """Убирает markdown-обрамление, мешающее распознаванию служебных секций."""
+    return text.replace("**", "").replace("__", "")
 
+
+def _extract_answer_section(text):
+    """Достаёт payload из строк вида «Черновик: ...» или «Ответ: ...»."""
+    candidate = ""
+    for raw_line in text.splitlines():
+        match = _SECTION_LINE_RE.match(_strip_markdown_emphasis(raw_line.strip()))
+        if not match:
+            continue
+        label = match.group("label").strip().casefold()
+        value = match.group("value").strip()
+        if label in _ANSWER_SECTION_LABELS and value:
+            candidate = value
+    return candidate
+
+
+def _is_answer_section_label(label):
+    """Определяет, что метка секции содержит финальный ответ."""
+    return label.strip().casefold() in _ANSWER_SECTION_LABELS
+
+
+def _is_plain_text_response(text):
+    """Пропускает в UI только простой финальный текст без структурных маркеров."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         return False
 
-    if _REASONING_HEADER_RE.match(lines[0]):
-        return True
+    for line in lines:
+        normalized = _strip_markdown_emphasis(line)
+        if _STRUCTURED_PREFIX_RE.match(normalized):
+            return False
+        section_match = _SECTION_LINE_RE.match(normalized)
+        if section_match and not _is_answer_section_label(section_match.group("label")):
+            return False
 
-    reasoning_fields = sum(1 for line in lines if _REASONING_FIELD_RE.match(line))
-    return reasoning_fields >= _MIN_REASONING_FIELDS
+    return True
 
 
-def _extract_last_content_line(text):
-    """Ищет последнюю содержательную строку, пропуская служебную разметку."""
-    for raw_line in reversed(text.splitlines()):
-        line = raw_line.strip()
-        if not line:
-            continue
-        if _REASONING_HEADER_RE.match(line) or _REASONING_FIELD_RE.match(line):
-            continue
-        if re.match(r"^\s*(?:[*-]|\d+\.)\s+", line):
-            continue
-        return line
-    return ""
+def _normalize_response_whitespace(text):
+    """Сводит ответ к одной аккуратной строке без лишних пробелов."""
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    collapsed = re.sub(r"^(?:\*\*|__|[*#>-]\s*)+", "", collapsed)
+    collapsed = re.sub(r"(?:\*\*|__)+$", "", collapsed)
+    return collapsed.strip("'\" ")
+
+
+def _truncate_response(text, limit=LLM_RESPONSE_CHAR_LIMIT):
+    """Обрезает ответ до лимита, стараясь сохранить целое предложение."""
+    if len(text) <= limit:
+        return text
+
+    truncated = text[: limit - 1].rstrip(" ,;:-")
+    sentence_break = max(truncated.rfind(symbol) for symbol in ".!?…")
+    if sentence_break >= max(limit // 2, 40):
+        return truncated[: sentence_break + 1].strip()
+
+    word_break = truncated.rfind(" ")
+    if word_break >= max(limit // 2, 40):
+        truncated = truncated[:word_break]
+
+    return truncated.rstrip(" ,;:-") + "…"
 
 
 def sanitize_llm_response(text):
-    """Очищает ответ модели от рассуждений и служебных секций."""
+    """Возвращает только безопасный финальный текст для UI и вставки."""
     cleaned = strip_think_blocks(text)
     if not cleaned:
         return ""
 
+    section_answer = _extract_answer_section(cleaned)
+    if section_answer:
+        cleaned = section_answer
+
     final_segment = _extract_final_answer_segment(cleaned)
     if final_segment:
-        return final_segment
+        cleaned = final_segment
+    elif not _is_plain_text_response(cleaned):
+        LOGGER.warning("⚠️ Скрываю structured-ответ LLM из UI; смотрите сырой лог модели")
+        return ""
 
-    if _looks_like_reasoning_response(cleaned):
-        last_line = _extract_last_content_line(cleaned)
-        if last_line:
-            return last_line
-
-    return cleaned.strip()
+    cleaned = _normalize_response_whitespace(cleaned)
+    return _truncate_response(cleaned)
 
 
 class LLMProcessor:
@@ -142,7 +185,7 @@ class LLMProcessor:
 
     def _load_runtime_objects(self):
         """Возвращает модель и токенизатор, используя кэш в быстром режиме."""
-        from mlx_lm import load  # noqa: PLC0415
+        from mlx_lm import load
 
         if self._cached_model is not None and self._cached_tokenizer is not None:
             LOGGER.info("🤖 Использую уже загруженную LLM-модель")
@@ -175,7 +218,7 @@ class LLMProcessor:
             True, если модель уже доступна локально.
         """
         try:
-            from huggingface_hub import try_to_load_from_cache  # noqa: PLC0415
+            from huggingface_hub import try_to_load_from_cache
 
             result = try_to_load_from_cache(self.model_name, "config.json")
             return result is not None and not isinstance(result, type)
@@ -189,7 +232,7 @@ class LLMProcessor:
         transformers и другими библиотеками. Если модель уже скачана,
         повторная загрузка не происходит.
         """
-        from huggingface_hub import snapshot_download  # noqa: PLC0415
+        from huggingface_hub import snapshot_download
 
         callback = self.download_progress_callback
 
@@ -264,7 +307,7 @@ class LLMProcessor:
         Raises:
             Exception: Если модель не удалось загрузить или произошла ошибка генерации.
         """
-        from mlx_lm import generate  # noqa: PLC0415
+        from mlx_lm import generate
 
         self.last_token_usage = 0
         model, tokenizer = self._load_runtime_objects()
@@ -291,11 +334,12 @@ class LLMProcessor:
 
             prompt_tokens = self._count_tokens(tokenizer, prompt)
             LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", LLM_MAX_TOKENS)
-            response = generate(model, tokenizer, prompt=prompt, max_tokens=LLM_MAX_TOKENS)
-            response = sanitize_llm_response(response)
+            raw_response = generate(model, tokenizer, prompt=prompt, max_tokens=LLM_MAX_TOKENS)
+            LOGGER.info("🤖 Сырой ответ LLM от модели: длина=%d, текст=%r", len(raw_response), raw_response)
+            response = sanitize_llm_response(raw_response)
             response_tokens = self._count_tokens(tokenizer, response)
             self.last_token_usage = prompt_tokens + response_tokens
-            LOGGER.info("🤖 LLM ответил, длина=%d символов", len(response))
+            LOGGER.info("🤖 Очищенный ответ LLM: длина=%d, текст=%r", len(response), response)
             return response.strip()
         finally:
             if self.performance_mode == PERFORMANCE_MODE_FAST:

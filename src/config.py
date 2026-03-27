@@ -45,7 +45,8 @@ CGEVENT_CHUNK_DELAY = 0.005
 CLIPBOARD_RESTORE_DELAY = 0.15
 DEFAULT_LLM_MODEL_NAME = "mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-6bit"
 LLM_MAX_TOKENS = 150
-LLM_NOTIFICATION_CHAR_LIMIT = 200
+LLM_RESPONSE_CHAR_LIMIT = 180
+LLM_NOTIFICATION_CHAR_LIMIT = LLM_RESPONSE_CHAR_LIMIT
 DOWNLOAD_COMPLETE_PCT = 100
 DEFAULTS_KEY_MODEL = "selected_model"
 DEFAULTS_KEY_LANGUAGE = "selected_language"
@@ -55,6 +56,7 @@ DEFAULTS_KEY_PRIMARY_HOTKEY = "primary_hotkey"
 DEFAULTS_KEY_SECONDARY_HOTKEY = "secondary_hotkey"
 DEFAULTS_KEY_LLM_HOTKEY = "llm_hotkey"
 DEFAULTS_KEY_LLM_PROMPT = "llm_prompt_preset"
+DEFAULTS_KEY_LLM_CLIPBOARD = "llm_clipboard_enabled"
 DEFAULTS_KEY_RECORDING_NOTIFICATION = "show_recording_notification"
 DEFAULTS_KEY_PERFORMANCE_MODE = "performance_mode"
 DEFAULTS_KEY_MICROPHONE_PROFILES = "microphone_profiles"
@@ -71,7 +73,8 @@ LLM_PROMPT_PRESETS = {
     "Универсальный помощник": (
         "ПРАВИЛА: отвечай ОДНИМ предложением, максимум 180 символов. "
         "НЕ используй markdown, списки, нумерацию, заголовки. "
-        "НЕ объясняй ход мыслей. Только финальный ответ, plain text."
+        "НЕ показывай анализ, рассуждения, черновик, ограничения или служебные шаги. "
+        "Верни только готовое красивое сообщение plain text; можно добавить 1 уместный эмодзи."
     ),
     "Исправь текст": (
         "ПРАВИЛА: верни ТОЛЬКО исправленный текст, ничего больше. "

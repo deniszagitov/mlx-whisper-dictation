@@ -198,6 +198,30 @@ class TestMicrophoneListing:
         assert recorder.performance_mode == "normal"
         assert recorder.frames_per_buffer == 2048
 
+    def test_recorder_marks_only_latest_request_as_current(self, app_module):
+        """Только самый новый запрос должен считаться актуальным для вывода и статуса."""
+        recorder = app_module.Recorder(transcriber=None)
+
+        first_request_id = recorder._begin_request()
+        second_request_id = recorder._begin_request()
+
+        assert recorder.should_deliver_llm_result(first_request_id) is False
+        assert recorder.should_deliver_llm_result(second_request_id) is True
+
+    def test_recorder_ignores_stale_status_updates(self, app_module):
+        """Старый запрос не должен сбрасывать UI-статус поверх нового."""
+        recorder = app_module.Recorder(transcriber=None)
+        statuses = []
+        recorder.set_status_callback(statuses.append)
+
+        first_request_id = recorder._begin_request()
+        second_request_id = recorder._begin_request()
+
+        recorder._set_status_if_current(first_request_id, app_module.STATUS_IDLE)
+        recorder._set_status_if_current(second_request_id, app_module.STATUS_LLM_PROCESSING)
+
+        assert statuses == [app_module.STATUS_LLM_PROCESSING]
+
     def test_microphone_menu_title_contains_index_and_name(self, app_module):
         """Подпись микрофона должна содержать индекс и имя устройства."""
         title = app_module.microphone_menu_title({"index": 3, "name": "USB Mic"})

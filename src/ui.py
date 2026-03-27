@@ -18,6 +18,7 @@ from config import (
     DEFAULT_MODEL_NAME,
     DEFAULT_PERFORMANCE_MODE,
     DEFAULTS_KEY_LANGUAGE,
+    DEFAULTS_KEY_LLM_CLIPBOARD,
     DEFAULTS_KEY_LLM_HOTKEY,
     DEFAULTS_KEY_LLM_PROMPT,
     DEFAULTS_KEY_MICROPHONE_PROFILES,
@@ -131,6 +132,7 @@ def _normalize_microphone_profile(raw_profile):
         "paste_cgevent": bool(raw_profile.get("paste_cgevent", True)),
         "paste_ax": bool(raw_profile.get("paste_ax", False)),
         "paste_clipboard": bool(raw_profile.get("paste_clipboard", False)),
+        "llm_clipboard": bool(raw_profile.get("llm_clipboard", True)),
     }
 
 
@@ -274,6 +276,7 @@ class StatusBarApp(rumps.App):
             item = rumps.MenuItem(prompt_name, callback=self._change_llm_prompt)
             item.state = int(prompt_name == self.llm_prompt_name)
             self.llm_prompt_menu.add(item)
+        self.llm_clipboard_item = rumps.MenuItem("🤖 Буфер обмена для LLM", callback=self.toggle_llm_clipboard)
         self._llm_downloading = False
         llm_processor = self.recorder.llm_processor if hasattr(self.recorder, "llm_processor") else None
         llm_cached = llm_processor.is_model_cached() if llm_processor is not None else False
@@ -300,6 +303,9 @@ class StatusBarApp(rumps.App):
         self.private_mode_item = rumps.MenuItem("🕶 Приватный режим", callback=self.toggle_private_mode)
         if transcriber is not None:
             self.private_mode_item.state = int(transcriber.private_mode_enabled)
+            self.llm_clipboard_item.state = int(getattr(transcriber, "llm_clipboard_enabled", True))
+        else:
+            self.llm_clipboard_item.state = int(_load_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True))
         self.paste_cgevent_item = rumps.MenuItem("Прямой ввод (CGEvent)", callback=self.toggle_paste_cgevent)
         self.paste_ax_item = rumps.MenuItem("Accessibility API", callback=self.toggle_paste_ax)
         self.paste_clipboard_item = rumps.MenuItem("Буфер обмена (Cmd+V)", callback=self.toggle_paste_clipboard)
@@ -356,6 +362,7 @@ class StatusBarApp(rumps.App):
             self.private_mode_item,
             self.paste_method_menu,
             self.llm_prompt_menu,
+            self.llm_clipboard_item,
             self.llm_download_item,
             self.history_menu,
             self.token_usage_item,
@@ -576,6 +583,7 @@ class StatusBarApp(rumps.App):
             "paste_cgevent": bool(getattr(transcriber, "paste_cgevent_enabled", True)),
             "paste_ax": bool(getattr(transcriber, "paste_ax_enabled", False)),
             "paste_clipboard": bool(getattr(transcriber, "paste_clipboard_enabled", False)),
+            "llm_clipboard": bool(getattr(transcriber, "llm_clipboard_enabled", True)),
         }
 
     def _is_microphone_profile_active(self, profile):
@@ -600,6 +608,7 @@ class StatusBarApp(rumps.App):
             and bool(profile.get("paste_cgevent", True)) == bool(getattr(transcriber, "paste_cgevent_enabled", True))
             and bool(profile.get("paste_ax", False)) == bool(getattr(transcriber, "paste_ax_enabled", False))
             and bool(profile.get("paste_clipboard", False)) == bool(getattr(transcriber, "paste_clipboard_enabled", False))
+            and bool(profile.get("llm_clipboard", True)) == bool(getattr(transcriber, "llm_clipboard_enabled", True))
         )
 
     def _refresh_input_device_menu(self):
@@ -668,6 +677,10 @@ class StatusBarApp(rumps.App):
 
         if self.state == STATUS_TRANSCRIBING:
             self.title = "🧠"
+            return
+
+        if self.state == STATUS_LLM_PROCESSING:
+            self.title = "🤖"
             return
 
         if self.state == STATUS_IDLE:
@@ -899,12 +912,15 @@ class StatusBarApp(rumps.App):
             transcriber.paste_cgevent_enabled = bool(profile.get("paste_cgevent", True))
             transcriber.paste_ax_enabled = bool(profile.get("paste_ax", False))
             transcriber.paste_clipboard_enabled = bool(profile.get("paste_clipboard", False))
+            transcriber.llm_clipboard_enabled = bool(profile.get("llm_clipboard", True))
             self.paste_cgevent_item.state = int(transcriber.paste_cgevent_enabled)
             self.paste_ax_item.state = int(transcriber.paste_ax_enabled)
             self.paste_clipboard_item.state = int(transcriber.paste_clipboard_enabled)
+            self.llm_clipboard_item.state = int(transcriber.llm_clipboard_enabled)
             _save_defaults_bool(DEFAULTS_KEY_PASTE_CGEVENT, transcriber.paste_cgevent_enabled)
             _save_defaults_bool(DEFAULTS_KEY_PASTE_AX, transcriber.paste_ax_enabled)
             _save_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, transcriber.paste_clipboard_enabled)
+            _save_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, transcriber.llm_clipboard_enabled)
 
         self._refresh_selection_states()
         LOGGER.info("🎚 Применён быстрый профиль микрофона: %s", profile["name"])
@@ -1095,6 +1111,15 @@ class StatusBarApp(rumps.App):
         _save_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, transcriber.paste_clipboard_enabled)
         self._refresh_selection_states()
         LOGGER.info("📝 Буфер обмена (Cmd+V): %s", "включён" if transcriber.paste_clipboard_enabled else "выключен")
+
+    def toggle_llm_clipboard(self, sender):
+        """Переключает использование буфера обмена для LLM-контекста и ответа."""
+        transcriber = self.recorder.transcriber
+        transcriber.llm_clipboard_enabled = not getattr(transcriber, "llm_clipboard_enabled", True)
+        sender.state = int(transcriber.llm_clipboard_enabled)
+        _save_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, transcriber.llm_clipboard_enabled)
+        self._refresh_selection_states()
+        LOGGER.info("🤖 Буфер обмена для LLM: %s", "включён" if transcriber.llm_clipboard_enabled else "выключен")
 
     def _format_history_title(self, text):
         """Форматирует текст для отображения в подменю истории.
