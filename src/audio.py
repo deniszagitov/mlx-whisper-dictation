@@ -193,6 +193,7 @@ class Recorder:
 
         Args:
             language: Необязательный код языка для последующего распознавания.
+            request_id: Идентификатор активного запроса записи для защиты от гонок.
         """
         self.recording = True
         frames_per_buffer = self.frames_per_buffer
@@ -255,6 +256,7 @@ class Recorder:
 
         Args:
             language: Необязательный код языка для последующего распознавания.
+            request_id: Идентификатор активного запроса записи для защиты от гонок.
         """
         self.recording = True
         frames_per_buffer = self.frames_per_buffer
