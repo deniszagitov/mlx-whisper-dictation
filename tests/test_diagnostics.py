@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 
 import numpy as np
 import pytest
@@ -59,18 +60,38 @@ def test_enabled_diagnostics_write_audio_and_transcription_files(app_module, tmp
     assert (tmp_path / "transcriptions" / "sample.txt").read_text(encoding="utf-8") == "Привет"
 
 
-def test_diagnostics_retention_keeps_only_latest_stems(app_module, tmp_path):
-    """DiagnosticsStore должен удалять старые группы файлов сверх лимита."""
-    diagnostics_store = app_module.DiagnosticsStore(root_dir=tmp_path, enabled=True, max_artifacts=2)
+def test_diagnostics_retention_removes_files_older_than_24_hours(app_module, tmp_path):
+    """DiagnosticsStore должен удалять артефакты старше 24 часов."""
+    diagnostics_store = app_module.DiagnosticsStore(root_dir=tmp_path, enabled=True, retention_seconds=24 * 60 * 60)
+    transcriptions_dir = tmp_path / "transcriptions"
+    transcriptions_dir.mkdir(parents=True)
+    old_json = transcriptions_dir / "old.json"
+    old_txt = transcriptions_dir / "old.txt"
+    old_json.write_text("{}", encoding="utf-8")
+    old_txt.write_text("old", encoding="utf-8")
 
-    for index in range(3):
-        stem = f"sample-{index}"
-        diagnostics = {"index": index}
-        diagnostics_store.save_transcription_artifacts(stem, diagnostics, text=str(index))
+    stale_time = 2_000_000.0
+    current_time = stale_time + (24 * 60 * 60) + 10
+    fresh_time = current_time - 5
+    os.utime(old_json, (stale_time, stale_time))
+    os.utime(old_txt, (stale_time, stale_time))
 
-    remaining = sorted(path.stem for path in (tmp_path / "transcriptions").glob("*.json"))
+    diagnostics_store.save_transcription_artifacts("fresh", {"ok": True}, text="fresh")
+    fresh_json = transcriptions_dir / "fresh.json"
+    fresh_txt = transcriptions_dir / "fresh.txt"
+    os.utime(fresh_json, (fresh_time, fresh_time))
+    os.utime(fresh_txt, (fresh_time, fresh_time))
 
-    assert remaining == ["sample-1", "sample-2"]
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(diagnostics.logging, "time", __import__("time"))
+    monkeypatch.setattr(diagnostics.time, "time", lambda: current_time)
+    diagnostics_store._cleanup_directory(transcriptions_dir)
+    monkeypatch.undo()
+
+    assert not old_json.exists()
+    assert not old_txt.exists()
+    assert fresh_json.exists()
+    assert fresh_txt.exists()
 
 
 def test_diagnostics_payload_serializes_result(app_module, tmp_path):

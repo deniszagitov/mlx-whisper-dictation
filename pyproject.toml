@@ -51,7 +51,7 @@ target-version = "py311"
 line-length = 140
 src = ["src"]
 show-fixes = true
-extend-exclude = ["build", "dist", "_test_hang.py"]
+extend-exclude = ["build", "dist"]
 
 [tool.ruff.lint]
 # Список включенных проверок
@@ -102,9 +102,10 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG", "PLR2004", "PLC0415", "D104", "N802"]
+"src/diagnostics.py" = ["N802"]
 "src/llm.py" = ["PLC0415"]
 "src/transcriber.py" = ["PLC0415"]
-"whisper-dictation.py" = ["F401"]
+"main.py" = ["F401"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -124,7 +125,6 @@ omit = [
     "logs/*",
     "mlx_whisper_dictation.egg-info/*",
     "Dictator.iconset/*",
-    "_test_hang.py",
 ]
 
 [tool.coverage.report]

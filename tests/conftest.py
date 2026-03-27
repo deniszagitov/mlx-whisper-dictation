@@ -11,7 +11,7 @@ _SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-MODULE_PATH = Path(__file__).resolve().parent.parent / "whisper-dictation.py"
+MODULE_PATH = Path(__file__).resolve().parent.parent / "main.py"
 
 
 def pytest_addoption(parser):

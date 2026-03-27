@@ -97,6 +97,8 @@ from permissions import (
 from transcriber import SpeechTranscriber
 from ui import StatusBarApp, _load_microphone_profiles
 
+LOGGER = logging.getLogger(__name__)
+
 
 def _cli_option_was_provided(*option_names):
     """Проверяет, был ли аргумент командной строки передан явно."""
@@ -267,6 +269,19 @@ def parse_args():
     return args
 
 
+def _log_startup_configuration(args):
+    """Пишет в лог итоговую конфигурацию запуска приложения."""
+    LOGGER.info("Запуск с моделью: %s", args.model)
+    if args.k_double_cmd:
+        LOGGER.info("Хоткей: двойное нажатие правой Command для старта и одиночное для остановки")
+    else:
+        LOGGER.info("Основной хоткей: %s", args.key_combination)
+        if args.secondary_key_combination:
+            LOGGER.info("Дополнительный хоткей: %s", args.secondary_key_combination)
+    if args.llm_key_combination:
+        LOGGER.info("LLM-хоткей: %s", args.llm_key_combination)
+
+
 def main():
     """Запускает приложение диктовки и глобальные обработчики клавиш."""
     setup_logging()
@@ -276,8 +291,7 @@ def main():
     accessibility_granted = request_accessibility_permission()
     input_monitoring_granted = request_input_monitoring_permission()
 
-    logger = logging.getLogger(__name__)
-    logger.info("🔓 Accessibility: %s, Input Monitoring: %s", accessibility_granted, input_monitoring_granted)
+    LOGGER.info("🔓 Accessibility: %s, Input Monitoring: %s", accessibility_granted, input_monitoring_granted)
 
     if not accessibility_granted:
         warn_missing_accessibility_permission()
@@ -319,15 +333,7 @@ def main():
         llm_listener.start()
         app.llm_key_listener = llm_listener
 
-    print(f"Запуск с моделью: {args.model}")
-    if args.k_double_cmd:
-        print("Хоткей: двойное нажатие правой Command для старта и одиночное для остановки")
-    else:
-        print(f"Основной хоткей: {args.key_combination}")
-        if args.secondary_key_combination:
-            print(f"Дополнительный хоткей: {args.secondary_key_combination}")
-    if args.llm_key_combination:
-        print(f"LLM-хоткей: {args.llm_key_combination}")
+    _log_startup_configuration(args)
     app.run()
 
 

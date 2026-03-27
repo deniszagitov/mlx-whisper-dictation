@@ -84,7 +84,7 @@ def test_setup_registers_expected_metadata(monkeypatch):
     """setup.py должен передавать в setuptools основные метаданные сборки."""
     module, captured_kwargs = load_setup_module(monkeypatch, ["setup.py"])
 
-    assert captured_kwargs["app"] == ["whisper-dictation.py"]
+    assert captured_kwargs["app"] == ["main.py"]
     assert captured_kwargs["distclass"] is module.Py2AppDistribution
     assert captured_kwargs["name"] == "Dictator"
     assert captured_kwargs["options"]["py2app"]["plist"]["CFBundleIdentifier"] == "com.deniszagitov.dictator"

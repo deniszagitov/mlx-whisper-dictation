@@ -19,5 +19,4 @@ site/
 htmlcov/
 *.bak
 *.stale
-_test_hang.py
 logs/

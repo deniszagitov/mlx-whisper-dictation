@@ -1147,6 +1147,8 @@ class StatusBarApp(rumps.App):
         self._history_title_to_text = {}
 
         transcriber = self.recorder.transcriber if hasattr(self.recorder, "transcriber") else None
+        if transcriber is not None and hasattr(transcriber, "prune_expired_history"):
+            transcriber.prune_expired_history()
         history = transcriber.history if transcriber is not None else []
 
         if not history:
@@ -1192,7 +1194,6 @@ class StatusBarApp(rumps.App):
         Args:
             _: Аргумент callback от rumps, который здесь не используется.
         """
-        print("Слушаю...")
         LOGGER.info("🎙️ Запись началась")
         self.state = STATUS_RECORDING
         if self.show_recording_notification:
@@ -1218,7 +1219,6 @@ class StatusBarApp(rumps.App):
         if not self.started:
             return
 
-        print("Распознаю...")
         LOGGER.info("⏹ Запись остановлена, запускаю распознавание")
         self.started = False
         self.state = STATUS_TRANSCRIBING
@@ -1226,7 +1226,6 @@ class StatusBarApp(rumps.App):
         self._menu_item("Остановить запись").set_callback(None)
         self._menu_item("Начать запись").set_callback(self.start_app)
         self.recorder.stop()
-        print("Готово.\n")
 
     def on_status_tick(self, _):
         """Обновляет индикатор времени записи в строке меню.
@@ -1266,7 +1265,6 @@ class StatusBarApp(rumps.App):
             return
 
         LOGGER.info("🤖 Запуск LLM-пайплайна, промпт=%r", self.llm_prompt_name)
-        print("Слушаю для LLM...")
         self.state = STATUS_RECORDING
         if self.show_recording_notification:
             notify_user("MLX Whisper Dictation", "Запись для LLM. Говорите.")

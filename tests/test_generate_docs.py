@@ -31,13 +31,13 @@ def test_generate_docs_builds_runtime_pages_from_modular_sources(tmp_path):
     source_script = Path(__file__).resolve().parent.parent / "scripts" / "generate_docs.py"
     (scripts_dir / "generate_docs.py").write_text(source_script.read_text(encoding="utf-8"), encoding="utf-8")
 
-    (project_root / "whisper-dictation.py").write_text(
+    (project_root / "main.py").write_text(
         '"""Точка входа приложения.\n\nЗапускает menu bar и CLI.\n"""\n\n\n'
         'def parse_args():\n    """Разбирает CLI-аргументы."""\n    return None\n',
         encoding="utf-8",
     )
     (project_root / "setup.py").write_text(
-        '"""Сборка приложения."""\n\nAPP = ["whisper-dictation.py"]\n',
+        '"""Сборка приложения."""\n\nAPP = ["main.py"]\n',
         encoding="utf-8",
     )
 
@@ -64,7 +64,7 @@ def test_generate_docs_builds_runtime_pages_from_modular_sources(tmp_path):
     module.ROOT = project_root
     module.DOCS_DIR = docs_dir
     module.RUNTIME_TARGETS = (
-        module.ModuleTarget("CLI и запуск", project_root / "whisper-dictation.py", "api/entrypoint.md"),
+        module.ModuleTarget("CLI и запуск", project_root / "main.py", "api/entrypoint.md"),
         module.ModuleTarget("Конфигурация", src_dir / "config.py", "api/modules/config.md"),
         module.ModuleTarget("Аудио и микрофон", src_dir / "audio.py", "api/modules/audio.md"),
         module.ModuleTarget("Диагностика", src_dir / "diagnostics.py", "api/modules/diagnostics.md"),
@@ -83,7 +83,7 @@ def test_generate_docs_builds_runtime_pages_from_modular_sources(tmp_path):
     assert "[Распознавание и вставка](modules/transcriber.md)" in runtime_overview
 
     entrypoint_page = (docs_dir / "api" / "entrypoint.md").read_text(encoding="utf-8")
-    assert "Исходный файл: `whisper-dictation.py`" in entrypoint_page
+    assert "Исходный файл: `main.py`" in entrypoint_page
     assert "Разбирает CLI-аргументы" in entrypoint_page
 
     module_page = (docs_dir / "api" / "modules" / "transcriber.md").read_text(encoding="utf-8")

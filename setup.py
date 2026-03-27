@@ -71,7 +71,7 @@ if build_py2app is not None:
                     del zlib.__file__
 
 
-APP = ["whisper-dictation.py"]
+APP = ["main.py"]
 ROOT = Path(__file__).parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
@@ -106,7 +106,7 @@ if "py2app" in sys.argv:
 OPTIONS = {
     "argv_emulation": False,
     "site_packages": False,
-    "iconfile": "Dictator.icns",
+    "iconfile": "assets/icons/Dictator.icns",
     "packages": _PY2APP_PACKAGES,
     "includes": ["AppKit", "Foundation", "PyObjCTools", "Quartz", "objc", "pynput.keyboard._darwin"],
     "plist": {
