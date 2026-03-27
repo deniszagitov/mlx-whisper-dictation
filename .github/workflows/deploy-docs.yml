@@ -1,0 +1,93 @@
+name: 📚 Публикация документации
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - .github/workflows/deploy-docs.yml
+      - mkdocs.yml
+      - README.md
+      - pyproject.toml
+      - scripts/generate_docs.py
+      - setup.py
+      - whisper-dictation.py
+      - src/**
+      - docs/**
+  pull_request:
+    paths:
+      - .github/workflows/deploy-docs.yml
+      - mkdocs.yml
+      - README.md
+      - pyproject.toml
+      - scripts/generate_docs.py
+      - setup.py
+      - whisper-dictation.py
+      - src/**
+      - docs/**
+
+concurrency:
+  group: docs-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-docs:
+    name: 🏗️ Сборка документации
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Получение кода
+        uses: actions/checkout@v4
+
+      - name: 🐍 Установка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Установка uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: 🔗 Синхронизация зависимостей документации
+        run: uv sync --frozen --group docs
+
+      - name: ✅ Проверка Ruff для docs-tooling
+        run: uv run ruff check scripts/generate_docs.py tests/test_generate_docs.py
+
+      - name: 🧪 Проверка генератора документации
+        run: uv run pytest tests/test_generate_docs.py
+
+      - name: ⚙️ Настройка GitHub Pages
+        if: github.event_name == 'push'
+        uses: actions/configure-pages@v5
+
+      - name: 🏗️ Сборка MkDocs
+        run: uv run --group docs mkdocs build --strict
+
+      - name: ⬆️ Загрузка Pages artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy-docs:
+    name: 🚀 Деплой на GitHub Pages
+    if: github.event_name == 'push'
+    needs: build-docs
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ 'github-pages' }}
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: 🚀 Публикация сайта
+        id: deployment
+        uses: actions/deploy-pages@v4

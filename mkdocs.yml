@@ -16,10 +16,20 @@ theme:
 
 nav:
   - Обзор: index.md
-  - API:
-      - Runtime: api/runtime.md
-      - Сборка: api/setup.md
   - Архитектура: architecture.md
+  - API:
+      - Runtime overview: api/runtime.md
+      - CLI и запуск: api/entrypoint.md
+      - Runtime-модули:
+          - Конфигурация: api/modules/config.md
+          - Аудио и микрофон: api/modules/audio.md
+          - Диагностика: api/modules/diagnostics.md
+          - Глобальные хоткеи: api/modules/hotkeys.md
+          - Разрешения macOS: api/modules/permissions.md
+          - Распознавание и вставка: api/modules/transcriber.md
+          - LLM-обработка: api/modules/llm.md
+          - Menu bar UI: api/modules/ui.md
+      - Сборка: api/setup.md
 
 plugins:
   - search

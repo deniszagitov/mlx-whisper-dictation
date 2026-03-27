@@ -10,7 +10,7 @@
 - `ROOT` = `Path(__file__).parent`
 - `README` = `(ROOT / 'README.md').read_text(encoding='utf-8')`
 - `_PY2APP_PACKAGES` = `['mlx', 'mlx_whisper', 'numpy', 'pyaudio', 'pynput', 'rumps', 'tqdm']`
-- `OPTIONS` = `{'argv_emulation': False, 'site_packages': False, 'packages': _PY2APP_PACKAGES, 'includes': ['AppKit', 'Foundation', 'PyObjCTools', 'Quartz', 'objc', 'pynput.keyboard._darwin'], 'plist': {'CFBundleDisplayName': 'Dictator', 'CFBundleName': 'Dictator', 'CFBundleIdentifier': 'com.deniszagitov.dictator', 'CFBundleShortVersionString': '0.1.0', 'CFBundleVersion': '0.1.0', 'LSUIElement': True, 'NSMicrophoneUsageDescription': 'Приложение записывает звук с микрофона для офлайн-диктовки.'}}`
+- `OPTIONS` = `{'argv_emulation': False, 'site_packages': False, 'iconfile': 'Dictator.icns', 'packages': _PY2APP_PACKAGES, 'includes': ['AppKit', 'Foundation', 'PyObjCTools', 'Quartz', 'objc', 'pynput.keyboard._darwin'], 'plist': {'CFBundleDisplayName': 'Dictator', 'CFBundleName': 'Dictator', 'CFBundleIdentifier': 'com.deniszagitov.dictator', 'CFBundleShortVersionString': '0.1.0', 'CFBundleVersion': '0.1.0', 'LSUIElement': True, 'NSMicrophoneUsageDescription': 'Приложение записывает звук с микрофона для офлайн-диктовки.'}}`
 
 ## Классы
 

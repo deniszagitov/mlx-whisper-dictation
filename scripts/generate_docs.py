@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import ast
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
-
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = ROOT / "docs"
@@ -38,10 +37,34 @@ class ModuleDoc:
 
     title: str
     path: Path
+    output_path: str
     docstring: str
     constants: list[tuple[str, str]]
     functions: list[FunctionDoc]
     classes: list[ClassDoc]
+
+
+@dataclass(frozen=True)
+class ModuleTarget:
+    """Описывает, какой модуль нужно отрендерить в отдельную страницу."""
+
+    title: str
+    source: Path
+    output_path: str
+
+
+RUNTIME_TARGETS = (
+    ModuleTarget("CLI и запуск", ROOT / "whisper-dictation.py", "api/entrypoint.md"),
+    ModuleTarget("Конфигурация", ROOT / "src/config.py", "api/modules/config.md"),
+    ModuleTarget("Аудио и микрофон", ROOT / "src/audio.py", "api/modules/audio.md"),
+    ModuleTarget("Диагностика", ROOT / "src/diagnostics.py", "api/modules/diagnostics.md"),
+    ModuleTarget("Глобальные хоткеи", ROOT / "src/hotkeys.py", "api/modules/hotkeys.md"),
+    ModuleTarget("Разрешения macOS", ROOT / "src/permissions.py", "api/modules/permissions.md"),
+    ModuleTarget("Распознавание и вставка", ROOT / "src/transcriber.py", "api/modules/transcriber.md"),
+    ModuleTarget("LLM-обработка", ROOT / "src/llm.py", "api/modules/llm.md"),
+    ModuleTarget("Menu bar UI", ROOT / "src/ui.py", "api/modules/ui.md"),
+)
+SETUP_TARGET = ModuleTarget("API сборки", ROOT / "setup.py", "api/setup.md")
 
 
 def _render_annotation(node: ast.AST | None) -> str:
@@ -120,7 +143,7 @@ def _collect_constants(module: ast.Module) -> list[tuple[str, str]]:
     return constants
 
 
-def _collect_methods(nodes: Iterable[ast.stmt]) -> tuple[list[FunctionDoc], list[FunctionDoc]]:
+def _collect_methods(nodes: list[ast.stmt]) -> tuple[list[FunctionDoc], list[FunctionDoc]]:
     """Извлекает методы и свойства класса."""
     methods: list[FunctionDoc] = []
     properties: list[FunctionDoc] = []
@@ -148,9 +171,9 @@ def _collect_methods(nodes: Iterable[ast.stmt]) -> tuple[list[FunctionDoc], list
     return methods, properties
 
 
-def _parse_module(path: Path, title: str) -> ModuleDoc:
+def _parse_module(target: ModuleTarget) -> ModuleDoc:
     """Разбирает Python-модуль и извлекает его docstring-структуру."""
-    module = ast.parse(path.read_text(encoding="utf-8"))
+    module = ast.parse(target.source.read_text(encoding="utf-8"))
     functions: list[FunctionDoc] = []
     classes: list[ClassDoc] = []
 
@@ -181,8 +204,9 @@ def _parse_module(path: Path, title: str) -> ModuleDoc:
             )
 
     return ModuleDoc(
-        title=title,
-        path=path,
+        title=target.title,
+        path=target.source,
+        output_path=target.output_path,
         docstring=ast.get_docstring(module) or "Документация модуля пока не описана.",
         constants=_collect_constants(module),
         functions=functions,
@@ -195,6 +219,25 @@ def _write(path: str, content: str) -> None:
     file_path = DOCS_DIR / path
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(content.rstrip() + "\n", encoding="utf-8")
+
+
+def _relative_path(path: Path) -> str:
+    """Возвращает путь относительно корня репозитория в POSIX-виде."""
+    return path.relative_to(ROOT).as_posix()
+
+
+def _first_sentence(docstring: str) -> str:
+    """Возвращает первую смысловую строку docstring для краткого описания."""
+    for line in docstring.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return "Документация пока не описана."
+
+
+def _reset_generated_docs() -> None:
+    """Удаляет старые автогенерируемые модульные страницы перед пересборкой."""
+    shutil.rmtree(DOCS_DIR / "api/modules", ignore_errors=True)
 
 
 def _render_function(function: FunctionDoc, *, level: int = 2) -> str:
@@ -210,13 +253,11 @@ def _render_class(class_doc: ClassDoc) -> str:
 
     if class_doc.properties:
         parts.append("### Свойства\n")
-        for item in class_doc.properties:
-            parts.append(_render_function(item, level=4))
+        parts.extend(_render_function(item, level=4) for item in class_doc.properties)
 
     if class_doc.methods:
         parts.append("### Методы\n")
-        for item in class_doc.methods:
-            parts.append(_render_function(item, level=4))
+        parts.extend(_render_function(item, level=4) for item in class_doc.methods)
 
     return "\n".join(parts)
 
@@ -229,7 +270,7 @@ def _render_module(module_doc: ModuleDoc) -> str:
     lines = [
         f"# {module_doc.title}",
         "",
-        f"Исходный файл: `{module_doc.path.name}`",
+        f"Исходный файл: `{_relative_path(module_doc.path)}`",
         "",
         module_doc.docstring,
         "",
@@ -243,52 +284,96 @@ def _render_module(module_doc: ModuleDoc) -> str:
 
     if module_doc.classes:
         lines.extend(["## Классы", ""])
-        for item in module_doc.classes:
-            lines.append(_render_class(item))
+        lines.extend(_render_class(item) for item in module_doc.classes)
 
     if public_functions:
         lines.extend(["## Публичные функции", ""])
-        for item in public_functions:
-            lines.append(_render_function(item, level=3))
+        lines.extend(_render_function(item, level=3) for item in public_functions)
 
     if private_functions:
         lines.extend(["## Внутренние функции", ""])
-        for item in private_functions:
-            lines.append(_render_function(item, level=3))
+        lines.extend(_render_function(item, level=3) for item in private_functions)
 
+    return "\n".join(lines)
+
+
+def _render_runtime_overview(runtime_modules: list[ModuleDoc]) -> str:
+    """Рендерит обзорную страницу по runtime-модулям приложения."""
+    lines = [
+        "# Runtime API",
+        "",
+        "Этот раздел собирается автоматически из docstring entrypoint-файла и модулей в каталоге `src/`.",
+        "",
+        "## Что покрывает автогенерация",
+        "",
+        "- точку входа приложения и CLI-аргументы;",
+        "- конфигурацию и сохранение настроек в NSUserDefaults;",
+        "- запись звука, хоткеи, разрешения macOS и menu bar UI;",
+        "- распознавание речи, вставку текста, историю и LLM-пайплайн.",
+        "",
+        "## Карта runtime-модулей",
+        "",
+    ]
+
+    lines.extend(
+        f"- [{module_doc.title}]({module_doc.output_path.replace('api/', '')}) — {_first_sentence(module_doc.docstring)}"
+        for module_doc in runtime_modules
+    )
+
+    lines.extend(
+        [
+            "",
+            "## Как обновляется документация",
+            "",
+            (
+                "Перед каждой сборкой MkDocs запускается `scripts/generate_docs.py`, "
+                "который перечитывает текущий Python-код и перегенерирует "
+                "страницы API в каталоге `docs/api/`."
+            ),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _render_index(runtime_modules: list[ModuleDoc], setup_module: ModuleDoc) -> str:
+    """Рендерит главную страницу документации."""
+    entrypoint_doc = runtime_modules[0]
+    lines = [
+        "# Dictator",
+        "",
+        "Этот сайт собирается автоматически из docstring и структуры Python-кода в репозитории.",
+        "",
+        entrypoint_doc.docstring,
+        "",
+        "## Что уже доступно",
+        "",
+        f"- обзор runtime-слоя и {len(runtime_modules)} автогенерируемых страниц по модулям;",
+        f"- автогенерируемая страница [{setup_module.title}]({setup_module.output_path.replace('api/', 'api/')});",
+        "- ручная архитектурная диаграмма текущих потоков записи, распознавания, вставки и LLM.",
+        "",
+        "## Основные разделы",
+        "",
+        "- [Обзор runtime API](api/runtime.md)",
+        "- [Точка входа и CLI](api/entrypoint.md)",
+        "- [Модули runtime](api/modules/config.md)",
+        "- [API сборки](api/setup.md)",
+        "- [Архитектура](architecture.md)",
+    ]
     return "\n".join(lines)
 
 
 def main() -> None:
     """Генерирует главную страницу и API-страницы для MkDocs."""
-    runtime_module = _parse_module(ROOT / "whisper-dictation.py", "Runtime API")
-    setup_module = _parse_module(ROOT / "setup.py", "API сборки")
+    _reset_generated_docs()
+    runtime_modules = [_parse_module(target) for target in RUNTIME_TARGETS]
+    setup_module = _parse_module(SETUP_TARGET)
 
-    overview = "\n".join(
-        [
-            "# Dictator",
-            "",
-            "Этот сайт собирается автоматически из docstring и структуры Python-кода в репозитории.",
-            "",
-            runtime_module.docstring,
-            "",
-            "## Что уже доступно",
-            "",
-            "- Полное описание текущего runtime-модуля приложения.",
-            "- Автогенерируемая страница с кодом сборки через py2app.",
-            "- Архитектурная диаграмма основных потоков приложения.",
-            "",
-            "## Разделы",
-            "",
-            "- [Runtime API](api/runtime.md)",
-            "- [API сборки](api/setup.md)",
-            "- [Архитектура](architecture.md)",
-        ]
-    )
+    _write("index.md", _render_index(runtime_modules, setup_module))
+    _write("api/runtime.md", _render_runtime_overview(runtime_modules))
+    _write(setup_module.output_path, _render_module(setup_module))
 
-    _write("index.md", overview)
-    _write("api/runtime.md", _render_module(runtime_module))
-    _write("api/setup.md", _render_module(setup_module))
+    for module_doc in runtime_modules:
+        _write(module_doc.output_path, _render_module(module_doc))
 
 
 def on_pre_build(*_args, **_kwargs) -> None:

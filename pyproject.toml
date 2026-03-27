@@ -13,6 +13,7 @@ classifiers = [
 	"Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
+	"mlx-lm>=0.22.0",
 	"mlx-whisper",
 	"numpy>=2.0.0",
 	"pyaudio>=0.2.13",
@@ -28,6 +29,7 @@ dev = [
 	"modulegraph",
 	"py2app==0.28.10",
 	"pytest>=8.0",
+    "pytest-cov>=5.0",
 	"ruff>=0.11.0",
     "setuptools<81",
 ]
@@ -99,7 +101,10 @@ fixable = ["ALL"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ARG", "PLR2004", "PLC0415", "D104"]
+"tests/*" = ["ARG", "PLR2004", "PLC0415", "D104", "N802"]
+"src/llm.py" = ["PLC0415"]
+"src/transcriber.py" = ["PLC0415"]
+"whisper-dictation.py" = ["F401"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -109,3 +114,19 @@ docstring-code-format = true
 python_version = "3.11"
 strict = true
 mypy_path = "."
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = [
+    "tests/*",
+    "build/*",
+    "logs/*",
+    "mlx_whisper_dictation.egg-info/*",
+    "Dictator.iconset/*",
+    "_test_hang.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

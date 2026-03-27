@@ -14,5 +14,10 @@ site/
 .ruff_cache
 .vscode/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.bak
+*.stale
 _test_hang.py
 logs/
