@@ -202,6 +202,59 @@ class TestAddToHistory:
         assert transcriber.history == ["свежий"]
         assert saved[0][0]["text"] == "свежий"
 
+    def test_corrupted_nsdictionary_text_is_skipped(self, monkeypatch):
+        """Повреждённая запись с NSDictionary вместо строки в поле text пропускается."""
+        now = 2_000_000.0
+
+        # Симулируем NSDictionary-подобный объект (hasattr objectForKey_)
+        class FakeNSDict:
+            """Объект, имитирующий NSDictionary из PyObjC."""
+
+            def __init__(self, data):
+                self._data = data
+
+            def get(self, key, default=None):
+                return self._data.get(key, default)
+
+            def __getitem__(self, key):
+                return self._data[key]
+
+            def objectForKey_(self, key):
+                return self._data.get(key)
+
+        corrupted_item = FakeNSDict({
+            "text": FakeNSDict({"text": "вложенный", "created_at": now - 10}),
+            "created_at": now - 10,
+        })
+
+        result = transcriber_module._normalize_history_record(corrupted_item, now)
+        assert result is None
+
+    def test_valid_nsdictionary_record_is_loaded(self, monkeypatch):
+        """Корректная запись из NSDictionary-подобного объекта загружается нормально."""
+        now = 2_000_000.0
+
+        class FakeNSDict:
+            """Объект, имитирующий NSDictionary из PyObjC."""
+
+            def __init__(self, data):
+                self._data = data
+
+            def get(self, key, default=None):
+                return self._data.get(key, default)
+
+            def __getitem__(self, key):
+                return self._data[key]
+
+            def objectForKey_(self, key):
+                return self._data.get(key)
+
+        valid_item = FakeNSDict({"text": "нормальный текст", "created_at": now - 10})
+
+        result = transcriber_module._normalize_history_record(valid_item, now)
+        assert result is not None
+        assert result["text"] == "нормальный текст"
+
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="NSUserDefaults только на macOS")
 class TestTokenUsage:

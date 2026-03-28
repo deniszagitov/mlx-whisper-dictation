@@ -62,14 +62,26 @@ _CLIPBOARD_CONTEXT_HINT_RE = re.compile(
 )
 
 
+def _is_mapping(obj):
+    """Проверяет, является ли объект словарём (включая NSDictionary от PyObjC)."""
+    return isinstance(obj, dict) or hasattr(obj, "objectForKey_")
+
+
 def _normalize_history_record(item, now):
     """Приводит запись истории к внутреннему формату с TTL."""
-    if isinstance(item, dict):
+    if _is_mapping(item):
         text = item.get("text", "")
         created_at = item.get("created_at", now)
     else:
         text = item
         created_at = now
+
+    # Защита от вложенных NSDictionary: если text не строка, пропускаем запись
+    if _is_mapping(text):
+        LOGGER.warning("Пропущена повреждённая запись истории (text является словарём)")
+        return None
+
+    text = str(text)
 
     try:
         created_at = float(created_at)
@@ -81,7 +93,7 @@ def _normalize_history_record(item, now):
     if now - created_at > ARTIFACT_TTL_SECONDS:
         return None
 
-    return {"text": str(text), "created_at": created_at}
+    return {"text": text, "created_at": created_at}
 
 
 def _load_history_records(now=None):
@@ -102,7 +114,10 @@ def _load_history_records(now=None):
 
 def _save_history_records(records):
     """Сохраняет историю в NSUserDefaults в формате с timestamp."""
-    NSUserDefaults.standardUserDefaults().setObject_forKey_(list(records), DEFAULTS_KEY_HISTORY)
+    # Явное преобразование в Python-типы, чтобы PyObjC не сериализовал
+    # NSDictionary/NSString и не вносил рекурсивные вложенности.
+    safe_records = [{"text": str(r["text"]), "created_at": float(r["created_at"])} for r in records]
+    NSUserDefaults.standardUserDefaults().setObject_forKey_(safe_records, DEFAULTS_KEY_HISTORY)
 
 
 class SpeechTranscriber:
