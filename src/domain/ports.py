@@ -5,7 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from .types import AudioDeviceInfo, AudioDiagnostics, HistoryRecord, MicrophoneProfile
+    from collections.abc import Callable
+
+    from .types import (
+        AppSnapshot,
+        AudioDeviceInfo,
+        AudioDiagnostics,
+        HistoryRecord,
+        MicrophoneProfile,
+    )
 
 
 class ToggleableApp(Protocol):
@@ -15,6 +23,198 @@ class ToggleableApp(Protocol):
 
     def toggle(self) -> None:
         """Переключает приложение между состояниями записи и ожидания."""
+        ...
+
+
+class StatusBarControllerProtocol(Protocol):
+    """Протокол контроллера, которым управляет menu bar UI-адаптер."""
+
+    state: str
+    started: bool
+    elapsed_time: int
+    model_name: str
+    model_repo: str
+    hotkey_status: str
+    secondary_hotkey_status: str
+    llm_hotkey_status: str
+    llm_prompt_name: str
+    performance_mode: str
+    max_time: float | None
+    max_time_options: list[float | None]
+    model_options: list[str]
+    languages: list[str] | None
+    current_language: str | None
+    input_devices: list[AudioDeviceInfo]
+    current_input_device: AudioDeviceInfo | None
+    permission_status: dict[str, bool | None]
+    microphone_profiles: list[MicrophoneProfile]
+    show_recording_notification: bool
+    show_recording_overlay: bool
+    private_mode_enabled: bool
+    paste_cgevent_enabled: bool
+    paste_ax_enabled: bool
+    paste_clipboard_enabled: bool
+    llm_clipboard_enabled: bool
+    history: list[str]
+    total_tokens: int
+    recording_overlay: RecordingOverlayProtocol
+    key_listener: Any
+    llm_key_listener: Any
+    start_time: float | None
+    primary_key_combination: str
+    secondary_key_combination: str
+    llm_key_combination: str
+
+    def subscribe(self, callback: Callable[[AppSnapshot], None]) -> None:
+        """Подписывает UI на обновления snapshot."""
+        ...
+
+    def snapshot(self) -> AppSnapshot:
+        """Возвращает текущий snapshot состояния."""
+        ...
+
+    def microphone_menu_title(self, device_info: AudioDeviceInfo | None) -> str:
+        """Формирует подпись устройства ввода для UI."""
+        ...
+
+    def is_microphone_profile_active(self, profile: MicrophoneProfile) -> bool:
+        """Сообщает, активен ли быстрый профиль."""
+        ...
+
+    def prune_expired_history(self) -> None:
+        """Удаляет устаревшие записи истории, если это поддерживается."""
+        ...
+
+    def set_state(self, state: str) -> None:
+        """Обновляет runtime-состояние контроллера."""
+        ...
+
+    def set_permission_status(self, permission_name: str, status: bool | None) -> None:
+        """Обновляет статус системного разрешения."""
+        ...
+
+    def change_input_device(self, index: int) -> None:
+        """Меняет активное устройство ввода."""
+        ...
+
+    def change_language(self, language: str) -> None:
+        """Меняет активный язык распознавания."""
+        ...
+
+    def change_model(self, model: str) -> None:
+        """Меняет модель распознавания."""
+        ...
+
+    def change_max_time(self, max_time: float | None) -> None:
+        """Меняет лимит записи."""
+        ...
+
+    def suggest_microphone_profile_name(self) -> str:
+        """Предлагает имя нового профиля микрофона."""
+        ...
+
+    def add_current_microphone_profile(self, profile_name: str) -> None:
+        """Сохраняет текущий профиль микрофона."""
+        ...
+
+    def apply_microphone_profile(self, profile_name: str) -> None:
+        """Применяет профиль микрофона."""
+        ...
+
+    def delete_microphone_profile(self, profile_name: str) -> None:
+        """Удаляет профиль микрофона."""
+        ...
+
+    def change_hotkey(self) -> None:
+        """Меняет основной хоткей."""
+        ...
+
+    def change_secondary_hotkey(self) -> None:
+        """Меняет дополнительный хоткей."""
+        ...
+
+    def change_llm_hotkey(self) -> None:
+        """Меняет LLM-хоткей."""
+        ...
+
+    def request_accessibility_access(self) -> None:
+        """Повторно запрашивает Accessibility."""
+        ...
+
+    def request_input_monitoring_access(self) -> None:
+        """Повторно запрашивает Input Monitoring."""
+        ...
+
+    def toggle_recording_notification(self) -> None:
+        """Переключает уведомление о старте записи."""
+        ...
+
+    def toggle_recording_overlay(self) -> None:
+        """Переключает overlay записи."""
+        ...
+
+    def change_performance_mode(self, performance_mode: object) -> None:
+        """Меняет режим производительности."""
+        ...
+
+    def toggle_private_mode(self) -> None:
+        """Переключает приватный режим."""
+        ...
+
+    def toggle_paste_cgevent(self) -> None:
+        """Переключает ввод через CGEvent."""
+        ...
+
+    def toggle_paste_ax(self) -> None:
+        """Переключает ввод через Accessibility API."""
+        ...
+
+    def toggle_paste_clipboard(self) -> None:
+        """Переключает ввод через буфер обмена."""
+        ...
+
+    def toggle_llm_clipboard(self) -> None:
+        """Переключает использование буфера обмена для LLM."""
+        ...
+
+    def copy_history_text(self, text: str) -> None:
+        """Копирует текст истории в системный буфер обмена."""
+        ...
+
+    def start_recording(self) -> None:
+        """Запускает запись."""
+        ...
+
+    def stop_recording(self) -> None:
+        """Останавливает запись."""
+        ...
+
+    def on_status_tick(self) -> None:
+        """Обрабатывает очередной тик UI-таймера."""
+        ...
+
+    def toggle(self) -> None:
+        """Переключает обычный сценарий записи."""
+        ...
+
+    def toggle_llm(self) -> None:
+        """Переключает LLM-сценарий."""
+        ...
+
+    def handle_escape_keycode(self, keycode: int) -> None:
+        """Обрабатывает нажатие Escape."""
+        ...
+
+    def cancel_recording(self) -> None:
+        """Отменяет активную запись."""
+        ...
+
+    def download_llm_model(self) -> None:
+        """Запускает загрузку LLM-модели."""
+        ...
+
+    def change_llm_prompt(self, prompt_name: str) -> None:
+        """Меняет активный LLM-промпт."""
         ...
 
 

@@ -15,8 +15,8 @@ import rumps
 from ..domain.constants import Config
 
 if TYPE_CHECKING:
-    from ..app import AppSnapshot, DictationApp
-    from ..domain.types import MicrophoneProfile
+    from ..domain.ports import StatusBarControllerProtocol
+    from ..domain.types import AppSnapshot, MicrophoneProfile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -37,10 +37,10 @@ def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
 
 
 class StatusBarApp(rumps.App):  # type: ignore[misc]
-    """Menu bar UI-адаптер для DictationApp."""
+    """Menu bar UI-адаптер для контроллера диктовки."""
 
-    def __init__(self, app: DictationApp) -> None:
-        """Создаёт menu bar приложение, привязанное к DictationApp."""
+    def __init__(self, app: StatusBarControllerProtocol) -> None:
+        """Создаёт menu bar приложение, привязанное к контроллеру диктовки."""
         super().__init__("whisper", "⏯")
         self.app = app
         self._history_title_to_text: dict[str, str] = {}
