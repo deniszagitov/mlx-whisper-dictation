@@ -1,8 +1,7 @@
 """Юнит-тесты основного сценария распознавания и автовставки."""
 
 import numpy as np
-
-import transcriber as transcriber_module
+import src.transcriber as transcriber_module
 
 
 def make_audio(seconds=1.0, amplitude=0.01):

@@ -7,8 +7,7 @@
 import time
 
 import pytest
-
-import ui as ui_module
+import src.ui as ui_module
 
 
 class FakeRecorder:
@@ -79,7 +78,7 @@ class FakeRecorder:
 @pytest.fixture
 def patched_app_module(app_module, monkeypatch):
     """Подготавливает модуль приложения с замоканными системными вызовами."""
-    import ui as ui_module
+    import src.ui as ui_module
 
     monkeypatch.setattr(
         ui_module,
@@ -883,7 +882,7 @@ class TestRecordingOverlayIntegration:
 
     def test_toggle_recording_overlay_off(self, make_app, monkeypatch):
         """toggle_recording_overlay выключает индикатор."""
-        import config as config_module
+        import src.config as config_module
 
         saved = {}
         monkeypatch.setattr(ui_module, "_save_defaults_bool", lambda k, v: saved.update({k: v}))
@@ -899,7 +898,7 @@ class TestRecordingOverlayIntegration:
 
     def test_toggle_recording_overlay_on(self, make_app, monkeypatch):
         """toggle_recording_overlay включает индикатор обратно."""
-        import config as config_module
+        import src.config as config_module
 
         saved = {}
         monkeypatch.setattr(config_module, "_save_defaults_bool", lambda k, v: saved.update({k: v}))

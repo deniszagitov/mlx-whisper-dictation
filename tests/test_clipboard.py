@@ -7,8 +7,7 @@
 import sys
 
 import pytest
-
-import transcriber as transcriber_module
+import src.transcriber as transcriber_module
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Тесты буфера обмена только для macOS")

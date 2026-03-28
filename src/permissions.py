@@ -14,7 +14,7 @@ import Quartz
 import rumps
 from Foundation import NSURL, NSDictionary
 
-from config import (
+from .config import (
     ACCESSIBILITY_SETTINGS_URL,
     INPUT_MONITORING_SETTINGS_URL,
     PERMISSION_DENIED,

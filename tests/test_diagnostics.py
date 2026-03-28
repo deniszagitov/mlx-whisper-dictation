@@ -6,8 +6,7 @@ import os
 
 import numpy as np
 import pytest
-
-import diagnostics
+from src import diagnostics
 
 
 def make_audio(seconds=1.0, amplitude=0.01):

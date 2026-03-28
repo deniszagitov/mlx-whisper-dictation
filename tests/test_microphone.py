@@ -9,8 +9,7 @@
 import numpy as np
 import pyaudio
 import pytest
-
-import audio
+from src import audio
 
 
 @pytest.mark.hardware

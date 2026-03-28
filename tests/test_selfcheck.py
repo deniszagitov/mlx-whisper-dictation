@@ -75,8 +75,8 @@ def test_main_runs_ruff_and_pytest_by_default(monkeypatch):
     exit_code = selfcheck.main()
 
     assert exit_code == 0
-    assert [title for title, _command in steps] == ["Ruff", "Pytest"]
-    assert steps[1][1] == ["uv", "run", "pytest", "tests/", "-q"]
+    assert [title for title, _command in steps] == ["Ruff", "Import-linter", "Pytest"]
+    assert steps[2][1] == ["uv", "run", "pytest", "tests/", "-q"]
 
 
 def test_main_adds_coverage_flags(monkeypatch):
@@ -109,7 +109,7 @@ def test_main_adds_coverage_flags(monkeypatch):
 
 
 def test_main_skips_ruff_when_no_lint_enabled(monkeypatch):
-    """Флаг --no-lint должен пропускать Ruff и оставлять только Pytest."""
+    """Флаг --no-lint должен пропускать Ruff и Import-linter, оставляя только Pytest."""
     selfcheck = load_selfcheck_module()
     steps = []
 

@@ -10,8 +10,8 @@ import threading
 import numpy as np
 import pyaudio
 
-from config import STATUS_IDLE, STATUS_LLM_PROCESSING, STATUS_TRANSCRIBING
-from permissions import notify_user
+from .config import STATUS_IDLE, STATUS_LLM_PROCESSING, STATUS_TRANSCRIBING
+from .permissions import notify_user
 
 LOGGER = logging.getLogger(__name__)
 

@@ -50,6 +50,8 @@
   - `uv run python scripts/selfcheck.py --coverage`
   - `python setup.py py2app -A`
 - Не навязывать standalone-сборку как единственный путь, если alias-сборка решает пользовательскую задачу.
+- Внутри `src/` использовать относительные импорты (`from .config import ...`), из `main.py` и тестов — пакетные (`from src.config import ...`). Старый стиль с `sys.path.insert(0, "src/")` и bare-импортами (`from config import ...`) больше не применяется.
+- При добавлении новых модулей в `src/` проверять, что архитектурный контракт `import-linter` (`lint-imports`) по-прежнему соблюдается.
 
 ## Политика тестов
 
@@ -76,6 +78,7 @@
 ```bash
 uv sync --dev
 uv run ruff check .
+uv run lint-imports
 uv run python scripts/selfcheck.py --coverage
 uv run python main.py
 uv run python setup.py py2app -A

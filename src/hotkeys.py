@@ -13,7 +13,7 @@ import AppKit
 import Quartz
 from pynput import keyboard
 
-from config import DOUBLE_COMMAND_PRESS_INTERVAL, MIN_HOTKEY_PARTS
+from .config import DOUBLE_COMMAND_PRESS_INTERVAL, MIN_HOTKEY_PARTS
 
 LOGGER = logging.getLogger(__name__)
 

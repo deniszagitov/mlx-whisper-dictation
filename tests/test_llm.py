@@ -3,7 +3,7 @@
 import sys
 from types import SimpleNamespace
 
-import llm
+from src import llm
 
 
 class FakeTokenizer:

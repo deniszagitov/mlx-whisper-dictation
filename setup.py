@@ -5,9 +5,6 @@ import zlib
 from pathlib import Path
 from typing import Any, cast
 
-# Добавляем src/ в sys.path, чтобы modulegraph находил модули приложения
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
 from setuptools import setup
 from setuptools.dist import Distribution
 
@@ -75,7 +72,7 @@ APP = ["main.py"]
 ROOT = Path(__file__).parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
-_PY2APP_PACKAGES = ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "tqdm"]
+_PY2APP_PACKAGES = ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "src", "tqdm"]
 
 if "py2app" in sys.argv:
     # py2app (через modulegraph) использует устаревший imp.find_module, который

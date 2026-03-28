@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-import config
+from src import config
 
 
 class FakeDefaults:

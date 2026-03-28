@@ -16,7 +16,7 @@ import Quartz
 from Foundation import NSUserDefaults
 from pynput import keyboard
 
-from config import (
+from .config import (
     ARTIFACT_TTL_SECONDS,
     CGEVENT_CHUNK_DELAY,
     CGEVENT_UNICODE_CHUNK_SIZE,
@@ -40,8 +40,8 @@ from config import (
     _save_defaults_bool,
     _save_defaults_int,
 )
-from diagnostics import DiagnosticsStore, looks_like_hallucination
-from permissions import (
+from .diagnostics import DiagnosticsStore, looks_like_hallucination
+from .permissions import (
     frontmost_application_info,
     get_input_monitoring_status,
     is_accessibility_trusted,

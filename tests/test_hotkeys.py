@@ -303,7 +303,7 @@ class TestParseArgs:
 
     def test_parse_args_uses_saved_preferences_when_cli_not_overrides(self, app_module, monkeypatch):
         """При отсутствии явных CLI-флагов приложение должно поднять сохранённые настройки."""
-        import config as config_module
+        import src.config as config_module
 
         class FakeDefaults:
             def __init__(self):
@@ -467,7 +467,7 @@ class TestKeycodeToChar:
 
     def test_returns_none_when_carbon_unavailable(self, app_module, monkeypatch):
         """Если Carbon API недоступен, функция должна вернуть None."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_CARBON_AVAILABLE", False)
         result = hotkeys_module._keycode_to_char(0)
@@ -475,7 +475,7 @@ class TestKeycodeToChar:
 
     def test_called_by_event_key_name_static(self, app_module, monkeypatch):
         """_event_key_name_static должен вызывать _keycode_to_char для не-именованных клавиш."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         calls = []
 
@@ -498,7 +498,7 @@ class TestKeycodeToChar:
 
     def test_carbon_result_overrides_characters(self, app_module, monkeypatch):
         """Результат _keycode_to_char имеет приоритет над charactersIgnoringModifiers."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: "a")
 
@@ -514,7 +514,7 @@ class TestKeycodeToChar:
 
     def test_falls_back_to_characters_when_carbon_returns_none(self, app_module, monkeypatch):
         """Если _keycode_to_char вернул None, используется charactersIgnoringModifiers."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
 
@@ -558,7 +558,7 @@ class TestCheckKeyDown:
 
     def test_returns_true_when_hotkey_matches(self, app_module, monkeypatch):
         """_check_key_down возвращает True, если все модификаторы нажаты и клавиша совпадает."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
         fake_app = self._make_fake_app()
@@ -573,7 +573,7 @@ class TestCheckKeyDown:
 
     def test_returns_false_when_modifiers_not_pressed(self, app_module, monkeypatch):
         """_check_key_down возвращает False, если модификаторы не нажаты."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
         fake_app = self._make_fake_app()
@@ -588,7 +588,7 @@ class TestCheckKeyDown:
 
     def test_returns_false_when_wrong_key(self, app_module, monkeypatch):
         """_check_key_down возвращает False, если клавиша не совпадает с хоткеем."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
         fake_app = self._make_fake_app()
@@ -603,7 +603,7 @@ class TestCheckKeyDown:
 
     def test_returns_false_when_already_triggered(self, app_module, monkeypatch):
         """_check_key_down возвращает False, если хоткей уже сработал (защита от повтора)."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
         fake_app = self._make_fake_app()
@@ -650,7 +650,7 @@ class TestCGEventTapCallback:
 
     def test_suppresses_hotkey_event(self, app_module, monkeypatch):
         """Callback должен вернуть None для подавления символа хоткея."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
         fake_app = self._make_fake_app()
@@ -676,7 +676,7 @@ class TestCGEventTapCallback:
 
     def test_passes_through_non_hotkey_event(self, app_module, monkeypatch):
         """Callback должен вернуть cg_event, если клавиша не является хоткеем."""
-        import hotkeys as hotkeys_module
+        import src.hotkeys as hotkeys_module
 
         monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
         fake_app = self._make_fake_app()

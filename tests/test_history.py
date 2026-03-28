@@ -3,8 +3,7 @@
 import sys
 
 import pytest
-
-import transcriber as transcriber_module
+import src.transcriber as transcriber_module
 
 
 def make_transcriber(app_module, diagnostics_enabled=False):

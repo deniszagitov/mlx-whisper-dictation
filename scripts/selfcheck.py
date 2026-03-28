@@ -71,6 +71,7 @@ def main() -> int:
 
     if not args.no_lint:
         run_step("Ruff", ["uv", "run", "ruff", "check", "."])
+        run_step("Import-linter", ["uv", "run", "lint-imports"])
 
     pytest_command = ["uv", "run", "pytest", "tests/", "-q"]
     if args.coverage:

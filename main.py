@@ -8,20 +8,15 @@ import argparse
 import logging
 import platform
 import sys
-from pathlib import Path
-
-# Добавляем src/ в sys.path для импорта модулей приложения
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
 import time
+from pathlib import Path
 
 import mlx_whisper
 import Quartz
 from Foundation import NSUserDefaults
 from pynput import keyboard
-
-from audio import Recorder, list_input_devices, microphone_menu_title
-from config import (
+from src.audio import Recorder, list_input_devices, microphone_menu_title
+from src.config import (
     CGEVENT_CHUNK_DELAY,
     CGEVENT_UNICODE_CHUNK_SIZE,
     CLIPBOARD_RESTORE_DELAY,
@@ -60,12 +55,12 @@ from config import (
     _load_defaults_str,
     format_max_time_status,
 )
-from diagnostics import (
+from src.diagnostics import (
     DiagnosticsStore,
     looks_like_hallucination,
     setup_logging,
 )
-from hotkeys import (
+from src.hotkeys import (
     _CARBON_AVAILABLE,
     _KEYCODE_ESCAPE,
     MODIFIER_DISPLAY_ORDER,
@@ -84,8 +79,8 @@ from hotkeys import (
     parse_key,
     parse_key_combination,
 )
-from llm import LLMProcessor, strip_think_blocks
-from permissions import (
+from src.llm import LLMProcessor, strip_think_blocks
+from src.permissions import (
     frontmost_application_info,
     get_accessibility_status,
     get_input_monitoring_status,
@@ -98,8 +93,8 @@ from permissions import (
     warn_missing_accessibility_permission,
     warn_missing_input_monitoring_permission,
 )
-from transcriber import SpeechTranscriber
-from ui import RecordingOverlay, StatusBarApp, _load_microphone_profiles
+from src.transcriber import SpeechTranscriber
+from src.ui import RecordingOverlay, StatusBarApp, _load_microphone_profiles
 
 LOGGER = logging.getLogger(__name__)
 

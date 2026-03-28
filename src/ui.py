@@ -14,8 +14,8 @@ import AppKit
 import Quartz
 import rumps
 
-from audio import list_input_devices, microphone_menu_title
-from config import (
+from .audio import list_input_devices, microphone_menu_title
+from .config import (
     DEFAULT_LLM_PROMPT_NAME,
     DEFAULT_MODEL_NAME,
     DEFAULT_PERFORMANCE_MODE,
@@ -57,14 +57,14 @@ from config import (
     _save_defaults_str,
     format_max_time_status,
 )
-from hotkeys import (
+from .hotkeys import (
     _KEYCODE_ESCAPE,
     GlobalKeyListener,
     capture_hotkey_combination,
     format_hotkey_status,
     normalize_key_combination,
 )
-from permissions import (
+from .permissions import (
     get_accessibility_status,
     get_input_monitoring_status,
     notify_user,

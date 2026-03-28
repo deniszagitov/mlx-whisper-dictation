@@ -8,7 +8,7 @@ import gc
 import logging
 import re
 
-from config import DEFAULT_LLM_MODEL_NAME, DOWNLOAD_COMPLETE_PCT, LLM_MAX_TOKENS, LLM_RESPONSE_CHAR_LIMIT
+from .config import DEFAULT_LLM_MODEL_NAME, DOWNLOAD_COMPLETE_PCT, LLM_MAX_TOKENS, LLM_RESPONSE_CHAR_LIMIT
 
 LOGGER = logging.getLogger(__name__)
 
