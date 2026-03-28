@@ -455,11 +455,278 @@ class TestEventKeyNameStatic:
 
     def test_character_key(self, app_module):
         """Обычная буквенная клавиша должна вернуть символ в нижнем регистре."""
-        assert app_module._event_key_name_static(self._make_event(0, "T")) == "t"
+        assert app_module._event_key_name_static(self._make_event(17, "T")) == "t"
 
     def test_empty_characters(self, app_module):
         """Пустые characters должны вернуть пустую строку."""
         assert app_module._event_key_name_static(self._make_event(999, "")) == ""
+
+
+class TestKeycodeToChar:
+    """Тесты преобразования keycode в символ через Carbon API."""
+
+    def test_returns_none_when_carbon_unavailable(self, app_module, monkeypatch):
+        """Если Carbon API недоступен, функция должна вернуть None."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_CARBON_AVAILABLE", False)
+        result = hotkeys_module._keycode_to_char(0)
+        assert result is None
+
+    def test_called_by_event_key_name_static(self, app_module, monkeypatch):
+        """_event_key_name_static должен вызывать _keycode_to_char для не-именованных клавиш."""
+        import hotkeys as hotkeys_module
+
+        calls = []
+
+        def tracking_keycode_to_char(keycode):
+            calls.append(keycode)
+            return "q"
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", tracking_keycode_to_char)
+
+        class FakeEvent:
+            def keyCode(self):
+                return 12  # keycode для Q
+
+            def charactersIgnoringModifiers(self):
+                return "q"
+
+        result = hotkeys_module._event_key_name_static(FakeEvent())
+        assert result == "q"
+        assert 12 in calls
+
+    def test_carbon_result_overrides_characters(self, app_module, monkeypatch):
+        """Результат _keycode_to_char имеет приоритет над charactersIgnoringModifiers."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: "a")
+
+        class FakeEvent:
+            def keyCode(self):
+                return 0
+
+            def charactersIgnoringModifiers(self):
+                return "ф"  # русская раскладка
+
+        result = hotkeys_module._event_key_name_static(FakeEvent())
+        assert result == "a"
+
+    def test_falls_back_to_characters_when_carbon_returns_none(self, app_module, monkeypatch):
+        """Если _keycode_to_char вернул None, используется charactersIgnoringModifiers."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
+
+        class FakeEvent:
+            def keyCode(self):
+                return 999
+
+            def charactersIgnoringModifiers(self):
+                return "X"
+
+        result = hotkeys_module._event_key_name_static(FakeEvent())
+        assert result == "x"
+
+
+class TestCheckKeyDown:
+    """Тесты _check_key_down — проверки совпадения keyDown с хоткеем."""
+
+    def _make_fake_app(self):
+        class FakeApp:
+            def __init__(self):
+                self.toggle_count = 0
+
+            def toggle(self):
+                self.toggle_count += 1
+
+        return FakeApp()
+
+    def _make_event(self, key_code, characters=""):
+        class FakeEvent:
+            def __init__(self, kc, chars):
+                self._key_code = kc
+                self._chars = chars
+
+            def keyCode(self):
+                return self._key_code
+
+            def charactersIgnoringModifiers(self):
+                return self._chars
+
+        return FakeEvent(key_code, characters)
+
+    def test_returns_true_when_hotkey_matches(self, app_module, monkeypatch):
+        """_check_key_down возвращает True, если все модификаторы нажаты и клавиша совпадает."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener.pressed_modifier_names = {"ctrl_l", "alt_l"}
+        event = self._make_event(17, "t")  # keycode 17 = T
+
+        result = listener._check_key_down(event)
+
+        assert result is True
+        assert fake_app.toggle_count == 1
+
+    def test_returns_false_when_modifiers_not_pressed(self, app_module, monkeypatch):
+        """_check_key_down возвращает False, если модификаторы не нажаты."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener.pressed_modifier_names = set()
+        event = self._make_event(17, "t")
+
+        result = listener._check_key_down(event)
+
+        assert result is False
+        assert fake_app.toggle_count == 0
+
+    def test_returns_false_when_wrong_key(self, app_module, monkeypatch):
+        """_check_key_down возвращает False, если клавиша не совпадает с хоткеем."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener.pressed_modifier_names = {"ctrl_l", "alt_l"}
+        event = self._make_event(0, "a")
+
+        result = listener._check_key_down(event)
+
+        assert result is False
+        assert fake_app.toggle_count == 0
+
+    def test_returns_false_when_already_triggered(self, app_module, monkeypatch):
+        """_check_key_down возвращает False, если хоткей уже сработал (защита от повтора)."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener.pressed_modifier_names = {"ctrl_l", "alt_l"}
+        listener.triggered = True
+        event = self._make_event(17, "t")
+
+        result = listener._check_key_down(event)
+
+        assert result is False
+        assert fake_app.toggle_count == 0
+
+    def test_returns_false_for_modifier_only_hotkey(self, app_module):
+        """Для хоткея без обычной клавиши _check_key_down всегда возвращает False."""
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt")
+        listener.pressed_modifier_names = {"ctrl_l", "alt_l"}
+
+        class FakeEvent:
+            def keyCode(self):
+                return 17
+
+            def charactersIgnoringModifiers(self):
+                return "t"
+
+        result = listener._check_key_down(FakeEvent())
+
+        assert result is False
+
+
+class TestCGEventTapCallback:
+    """Тесты CGEventTap callback — подавление символа хоткея."""
+
+    def _make_fake_app(self):
+        class FakeApp:
+            def __init__(self):
+                self.toggle_count = 0
+
+            def toggle(self):
+                self.toggle_count += 1
+
+        return FakeApp()
+
+    def test_suppresses_hotkey_event(self, app_module, monkeypatch):
+        """Callback должен вернуть None для подавления символа хоткея."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener.pressed_modifier_names = {"ctrl_l", "alt_l"}
+
+        class FakeNSEvent:
+            def keyCode(self):
+                return 17
+
+            def charactersIgnoringModifiers(self):
+                return "t"
+
+        # Mock _ns_event_from_cgevent to return our fake NSEvent
+        listener._ns_event_from_cgevent = lambda cg_event: FakeNSEvent()
+
+        import Quartz
+
+        result = listener._cgevent_tap_callback(None, Quartz.kCGEventKeyDown, "fake_cg_event", None)
+
+        assert result is None
+        assert fake_app.toggle_count == 1
+
+    def test_passes_through_non_hotkey_event(self, app_module, monkeypatch):
+        """Callback должен вернуть cg_event, если клавиша не является хоткеем."""
+        import hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda kc: None)
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener.pressed_modifier_names = set()  # no modifiers pressed
+
+        class FakeNSEvent:
+            def keyCode(self):
+                return 0
+
+            def charactersIgnoringModifiers(self):
+                return "a"
+
+        listener._ns_event_from_cgevent = lambda cg_event: FakeNSEvent()
+
+        import Quartz
+
+        sentinel = object()
+        result = listener._cgevent_tap_callback(None, Quartz.kCGEventKeyDown, sentinel, None)
+
+        assert result is sentinel
+
+    def test_reenables_tap_on_timeout(self, app_module, monkeypatch):
+        """При kCGEventTapDisabledByTimeout callback должен включить tap и вернуть cg_event."""
+        import Quartz as _quartz_mod  # noqa: N813
+
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener._event_tap = "fake_tap"
+
+        enabled_calls = []
+        monkeypatch.setattr(_quartz_mod, "CGEventTapEnable", lambda tap, enable: enabled_calls.append((tap, enable)))
+
+        sentinel = object()
+        result = listener._cgevent_tap_callback(None, _quartz_mod.kCGEventTapDisabledByTimeout, sentinel, None)
+        assert result is sentinel
+        assert enabled_calls == [("fake_tap", True)]
+
+    def test_returns_cgevent_when_ns_event_conversion_fails(self, app_module):
+        """Если конвертация CGEvent → NSEvent не удалась, возвращаем cg_event."""
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener._ns_event_from_cgevent = lambda cg_event: None
+
+        import Quartz
+
+        sentinel = object()
+        result = listener._cgevent_tap_callback(None, Quartz.kCGEventKeyDown, sentinel, None)
+
+        assert result is sentinel
 
 
 class TestModifierConstants:

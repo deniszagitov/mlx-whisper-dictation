@@ -18,6 +18,7 @@ class FakeRecorder:
         """Инициализирует фейковый рекордер."""
         self.started = False
         self.stopped = False
+        self.cancelled = False
         self.last_language = None
         self.input_device = None
         self.performance_mode = None
@@ -69,6 +70,10 @@ class FakeRecorder:
     def stop(self):
         """Имитирует остановку записи."""
         self.stopped = True
+
+    def cancel(self):
+        """Имитирует отмену записи."""
+        self.cancelled = True
 
 
 @pytest.fixture
@@ -735,3 +740,99 @@ class TestStatusBarHotkeys:
         app.change_llm_hotkey(None)
 
         assert (patched_app_module.DEFAULTS_KEY_LLM_HOTKEY, "ctrl+shift+l") in saved_values
+
+
+class TestCancelRecording:
+    """Тесты отмены записи через Escape и cancel_recording."""
+
+    def test_cancel_recording_resets_state_to_idle(self, make_app, patched_app_module):
+        """cancel_recording должен переключить состояние в idle."""
+        app, _ = make_app(languages=["ru"])
+        app.start_app(None)
+
+        app.cancel_recording()
+
+        assert app.state == patched_app_module.STATUS_IDLE
+        assert app.started is False
+
+    def test_cancel_recording_calls_recorder_cancel(self, make_app):
+        """cancel_recording должен вызвать recorder.cancel()."""
+        app, recorder = make_app(languages=["ru"])
+        app.start_app(None)
+
+        app.cancel_recording()
+
+        assert recorder.cancelled is True
+
+    def test_cancel_recording_ignored_when_not_started(self, make_app, patched_app_module):
+        """cancel_recording не должен ничего делать, если запись не запущена."""
+        app, recorder = make_app(languages=["ru"])
+
+        app.cancel_recording()
+
+        assert app.state == patched_app_module.STATUS_IDLE
+        assert recorder.cancelled is False
+
+    def test_cancel_recording_updates_menu_items(self, make_app):
+        """cancel_recording должен переключить доступность пунктов меню."""
+        app, _ = make_app(languages=["ru"])
+        app.start_app(None)
+
+        app.cancel_recording()
+
+        # После отмены «Начать запись» снова доступна, а «Остановить запись» — нет
+        start_item = app._menu_item("Начать запись")
+        stop_item = app._menu_item("Остановить запись")
+        assert start_item.callback is not None
+        assert stop_item.callback is None
+
+    def test_cancel_recording_sets_idle_title(self, make_app, patched_app_module):
+        """cancel_recording должен вернуть иконку ⏯ в строке меню."""
+        app, _ = make_app(languages=["ru"])
+        app.start_app(None)
+
+        app.cancel_recording()
+        app._refresh_title_and_status()
+
+        assert app.title == "⏯"
+
+    def test_escape_key_triggers_cancel_when_recording(self, make_app):
+        """Нажатие Escape должно отменить запись, если она запущена."""
+        app, recorder = make_app(languages=["ru"])
+        app.start_app(None)
+
+        class FakeEvent:
+            def keyCode(self):
+                return 53  # _KEYCODE_ESCAPE
+
+        app._handle_escape_key(FakeEvent())
+
+        assert app.started is False
+        assert recorder.cancelled is True
+
+    def test_escape_key_ignored_when_not_recording(self, make_app, patched_app_module):
+        """Нажатие Escape не должно ничего делать, если запись не запущена."""
+        app, recorder = make_app(languages=["ru"])
+
+        class FakeEvent:
+            def keyCode(self):
+                return 53  # _KEYCODE_ESCAPE
+
+        app._handle_escape_key(FakeEvent())
+
+        assert app.state == patched_app_module.STATUS_IDLE
+        assert recorder.cancelled is False
+
+    def test_non_escape_key_ignored(self, make_app):
+        """Нажатие не-Escape клавиши не должно отменять запись."""
+        app, recorder = make_app(languages=["ru"])
+        app.start_app(None)
+
+        class FakeEvent:
+            def keyCode(self):
+                return 0  # not Escape
+
+        app._handle_escape_key(FakeEvent())
+
+        assert app.started is True
+        assert recorder.cancelled is False

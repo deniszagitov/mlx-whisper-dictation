@@ -4,11 +4,13 @@
 режим двойного нажатия Command и модальный захват хоткея.
 """
 
+import ctypes
 import logging
 import time
 from typing import Any, cast
 
 import AppKit
+import Quartz
 from pynput import keyboard
 
 from config import DOUBLE_COMMAND_PRESS_INTERVAL, MIN_HOTKEY_PARTS
@@ -50,15 +52,136 @@ MODIFIER_FLAG_MASKS = {
     "cmd_r": 0x00100000,
 }
 
+_KEYCODE_ESCAPE = 53
+
 NAMED_KEYCODES_MAP = {
     36: "enter",
     48: "tab",
     49: "space",
     51: "backspace",
-    53: "esc",
+    _KEYCODE_ESCAPE: "esc",
 }
 
 MODIFIER_DISPLAY_ORDER = ["ctrl", "ctrl_l", "ctrl_r", "alt", "alt_l", "alt_r", "shift", "shift_l", "shift_r", "cmd", "cmd_l", "cmd_r"]
+
+# ---------------------------------------------------------------------------
+# Преобразование keycode → символ через Carbon UCKeyTranslate
+# ---------------------------------------------------------------------------
+# Используем TISCopyCurrentASCIICapableKeyboardInputSource + UCKeyTranslate,
+# чтобы определять символ клавиши по физическому положению (keycode),
+# а не по текущей раскладке.  Это позволяет хоткеям вроде
+# control+option+` срабатывать и в русской, и в английской раскладке.
+# ---------------------------------------------------------------------------
+
+try:
+    _carbon_lib = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Carbon.framework/Carbon")
+    _cf_lib = ctypes.cdll.LoadLibrary(
+        "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+    )
+
+    _tis_unicode_key_layout_data = ctypes.c_void_p.in_dll(
+        _carbon_lib, "kTISPropertyUnicodeKeyLayoutData"
+    )
+
+    _TISCopyCurrentASCIICapableKeyboardInputSource = (
+        _carbon_lib.TISCopyCurrentASCIICapableKeyboardInputSource
+    )
+    _TISCopyCurrentASCIICapableKeyboardInputSource.argtypes = []
+    _TISCopyCurrentASCIICapableKeyboardInputSource.restype = ctypes.c_void_p
+
+    _TISGetInputSourceProperty = _carbon_lib.TISGetInputSourceProperty
+    _TISGetInputSourceProperty.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    _TISGetInputSourceProperty.restype = ctypes.c_void_p
+
+    _CFDataGetBytePtr = _cf_lib.CFDataGetBytePtr
+    _CFDataGetBytePtr.argtypes = [ctypes.c_void_p]
+    _CFDataGetBytePtr.restype = ctypes.c_void_p
+
+    _CFRelease = _cf_lib.CFRelease
+    _CFRelease.argtypes = [ctypes.c_void_p]
+    _CFRelease.restype = None
+
+    _LMGetKbdType = _carbon_lib.LMGetKbdType
+    _LMGetKbdType.argtypes = []
+    _LMGetKbdType.restype = ctypes.c_uint8
+
+    _UCKeyTranslate = _carbon_lib.UCKeyTranslate
+    _UCKeyTranslate.argtypes = [
+        ctypes.c_void_p,                  # keyLayoutPtr
+        ctypes.c_uint16,                  # virtualKeyCode
+        ctypes.c_uint16,                  # keyAction (kUCKeyActionDown = 0)
+        ctypes.c_uint32,                  # modifierKeyState
+        ctypes.c_uint32,                  # keyboardType
+        ctypes.c_uint32,                  # keyTranslateOptions
+        ctypes.POINTER(ctypes.c_uint32),  # deadKeyState
+        ctypes.c_ulong,                   # maxStringLength
+        ctypes.POINTER(ctypes.c_ulong),   # actualStringLength
+        ctypes.c_wchar_p,                 # unicodeString
+    ]
+    _UCKeyTranslate.restype = ctypes.c_int32
+
+    _CARBON_AVAILABLE = True
+except Exception:
+    _CARBON_AVAILABLE = False
+    LOGGER.debug("⚠️ Carbon UCKeyTranslate недоступен, раскладко-независимый маппинг отключён")
+
+_UC_KEY_ACTION_DOWN = 0
+_UC_KEY_TRANSLATE_NO_DEAD_KEYS_BIT = 2
+
+
+def _keycode_to_char(keycode):
+    """Преобразует виртуальный keycode в символ через ASCII-совместимую раскладку.
+
+    Использует Carbon API TISCopyCurrentASCIICapableKeyboardInputSource
+    и UCKeyTranslate, чтобы получить символ, соответствующий физическому
+    положению клавиши, независимо от текущей активной раскладки.
+
+    Args:
+        keycode: Виртуальный keycode клавиши macOS.
+
+    Returns:
+        Символ в нижнем регистре или None при ошибке.
+    """
+    if not _CARBON_AVAILABLE:
+        return None
+    try:
+        source = _TISCopyCurrentASCIICapableKeyboardInputSource()
+        if not source:
+            return None
+        try:
+            layout_data_ref = _TISGetInputSourceProperty(
+                source, _tis_unicode_key_layout_data
+            )
+            if not layout_data_ref:
+                return None
+            layout_ptr = _CFDataGetBytePtr(layout_data_ref)
+            if not layout_ptr:
+                return None
+
+            dead_key_state = ctypes.c_uint32(0)
+            max_length = ctypes.c_ulong(4)
+            actual_length = ctypes.c_ulong(0)
+            unicode_buf = ctypes.create_unicode_buffer(4)
+
+            status = _UCKeyTranslate(
+                layout_ptr,
+                ctypes.c_uint16(keycode),
+                ctypes.c_uint16(_UC_KEY_ACTION_DOWN),
+                ctypes.c_uint32(0),
+                ctypes.c_uint32(_LMGetKbdType()),
+                ctypes.c_uint32(1 << _UC_KEY_TRANSLATE_NO_DEAD_KEYS_BIT),
+                ctypes.byref(dead_key_state),
+                max_length,
+                ctypes.byref(actual_length),
+                unicode_buf,
+            )
+            if status == 0 and actual_length.value > 0:
+                return unicode_buf.value[0].lower()
+        finally:
+            _CFRelease(source)
+    except Exception:
+        LOGGER.debug("⚠️ _keycode_to_char(%s) — ошибка Carbon API", keycode, exc_info=True)
+    return None
 
 
 def normalize_key_name(raw_name):
@@ -185,10 +308,20 @@ def format_hotkey_status(key_combination=None, *, use_double_cmd=False):
 
 
 def _event_key_name_static(event):
-    """Извлекает имя обычной клавиши из NSEvent."""
+    """Извлекает имя обычной клавиши из NSEvent.
+
+    Порядок определения:
+    1. NAMED_KEYCODES_MAP — именованные клавиши (enter, tab, space, esc, …).
+    2. _keycode_to_char() — символ по физическому keycode через Carbon API
+       (не зависит от текущей раскладки).
+    3. event.charactersIgnoringModifiers() — fallback, зависит от раскладки.
+    """
     key_code = int(event.keyCode())
     if key_code in NAMED_KEYCODES_MAP:
         return NAMED_KEYCODES_MAP[key_code]
+    char = _keycode_to_char(key_code)
+    if char:
+        return char
     characters = str(event.charactersIgnoringModifiers() or "").lower()
     return characters[:1] if characters else ""
 
@@ -335,16 +468,30 @@ class GlobalKeyListener:
         self.triggered = False
         self.flags_monitor = None
         self.key_down_monitor = None
+        self._event_tap = None
+        self._tap_source = None
+        self._tap_run_loop = None
         self.appkit = cast("Any", AppKit)
 
     def stop(self):
-        """Удаляет глобальные мониторы событий клавиатуры."""
+        """Удаляет глобальные мониторы событий клавиатуры и CGEventTap."""
         if self.flags_monitor is not None:
             self.appkit.NSEvent.removeMonitor_(self.flags_monitor)
             self.flags_monitor = None
         if self.key_down_monitor is not None:
             self.appkit.NSEvent.removeMonitor_(self.key_down_monitor)
             self.key_down_monitor = None
+        if self._event_tap is not None:
+            Quartz.CGEventTapEnable(self._event_tap, False)
+            if self._tap_source is not None and self._tap_run_loop is not None:
+                Quartz.CFRunLoopRemoveSource(
+                    self._tap_run_loop,
+                    self._tap_source,
+                    Quartz.kCFRunLoopCommonModes,
+                )
+            self._event_tap = None
+            self._tap_source = None
+            self._tap_run_loop = None
 
     def update_key_combination(self, key_combination):
         """Обновляет комбинацию клавиш без пересоздания listener."""
@@ -356,17 +503,51 @@ class GlobalKeyListener:
         self.triggered = False
 
     def start(self):
-        """Запускает глобальный монитор событий клавиатуры через AppKit."""
+        """Запускает глобальный монитор событий клавиатуры через AppKit.
+
+        Для keyDown-событий пытается создать CGEventTap, который позволяет
+        подавлять символ хоткея (не пропускать его в активное приложение).
+        Если CGEventTap недоступен (нет разрешения Accessibility), используется
+        обычный NSEvent-монитор (наблюдение без подавления).
+        """
         flags_mask = self.appkit.NSEventMaskFlagsChanged
-        key_down_mask = self.appkit.NSEventMaskKeyDown
         self.flags_monitor = self.appkit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
             flags_mask,
             self._handle_flags_changed,
         )
-        self.key_down_monitor = self.appkit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            key_down_mask,
-            self._handle_key_down,
+
+        # Пытаемся создать CGEventTap для подавления символа хоткея
+        tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap,
+            Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionDefault,
+            Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown),
+            self._cgevent_tap_callback,
+            None,
         )
+
+        if tap is not None:
+            self._event_tap = tap
+            self._tap_source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+            self._tap_run_loop = Quartz.CFRunLoopGetCurrent()
+            Quartz.CFRunLoopAddSource(
+                self._tap_run_loop,
+                self._tap_source,
+                Quartz.kCFRunLoopCommonModes,
+            )
+            Quartz.CGEventTapEnable(tap, True)
+            LOGGER.info("⌨️ CGEventTap создан — символ хоткея будет подавлен")
+        else:
+            # Нет разрешения Accessibility — фоллбэк на NSEvent монитор
+            LOGGER.warning(
+                "⌨️ Не удалось создать CGEventTap (нет разрешения Accessibility?). "
+                "Символ хоткея может просочиться в активное приложение."
+            )
+            key_down_mask = self.appkit.NSEventMaskKeyDown
+            self.key_down_monitor = self.appkit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+                key_down_mask,
+                self._handle_key_down_nsevent,
+            )
 
     def _required_modifiers_are_pressed(self):
         """Проверяет, зажаты ли нужные modifier-клавиши."""
@@ -421,18 +602,84 @@ class GlobalKeyListener:
         Args:
             event: Системное NSEvent.
         """
+        self._check_key_down(event)
+
+    def _check_key_down(self, event):
+        """Проверяет, соответствует ли keyDown-событие хоткею.
+
+        Args:
+            event: Системное NSEvent.
+
+        Returns:
+            True, если хоткей сработал и событие нужно подавить.
+        """
         if self.required_key is None:
             if not self._required_modifiers_are_pressed():
                 self.triggered = False
-            return
+            return False
 
         event_key_name = self._event_key_name(event)
         if self._required_modifiers_are_pressed() and hotkey_name_matches(self.required_key, event_key_name) and not self.triggered:
             LOGGER.info("⌨️ Сработал глобальный хоткей: %s", self.key_combination)
             self.triggered = True
             self.callback()
-        elif event_key_name != self.required_key:
+            return True
+        if event_key_name != self.required_key:
             self.triggered = False
+        return False
+
+    def _handle_key_down_nsevent(self, event):
+        """Обработчик keyDown для NSEvent-монитора (фоллбэк без подавления).
+
+        Args:
+            event: Системное NSEvent.
+        """
+        self._check_key_down(event)
+
+    def _cgevent_tap_callback(self, _proxy, event_type, cg_event, _refcon):
+        """Callback для CGEventTap — подавляет keyDown если это хоткей.
+
+        Args:
+            _proxy: CGEventTapProxy (не используется).
+            event_type: Тип CG-события.
+            cg_event: Объект CGEvent.
+            _refcon: Пользовательские данные (не используются).
+
+        Returns:
+            None если событие нужно подавить, иначе cg_event.
+        """
+        # Если tap был автоматически отключён из-за таймаута, включаем обратно
+        if event_type == Quartz.kCGEventTapDisabledByTimeout:
+            LOGGER.warning("⌨️ CGEventTap отключён по таймауту, включаем обратно")
+            if self._event_tap is not None:
+                Quartz.CGEventTapEnable(self._event_tap, True)
+            return cg_event
+
+        if event_type == Quartz.kCGEventTapDisabledByUserInput:
+            return cg_event
+
+        ns_event = self._ns_event_from_cgevent(cg_event)
+        if ns_event is None:
+            return cg_event
+
+        if self._check_key_down(ns_event):
+            # Подавляем событие — символ хоткея не попадёт в активное приложение
+            return None
+        return cg_event
+
+    def _ns_event_from_cgevent(self, cg_event):
+        """Конвертирует CGEvent в NSEvent.
+
+        Args:
+            cg_event: Объект CGEvent.
+
+        Returns:
+            NSEvent или None при ошибке конвертации.
+        """
+        try:
+            return self.appkit.NSEvent.eventWithCGEvent_(cg_event)
+        except Exception:
+            return None
 
 
 class MultiHotkeyListener:

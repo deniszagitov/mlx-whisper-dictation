@@ -10,6 +10,7 @@ import threading
 import time
 from typing import Any, cast
 
+import AppKit
 import rumps
 
 from audio import list_input_devices, microphone_menu_title
@@ -55,6 +56,7 @@ from config import (
     format_max_time_status,
 )
 from hotkeys import (
+    _KEYCODE_ESCAPE,
     GlobalKeyListener,
     capture_hotkey_combination,
     format_hotkey_status,
@@ -414,6 +416,13 @@ class StatusBarApp(rumps.App):
         self.status_timer = rumps.Timer(self.on_status_tick, 1)
         self.status_timer.start()
         self._refresh_selection_states()
+
+        # Глобальный монитор Escape для отмены записи
+        appkit = cast("Any", AppKit)
+        self._escape_monitor = appkit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            appkit.NSEventMaskKeyDown,
+            self._handle_escape_key,
+        )
 
     def _find_menu_item(self, container, title):
         """Рекурсивно ищет пункт меню по заголовку."""
@@ -1275,6 +1284,32 @@ class StatusBarApp(rumps.App):
         self.recorder.start_llm(self.current_language)
         self.start_time = time.time()
         self.on_status_tick(None)
+
+    def _handle_escape_key(self, event):
+        """Обрабатывает глобальное нажатие Escape для отмены записи.
+
+        Args:
+            event: Системное NSEvent (keyDown).
+        """
+        if int(event.keyCode()) == _KEYCODE_ESCAPE and self.started:
+            self.cancel_recording()
+
+    def cancel_recording(self):
+        """Отменяет активную запись без распознавания.
+
+        Останавливает запись, сбрасывает состояние в idle и обновляет меню.
+        Записанное аудио отбрасывается.
+        """
+        if not self.started:
+            return
+
+        LOGGER.info("❌ Запись отменена пользователем (Escape)")
+        self.started = False
+        self.state = STATUS_IDLE
+        self._refresh_title_and_status()
+        self._menu_item("Остановить запись").set_callback(None)
+        self._menu_item("Начать запись").set_callback(self.start_app)
+        self.recorder.cancel()
 
     def _download_llm_model(self, _):
         """Запускает загрузку LLM-модели в фоновом потоке с индикатором прогресса."""
