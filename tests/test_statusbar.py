@@ -836,3 +836,138 @@ class TestCancelRecording:
 
         assert app.started is True
         assert recorder.cancelled is False
+
+
+class TestRecordingOverlay:
+    """Тесты RecordingOverlay — всплывающего индикатора записи у курсора."""
+
+    def test_initial_state_not_visible(self, patched_app_module):
+        """После создания overlay не показан."""
+        overlay = patched_app_module.RecordingOverlay()
+        assert overlay.is_visible is False
+        assert overlay._window is None
+        assert overlay._label is None
+
+    def test_hide_when_not_visible(self, patched_app_module):
+        """Повторный hide без show не вызывает ошибок."""
+        overlay = patched_app_module.RecordingOverlay()
+        overlay.hide()
+        assert overlay.is_visible is False
+
+    def test_update_time_without_label(self, patched_app_module):
+        """update_time без показа окна не вызывает ошибок."""
+        overlay = patched_app_module.RecordingOverlay()
+        overlay.update_time(42)
+        assert overlay.is_visible is False
+
+
+class TestRecordingOverlayIntegration:
+    """Тесты интеграции RecordingOverlay в StatusBarApp."""
+
+    def test_overlay_initialized_in_app(self, make_app, patched_app_module):
+        """StatusBarApp создаёт экземпляр RecordingOverlay."""
+        app, _ = make_app(languages=["ru"])
+        assert hasattr(app, "recording_overlay")
+        assert isinstance(app.recording_overlay, patched_app_module.RecordingOverlay)
+
+    def test_overlay_enabled_by_default(self, make_app):
+        """По умолчанию индикатор записи у курсора включён."""
+        app, _ = make_app(languages=["ru"])
+        assert app.show_recording_overlay is True
+        assert app.recording_overlay_item.state == 1
+
+    def test_overlay_menu_item_exists(self, make_app):
+        """В меню есть пункт для переключения индикатора записи."""
+        app, _ = make_app(languages=["ru"])
+        assert "🎯 Индикатор записи у курсора" in app.recording_overlay_item.title
+
+    def test_toggle_recording_overlay_off(self, make_app, monkeypatch):
+        """toggle_recording_overlay выключает индикатор."""
+        import config as config_module
+
+        saved = {}
+        monkeypatch.setattr(ui_module, "_save_defaults_bool", lambda k, v: saved.update({k: v}))
+
+        app, _ = make_app(languages=["ru"])
+        assert app.show_recording_overlay is True
+
+        app.toggle_recording_overlay(app.recording_overlay_item)
+
+        assert app.show_recording_overlay is False
+        assert app.recording_overlay_item.state == 0
+        assert saved.get(config_module.DEFAULTS_KEY_RECORDING_OVERLAY) is False
+
+    def test_toggle_recording_overlay_on(self, make_app, monkeypatch):
+        """toggle_recording_overlay включает индикатор обратно."""
+        import config as config_module
+
+        saved = {}
+        monkeypatch.setattr(config_module, "_save_defaults_bool", lambda k, v: saved.update({k: v}))
+
+        app, _ = make_app(languages=["ru"])
+        app.show_recording_overlay = False
+
+        app.toggle_recording_overlay(app.recording_overlay_item)
+
+        assert app.show_recording_overlay is True
+        assert app.recording_overlay_item.state == 1
+
+    def test_start_app_shows_overlay_when_enabled(self, make_app, monkeypatch):
+        """start_app вызывает overlay.show(), когда индикатор включён."""
+        app, _ = make_app(languages=["ru"])
+        app.show_recording_overlay = True
+
+        show_called = []
+        monkeypatch.setattr(app.recording_overlay, "show", lambda: show_called.append(True))
+
+        app.start_app(None)
+
+        assert len(show_called) == 1
+
+    def test_start_app_does_not_show_overlay_when_disabled(self, make_app, monkeypatch):
+        """start_app не вызывает overlay.show(), когда индикатор выключен."""
+        app, _ = make_app(languages=["ru"])
+        app.show_recording_overlay = False
+
+        show_called = []
+        monkeypatch.setattr(app.recording_overlay, "show", lambda: show_called.append(True))
+
+        app.start_app(None)
+
+        assert len(show_called) == 0
+
+    def test_stop_app_hides_overlay(self, make_app, monkeypatch):
+        """stop_app вызывает overlay.hide()."""
+        app, _ = make_app(languages=["ru"])
+        app.start_app(None)
+
+        hide_called = []
+        monkeypatch.setattr(app.recording_overlay, "hide", lambda: hide_called.append(True))
+
+        app.stop_app(None)
+
+        assert len(hide_called) == 1
+
+    def test_cancel_recording_hides_overlay(self, make_app, monkeypatch):
+        """cancel_recording вызывает overlay.hide()."""
+        app, _ = make_app(languages=["ru"])
+        app.start_app(None)
+
+        hide_called = []
+        monkeypatch.setattr(app.recording_overlay, "hide", lambda: hide_called.append(True))
+
+        app.cancel_recording()
+
+        assert len(hide_called) == 1
+
+    def test_on_status_tick_updates_overlay_time(self, make_app, monkeypatch):
+        """on_status_tick вызывает overlay.update_time() при записи."""
+        app, _ = make_app(languages=["ru"])
+        app.start_app(None)
+
+        updated_times = []
+        monkeypatch.setattr(app.recording_overlay, "update_time", updated_times.append)
+
+        app.on_status_tick(None)
+
+        assert len(updated_times) == 1

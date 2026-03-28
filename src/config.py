@@ -59,6 +59,7 @@ DEFAULTS_KEY_LLM_HOTKEY = "llm_hotkey"
 DEFAULTS_KEY_LLM_PROMPT = "llm_prompt_preset"
 DEFAULTS_KEY_LLM_CLIPBOARD = "llm_clipboard_enabled"
 DEFAULTS_KEY_RECORDING_NOTIFICATION = "show_recording_notification"
+DEFAULTS_KEY_RECORDING_OVERLAY = "recording_overlay"
 DEFAULTS_KEY_PERFORMANCE_MODE = "performance_mode"
 DEFAULTS_KEY_MICROPHONE_PROFILES = "microphone_profiles"
 MAX_MICROPHONE_PROFILES = 10

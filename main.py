@@ -41,6 +41,7 @@ from config import (
     DEFAULTS_KEY_PRIMARY_HOTKEY,
     DEFAULTS_KEY_PRIVATE_MODE,
     DEFAULTS_KEY_RECORDING_NOTIFICATION,
+    DEFAULTS_KEY_RECORDING_OVERLAY,
     DEFAULTS_KEY_SECONDARY_HOTKEY,
     DEFAULTS_KEY_TOTAL_TOKENS,
     HISTORY_DISPLAY_LENGTH,
@@ -98,7 +99,7 @@ from permissions import (
     warn_missing_input_monitoring_permission,
 )
 from transcriber import SpeechTranscriber
-from ui import StatusBarApp, _load_microphone_profiles
+from ui import RecordingOverlay, StatusBarApp, _load_microphone_profiles
 
 LOGGER = logging.getLogger(__name__)
 
