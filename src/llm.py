@@ -8,7 +8,7 @@ import gc
 import logging
 import re
 
-from .config import DEFAULT_LLM_MODEL_NAME, DOWNLOAD_COMPLETE_PCT, LLM_MAX_TOKENS, LLM_RESPONSE_CHAR_LIMIT
+from .config import Config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ def _normalize_response_whitespace(text):
     return collapsed.strip("'\" ")
 
 
-def _truncate_response(text, limit=LLM_RESPONSE_CHAR_LIMIT):
+def _truncate_response(text, limit=Config.LLM_RESPONSE_CHAR_LIMIT):
     """Обрезает ответ до лимита, стараясь сохранить целое предложение."""
     if len(text) <= limit:
         return text
@@ -163,7 +163,7 @@ class LLMProcessor:
         download_progress_callback: Callback для обновления UI прогресса загрузки.
     """
 
-    def __init__(self, model_name=DEFAULT_LLM_MODEL_NAME):
+    def __init__(self, model_name=Config.DEFAULT_LLM_MODEL_NAME):
         """Создаёт LLM-процессор.
 
         Args:
@@ -248,7 +248,7 @@ class LLMProcessor:
                 """Обновляет позицию прогресса."""
                 self.n += n
                 if callback is not None and self.total and self.total > 0:
-                    pct = min(self.n / self.total * DOWNLOAD_COMPLETE_PCT, DOWNLOAD_COMPLETE_PCT)
+                    pct = min(self.n / self.total * Config.DOWNLOAD_COMPLETE_PCT, Config.DOWNLOAD_COMPLETE_PCT)
                     callback(self.desc, pct, self.total)
 
             def close(self):
@@ -272,7 +272,7 @@ class LLMProcessor:
 
         LOGGER.info("✅ Модель загружена: %s", self.model_name)
         if callback is not None:
-            callback("", DOWNLOAD_COMPLETE_PCT, 0)
+            callback("", Config.DOWNLOAD_COMPLETE_PCT, 0)
 
     def _count_tokens(self, tokenizer, text):
         """Возвращает количество токенов для текста через tokenizer.encode."""
@@ -333,8 +333,8 @@ class LLMProcessor:
                 prompt = f"{system_prompt}\n\nПользователь: {text}\nОтвет:"
 
             prompt_tokens = self._count_tokens(tokenizer, prompt)
-            LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", LLM_MAX_TOKENS)
-            raw_response = generate(model, tokenizer, prompt=prompt, max_tokens=LLM_MAX_TOKENS)
+            LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", Config.LLM_MAX_TOKENS)
+            raw_response = generate(model, tokenizer, prompt=prompt, max_tokens=Config.LLM_MAX_TOKENS)
             LOGGER.info("🤖 Сырой ответ LLM от модели: длина=%d, текст=%r", len(raw_response), raw_response)
             response = sanitize_llm_response(raw_response)
             response_tokens = self._count_tokens(tokenizer, response)

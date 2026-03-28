@@ -13,7 +13,7 @@ import AppKit
 import Quartz
 from pynput import keyboard
 
-from .config import DOUBLE_COMMAND_PRESS_INTERVAL, MIN_HOTKEY_PARTS
+from .config import Config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ def normalize_key_combination(key_combination):
         ValueError: Если в комбинации меньше двух клавиш.
     """
     parts = [normalize_key_name(part) for part in key_combination.split("+") if part.strip()]
-    if len(parts) < MIN_HOTKEY_PARTS:
+    if len(parts) < Config.MIN_HOTKEY_PARTS:
         raise ValueError("Комбинация клавиш должна содержать как минимум две клавиши.")
     return "+".join(parts)
 
@@ -432,7 +432,7 @@ def capture_hotkey_combination(title, message, current_combination=""):
 
     if captured_parts:
         confirmed_combination[0] = "+".join(captured_parts)
-    elif pressed_modifiers and len(pressed_modifiers) >= MIN_HOTKEY_PARTS:
+    elif pressed_modifiers and len(pressed_modifiers) >= Config.MIN_HOTKEY_PARTS:
         sorted_mods = sorted(pressed_modifiers, key=lambda m: MODIFIER_DISPLAY_ORDER.index(m) if m in MODIFIER_DISPLAY_ORDER else 99)
         confirmed_combination[0] = "+".join(sorted_mods)
 
@@ -751,7 +751,7 @@ class DoubleCommandKeyListener:
         is_listening = self.app.started
         if key == self.key:
             current_time = time.time()
-            if is_listening or current_time - self.last_press_time < DOUBLE_COMMAND_PRESS_INTERVAL:
+            if is_listening or current_time - self.last_press_time < Config.DOUBLE_COMMAND_PRESS_INTERVAL:
                 self.app.toggle()
             self.last_press_time = current_time
 

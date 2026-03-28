@@ -7,6 +7,7 @@ import os
 import numpy as np
 import pytest
 from src import diagnostics
+from src.config import Config
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -139,7 +140,7 @@ def test_setup_logging_creates_stdout_and_stderr_handlers(tmp_path, monkeypatch)
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
 
-    monkeypatch.setattr(diagnostics, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(Config, "LOG_DIR", tmp_path)
 
     diagnostics.setup_logging()
 

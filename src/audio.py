@@ -10,7 +10,7 @@ import threading
 import numpy as np
 import pyaudio
 
-from .config import STATUS_IDLE, STATUS_LLM_PROCESSING, STATUS_TRANSCRIBING
+from .config import Config
 from .permissions import notify_user
 
 LOGGER = logging.getLogger(__name__)
@@ -247,13 +247,13 @@ class Recorder:
 
         if not frames:
             LOGGER.warning("⚠️ Запись остановлена без захваченных аудиофреймов")
-            self._set_status_if_current(request_id, STATUS_IDLE)
+            self._set_status_if_current(request_id, Config.STATUS_IDLE)
             return
 
         if self.cancelled:
             self.cancelled = False
             LOGGER.info("❌ Запись отменена, аудио отброшено (фреймов=%s)", len(frames))
-            self._set_status_if_current(request_id, STATUS_IDLE)
+            self._set_status_if_current(request_id, Config.STATUS_IDLE)
             return
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
@@ -264,9 +264,9 @@ class Recorder:
             len(audio_data_fp32),
             len(audio_data_fp32) / 16000,
         )
-        self._set_status_if_current(request_id, STATUS_TRANSCRIBING)
+        self._set_status_if_current(request_id, Config.STATUS_TRANSCRIBING)
         self.transcriber.transcribe(audio_data_fp32, language)
-        self._set_status_if_current(request_id, STATUS_IDLE)
+        self._set_status_if_current(request_id, Config.STATUS_IDLE)
 
     def _record_llm_impl(self, language, request_id):
         """Выполняет запись и передаёт аудио в LLM-пайплайн.
@@ -313,7 +313,7 @@ class Recorder:
 
         if not frames:
             LOGGER.warning("⚠️ Запись остановлена без аудиофреймов (LLM-пайплайн)")
-            self._set_status_if_current(request_id, STATUS_IDLE)
+            self._set_status_if_current(request_id, Config.STATUS_IDLE)
             return
 
         audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
@@ -323,13 +323,13 @@ class Recorder:
             len(frames),
             len(audio_data_fp32) / 16000,
         )
-        self._set_status_if_current(request_id, STATUS_TRANSCRIBING)
+        self._set_status_if_current(request_id, Config.STATUS_TRANSCRIBING)
         self.transcriber.transcribe_for_llm(
             audio_data_fp32,
             language,
             llm_processor=self.llm_processor,
             system_prompt=self.llm_system_prompt,
-            on_llm_processing_started=lambda: self._set_status_if_current(request_id, STATUS_LLM_PROCESSING),
+            on_llm_processing_started=lambda: self._set_status_if_current(request_id, Config.STATUS_LLM_PROCESSING),
             should_deliver_result=lambda: self.should_deliver_llm_result(request_id),
         )
-        self._set_status_if_current(request_id, STATUS_IDLE)
+        self._set_status_if_current(request_id, Config.STATUS_IDLE)

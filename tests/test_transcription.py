@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 import src.transcriber as transcriber_module
+from src.config import Config
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -18,7 +19,7 @@ class TestTranscriptionIntegration:
     def test_run_transcription_returns_expected_shape(self, app_module):
         """Интеграция с моделью должна возвращать словарь с text/language/segments."""
         diagnostics_store = app_module.DiagnosticsStore(enabled=False)
-        transcriber = app_module.SpeechTranscriber(app_module.DEFAULT_MODEL_NAME, diagnostics_store=diagnostics_store)
+        transcriber = app_module.SpeechTranscriber(Config.DEFAULT_MODEL_NAME, diagnostics_store=diagnostics_store)
 
         result = transcriber._run_transcription(make_audio(seconds=1.0, amplitude=0.0), "ru")
 

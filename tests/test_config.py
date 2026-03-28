@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from src import config
+from src.config import Defaults
 
 
 class FakeDefaults:
@@ -50,7 +51,8 @@ def test_load_defaults_bool_returns_fallback_when_key_missing(monkeypatch):
     fake_defaults = FakeDefaults(object_value=None)
     install_defaults(monkeypatch, fake_defaults)
 
-    assert config._load_defaults_bool("missing", True) is True
+    defaults = Defaults.__new__(Defaults)
+    assert defaults.load_bool("missing", True) is True
 
 
 def test_load_defaults_bool_reads_saved_value(monkeypatch):
@@ -58,7 +60,8 @@ def test_load_defaults_bool_reads_saved_value(monkeypatch):
     fake_defaults = FakeDefaults(object_value="exists", bool_value=False)
     install_defaults(monkeypatch, fake_defaults)
 
-    assert config._load_defaults_bool("saved", True) is False
+    defaults = Defaults.__new__(Defaults)
+    assert defaults.load_bool("saved", True) is False
 
 
 def test_save_defaults_bool_persists_boolean(monkeypatch):
@@ -66,7 +69,8 @@ def test_save_defaults_bool_persists_boolean(monkeypatch):
     fake_defaults = FakeDefaults()
     install_defaults(monkeypatch, fake_defaults)
 
-    config._save_defaults_bool("flag", 1)
+    defaults = Defaults.__new__(Defaults)
+    defaults.save_bool("flag", 1)
 
     assert fake_defaults.saved_bool is True
 
@@ -76,7 +80,8 @@ def test_load_defaults_list_returns_empty_list_when_missing(monkeypatch):
     fake_defaults = FakeDefaults(array_value=None)
     install_defaults(monkeypatch, fake_defaults)
 
-    assert config._load_defaults_list("history") == []
+    defaults = Defaults.__new__(Defaults)
+    assert defaults.load_list("history") == []
 
 
 def test_load_defaults_list_normalizes_items_to_strings(monkeypatch):
@@ -84,7 +89,8 @@ def test_load_defaults_list_normalizes_items_to_strings(monkeypatch):
     fake_defaults = FakeDefaults(array_value=[1, "два", 3])
     install_defaults(monkeypatch, fake_defaults)
 
-    assert config._load_defaults_list("history") == ["1", "два", "3"]
+    defaults = Defaults.__new__(Defaults)
+    assert defaults.load_list("history") == ["1", "два", "3"]
 
 
 def test_save_defaults_list_stores_copy(monkeypatch):
@@ -92,6 +98,7 @@ def test_save_defaults_list_stores_copy(monkeypatch):
     fake_defaults = FakeDefaults()
     install_defaults(monkeypatch, fake_defaults)
 
-    config._save_defaults_list("history", ("a", "b"))
+    defaults = Defaults.__new__(Defaults)
+    defaults.save_list("history", ("a", "b"))
 
     assert fake_defaults.saved_object == ["a", "b"]

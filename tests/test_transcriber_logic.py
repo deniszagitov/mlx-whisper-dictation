@@ -2,6 +2,7 @@
 
 import numpy as np
 import src.transcriber as transcriber_module
+from src.config import Config
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -12,7 +13,7 @@ def make_audio(seconds=1.0, amplitude=0.01):
 
 def make_transcriber(app_module, diagnostics_enabled=False):
     """Создает transcriber с управляемым diagnostics store для тестов."""
-    diagnostics_store = app_module.DiagnosticsStore(root_dir=app_module.LOG_DIR, enabled=diagnostics_enabled)
+    diagnostics_store = app_module.DiagnosticsStore(root_dir=Config.LOG_DIR, enabled=diagnostics_enabled)
     return app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
 
 
@@ -189,7 +190,7 @@ def test_transcribe_accumulates_tokens_from_segments(app_module, monkeypatch):
     )
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_type_text_via_cgevent", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
     monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
@@ -220,7 +221,7 @@ def test_transcribe_for_llm_accumulates_whisper_and_llm_tokens(app_module, monke
     )
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь текст")
@@ -252,7 +253,7 @@ def test_transcribe_for_llm_passes_clipboard_as_context(app_module, monkeypatch)
     monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "Hello world")
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь текст")
@@ -284,7 +285,7 @@ def test_transcribe_for_llm_passes_none_context_when_clipboard_empty(app_module,
     monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь")
@@ -318,7 +319,7 @@ def test_transcribe_for_llm_disables_clipboard_io_when_option_off(app_module, mo
     monkeypatch.setattr(transcriber, "_read_clipboard", lambda: read_calls.append(True) or "Текст из буфера")
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
 
     transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
@@ -353,7 +354,7 @@ def test_transcribe_for_llm_skips_clipboard_for_unrelated_request(app_module, mo
     monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "технические логи LLM")
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
@@ -383,7 +384,7 @@ def test_transcribe_for_llm_copies_clean_answer_and_notifies(app_module, monkeyp
     monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
 
     transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь")
@@ -415,7 +416,7 @@ def test_transcribe_for_llm_defers_stale_response_when_newer_request_exists(app_
     monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
     monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
 
     transcriber.transcribe_for_llm(

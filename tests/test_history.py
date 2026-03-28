@@ -4,11 +4,12 @@ import sys
 
 import pytest
 import src.transcriber as transcriber_module
+from src.config import Config
 
 
 def make_transcriber(app_module, diagnostics_enabled=False):
     """Создает transcriber с отключённой диагностикой для тестов."""
-    diagnostics_store = app_module.DiagnosticsStore(root_dir=app_module.LOG_DIR, enabled=diagnostics_enabled)
+    diagnostics_store = app_module.DiagnosticsStore(root_dir=Config.LOG_DIR, enabled=diagnostics_enabled)
     return app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
 
 
@@ -80,9 +81,9 @@ class TestAddToHistory:
     def test_private_mode_starts_with_empty_history(self, app_module, monkeypatch):
         """При активном private mode история не должна подниматься из defaults."""
         monkeypatch.setattr(
-            transcriber_module,
-            "_load_defaults_bool",
-            lambda key, fallback: True if key == app_module.DEFAULTS_KEY_PRIVATE_MODE else fallback,
+            transcriber_module.defaults,
+            "load_bool",
+            lambda key, fallback: True if key == Config.DEFAULTS_KEY_PRIVATE_MODE else fallback,
         )
         monkeypatch.setattr(
             transcriber_module,
@@ -103,7 +104,7 @@ class TestAddToHistory:
         saved_flags = []
         transcriber.history_callback = lambda: callback_calls.append(True)
 
-        monkeypatch.setattr(transcriber_module, "_save_defaults_bool", lambda key, value: saved_flags.append((key, value)))
+        monkeypatch.setattr(transcriber_module.defaults, "save_bool", lambda key, value: saved_flags.append((key, value)))
         monkeypatch.setattr(
             transcriber_module,
             "_load_history_records",
@@ -118,8 +119,8 @@ class TestAddToHistory:
 
         assert transcriber.history == ["обычная история"]
         assert saved_flags == [
-            (app_module.DEFAULTS_KEY_PRIVATE_MODE, True),
-            (app_module.DEFAULTS_KEY_PRIVATE_MODE, False),
+            (Config.DEFAULTS_KEY_PRIVATE_MODE, True),
+            (Config.DEFAULTS_KEY_PRIVATE_MODE, False),
         ]
         assert callback_calls == [True, True]
 
@@ -268,19 +269,19 @@ class TestTokenUsage:
         callback_calls = []
         transcriber.token_usage_callback = lambda: callback_calls.append(True)
 
-        monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda key, value: saved.append((key, value)))
+        monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda key, value: saved.append((key, value)))
 
         transcriber._add_token_usage(7)
 
         assert transcriber.total_tokens == 17
-        assert saved == [(app_module.DEFAULTS_KEY_TOTAL_TOKENS, 17)]
+        assert saved == [(Config.DEFAULTS_KEY_TOTAL_TOKENS, 17)]
         assert callback_calls == [True]
 
     def test_add_token_usage_ignores_zero_and_negative(self, app_module, monkeypatch):
         """Нулевые и отрицательные значения не меняют счётчик."""
         transcriber = make_transcriber(app_module)
         transcriber.total_tokens = 10
-        monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_: pytest.fail("save should not be called"))
+        monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_: pytest.fail("save should not be called"))
 
         transcriber._add_token_usage(0)
         transcriber._add_token_usage(-5)
@@ -328,18 +329,18 @@ class TestFormatHistoryTitle:
     def test_long_text_truncated_with_ellipsis(self, app_module, monkeypatch):
         """Длинный текст обрезается до HISTORY_DISPLAY_LENGTH с многоточием."""
         fake = self._make_app_instance(app_module, monkeypatch)
-        long_text = "А" * (app_module.HISTORY_DISPLAY_LENGTH + 50)
+        long_text = "А" * (Config.HISTORY_DISPLAY_LENGTH + 50)
 
         result = fake._format_history_title(long_text)
 
-        assert len(result) == app_module.HISTORY_DISPLAY_LENGTH + 1  # +1 для "…"
+        assert len(result) == Config.HISTORY_DISPLAY_LENGTH + 1  # +1 для "…"
         assert result.endswith("…")
-        assert result[:-1] == "А" * app_module.HISTORY_DISPLAY_LENGTH
+        assert result[:-1] == "А" * Config.HISTORY_DISPLAY_LENGTH
 
     def test_exact_length_no_truncation(self, app_module, monkeypatch):
         """Текст ровно HISTORY_DISPLAY_LENGTH символов не обрезается."""
         fake = self._make_app_instance(app_module, monkeypatch)
-        exact_text = "Б" * app_module.HISTORY_DISPLAY_LENGTH
+        exact_text = "Б" * Config.HISTORY_DISPLAY_LENGTH
 
         result = fake._format_history_title(exact_text)
 

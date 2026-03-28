@@ -8,6 +8,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from src.config import Config
 
 
 class TestParseKeyCombination:
@@ -174,15 +175,15 @@ class TestFormatMaxTimeStatus:
 
     def test_none_is_no_limit(self, app_module):
         """None должен стать 'без лимита'."""
-        assert app_module.format_max_time_status(None) == "без лимита"
+        assert Config.format_max_time_status(None) == "без лимита"
 
     def test_integer_seconds(self, app_module):
         """Целые секунды должны отображаться без дробной части."""
-        assert app_module.format_max_time_status(30) == "30 с"
+        assert Config.format_max_time_status(30) == "30 с"
 
     def test_float_seconds(self, app_module):
         """Дробные секунды должны отображаться с дробной частью."""
-        assert app_module.format_max_time_status(10.5) == "10.5 с"
+        assert Config.format_max_time_status(10.5) == "10.5 с"
 
 
 class TestParseArgs:
@@ -308,12 +309,12 @@ class TestParseArgs:
         class FakeDefaults:
             def __init__(self):
                 self.values = {
-                    app_module.DEFAULTS_KEY_MODEL: "mlx-community/whisper-turbo",
-                    app_module.DEFAULTS_KEY_LANGUAGE: "en",
-                    app_module.DEFAULTS_KEY_MAX_TIME: "60",
-                    app_module.DEFAULTS_KEY_PRIMARY_HOTKEY: "ctrl+alt+d",
-                    app_module.DEFAULTS_KEY_SECONDARY_HOTKEY: "",
-                    app_module.DEFAULTS_KEY_LLM_HOTKEY: "ctrl+shift+l",
+                    Config.DEFAULTS_KEY_MODEL: "mlx-community/whisper-turbo",
+                    Config.DEFAULTS_KEY_LANGUAGE: "en",
+                    Config.DEFAULTS_KEY_MAX_TIME: "60",
+                    Config.DEFAULTS_KEY_PRIMARY_HOTKEY: "ctrl+alt+d",
+                    Config.DEFAULTS_KEY_SECONDARY_HOTKEY: "",
+                    Config.DEFAULTS_KEY_LLM_HOTKEY: "ctrl+shift+l",
                 }
 
             def objectForKey_(self, key):

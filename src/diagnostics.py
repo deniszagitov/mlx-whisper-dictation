@@ -14,14 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import (
-    ARTIFACT_TTL_SECONDS,
-    HALLUCINATION_RMS_THRESHOLD,
-    KNOWN_HALLUCINATIONS,
-    LOG_DIR,
-    MAX_DEBUG_ARTIFACTS,
-    SILENCE_RMS_THRESHOLD,
-)
+from .config import Config
 
 
 class MaxLevelFilter(logging.Filter):
@@ -52,7 +45,7 @@ def _cleanup_expired_files(directory, pattern, retention_seconds, *, include_cur
 class DailyRetentionFileHandler(logging.handlers.TimedRotatingFileHandler):
     """Ротирует лог-файл раз в 24 часа и удаляет старые файлы."""
 
-    def __init__(self, filename, *, retention_seconds=ARTIFACT_TTL_SECONDS, **kwargs):
+    def __init__(self, filename, *, retention_seconds=Config.ARTIFACT_TTL_SECONDS, **kwargs):
         self.retention_seconds = retention_seconds
         super().__init__(filename, when="H", interval=24, backupCount=0, **kwargs)
         self._cleanup_expired_log_family()
@@ -70,8 +63,8 @@ class DailyRetentionFileHandler(logging.handlers.TimedRotatingFileHandler):
 
 def setup_logging():
     """Настраивает консольное и файловое логирование приложения."""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    _cleanup_expired_files(LOG_DIR, "*.log*", ARTIFACT_TTL_SECONDS, include_current_file=True)
+    Config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _cleanup_expired_files(Config.LOG_DIR, "*.log*", Config.ARTIFACT_TTL_SECONDS, include_current_file=True)
 
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     root_logger = logging.getLogger()
@@ -83,7 +76,7 @@ def setup_logging():
     console_handler.setFormatter(formatter)
 
     stdout_handler = DailyRetentionFileHandler(
-        LOG_DIR / "stdout.log",
+        Config.LOG_DIR / "stdout.log",
         encoding="utf-8",
     )
     stdout_handler.setLevel(logging.INFO)
@@ -91,7 +84,7 @@ def setup_logging():
     stdout_handler.setFormatter(formatter)
 
     stderr_handler = DailyRetentionFileHandler(
-        LOG_DIR / "stderr.log",
+        Config.LOG_DIR / "stderr.log",
         encoding="utf-8",
     )
     stderr_handler.setLevel(logging.ERROR)
@@ -104,13 +97,19 @@ def setup_logging():
 
 def looks_like_hallucination(text):
     """Проверяет, похож ли результат на типичную галлюцинацию Whisper."""
-    return text.strip().lower() in KNOWN_HALLUCINATIONS
+    return text.strip().lower() in Config.KNOWN_HALLUCINATIONS
 
 
 class DiagnosticsStore:
     """Изолирует сохранение диагностических артефактов от основного runtime-кода."""
 
-    def __init__(self, root_dir=LOG_DIR, enabled=True, max_artifacts=MAX_DEBUG_ARTIFACTS, retention_seconds=ARTIFACT_TTL_SECONDS):
+    def __init__(
+        self,
+        root_dir=Config.LOG_DIR,
+        enabled=True,
+        max_artifacts=Config.MAX_DEBUG_ARTIFACTS,
+        retention_seconds=Config.ARTIFACT_TTL_SECONDS,
+    ):
         """Создает хранилище диагностических файлов.
 
         Args:
@@ -154,8 +153,8 @@ class DiagnosticsStore:
             "duration_seconds": audio_duration_seconds,
             "rms_energy": rms_energy,
             "peak_amplitude": peak_amplitude,
-            "silence_threshold": SILENCE_RMS_THRESHOLD,
-            "hallucination_threshold": HALLUCINATION_RMS_THRESHOLD,
+            "silence_threshold": Config.SILENCE_RMS_THRESHOLD,
+            "hallucination_threshold": Config.HALLUCINATION_RMS_THRESHOLD,
             "sample_rate": 16000,
             "samples": len(audio_data),
             "first_samples": audio_data[:16].tolist(),

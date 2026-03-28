@@ -4,11 +4,12 @@ import sys
 
 import pytest
 import src.transcriber as transcriber_module
+from src.config import Config
 
 
 def make_transcriber(app_module, diagnostics_enabled=False):
     """Создает transcriber с отключённой диагностикой для тестов."""
-    diagnostics_store = app_module.DiagnosticsStore(root_dir=app_module.LOG_DIR, enabled=diagnostics_enabled)
+    diagnostics_store = app_module.DiagnosticsStore(root_dir=Config.LOG_DIR, enabled=diagnostics_enabled)
     return app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
 
 
@@ -63,26 +64,26 @@ class TestCGEventUnicode:
         assert posted[1][1]["is_key_down"] is False
         assert posted[1][1]["unicode"] == "Привет"
         # Между чанками задержки нет — чанк один
-        chunk_delays = [s for s in sleeps if s == app_module.CGEVENT_CHUNK_DELAY]
+        chunk_delays = [s for s in sleeps if s == Config.CGEVENT_CHUNK_DELAY]
         assert chunk_delays == []
 
     def test_exact_chunk_size_no_inter_delay(self, app_module, monkeypatch):
         """Текст длиной ровно CGEVENT_UNICODE_CHUNK_SIZE — один чанк, без межчанковых задержек."""
         transcriber = make_transcriber(app_module)
         posted, sleeps = self._setup_quartz_mocks(app_module, monkeypatch)
-        text = "A" * app_module.CGEVENT_UNICODE_CHUNK_SIZE
+        text = "A" * Config.CGEVENT_UNICODE_CHUNK_SIZE
 
         transcriber._type_text_via_cgevent(text)
 
         assert len(posted) == 2
-        chunk_delays = [s for s in sleeps if s == app_module.CGEVENT_CHUNK_DELAY]
+        chunk_delays = [s for s in sleeps if s == Config.CGEVENT_CHUNK_DELAY]
         assert chunk_delays == []
 
     def test_multi_chunk_events_and_delays(self, app_module, monkeypatch):
         """Длинный текст разбивается на несколько чанков с задержками между ними."""
         transcriber = make_transcriber(app_module)
         posted, sleeps = self._setup_quartz_mocks(app_module, monkeypatch)
-        chunk_size = app_module.CGEVENT_UNICODE_CHUNK_SIZE
+        chunk_size = Config.CGEVENT_UNICODE_CHUNK_SIZE
         text = "X" * (chunk_size * 3 + 5)  # 3 полных чанка + хвост
 
         transcriber._type_text_via_cgevent(text)
@@ -90,14 +91,14 @@ class TestCGEventUnicode:
         expected_chunks = 4  # ceil(65 / 20) = 4
         assert len(posted) == expected_chunks * 2  # down + up для каждого чанка
         # Задержки между чанками (не после последнего)
-        chunk_delays = [s for s in sleeps if s == app_module.CGEVENT_CHUNK_DELAY]
+        chunk_delays = [s for s in sleeps if s == Config.CGEVENT_CHUNK_DELAY]
         assert len(chunk_delays) == expected_chunks - 1
 
     def test_unicode_content_in_chunks(self, app_module, monkeypatch):
         """Кириллический текст корректно разбивается по чанкам."""
         transcriber = make_transcriber(app_module)
         posted, _ = self._setup_quartz_mocks(app_module, monkeypatch)
-        chunk_size = app_module.CGEVENT_UNICODE_CHUNK_SIZE
+        chunk_size = Config.CGEVENT_UNICODE_CHUNK_SIZE
         text = "Б" * (chunk_size + 3)
 
         transcriber._type_text_via_cgevent(text)
@@ -340,7 +341,7 @@ class TestPasteViaClipboard:
 
         transcriber._paste_via_clipboard("текст")
 
-        assert app_module.CLIPBOARD_RESTORE_DELAY in sleep_calls
+        assert Config.CLIPBOARD_RESTORE_DELAY in sleep_calls
 
     def test_calls_send_cmd_v(self, app_module, monkeypatch):
         """_paste_via_clipboard вызывает _send_cmd_v для имитации Cmd+V."""

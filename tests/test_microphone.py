@@ -10,6 +10,7 @@ import numpy as np
 import pyaudio
 import pytest
 from src import audio
+from src.config import Config
 
 
 @pytest.mark.hardware
@@ -216,10 +217,10 @@ class TestMicrophoneListing:
         first_request_id = recorder._begin_request()
         second_request_id = recorder._begin_request()
 
-        recorder._set_status_if_current(first_request_id, app_module.STATUS_IDLE)
-        recorder._set_status_if_current(second_request_id, app_module.STATUS_LLM_PROCESSING)
+        recorder._set_status_if_current(first_request_id, Config.STATUS_IDLE)
+        recorder._set_status_if_current(second_request_id, Config.STATUS_LLM_PROCESSING)
 
-        assert statuses == [app_module.STATUS_LLM_PROCESSING]
+        assert statuses == [Config.STATUS_LLM_PROCESSING]
 
     def test_microphone_menu_title_contains_index_and_name(self, app_module):
         """Подпись микрофона должна содержать индекс и имя устройства."""

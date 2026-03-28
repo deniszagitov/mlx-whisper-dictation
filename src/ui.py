@@ -15,48 +15,7 @@ import Quartz
 import rumps
 
 from .audio import list_input_devices, microphone_menu_title
-from .config import (
-    DEFAULT_LLM_PROMPT_NAME,
-    DEFAULT_MODEL_NAME,
-    DEFAULT_PERFORMANCE_MODE,
-    DEFAULTS_KEY_LANGUAGE,
-    DEFAULTS_KEY_LLM_CLIPBOARD,
-    DEFAULTS_KEY_LLM_HOTKEY,
-    DEFAULTS_KEY_LLM_PROMPT,
-    DEFAULTS_KEY_MICROPHONE_PROFILES,
-    DEFAULTS_KEY_MODEL,
-    DEFAULTS_KEY_PASTE_AX,
-    DEFAULTS_KEY_PASTE_CGEVENT,
-    DEFAULTS_KEY_PASTE_CLIPBOARD,
-    DEFAULTS_KEY_PERFORMANCE_MODE,
-    DEFAULTS_KEY_PRIMARY_HOTKEY,
-    DEFAULTS_KEY_PRIVATE_MODE,
-    DEFAULTS_KEY_RECORDING_NOTIFICATION,
-    DEFAULTS_KEY_RECORDING_OVERLAY,
-    DEFAULTS_KEY_SECONDARY_HOTKEY,
-    DOWNLOAD_COMPLETE_PCT,
-    HISTORY_DISPLAY_LENGTH,
-    LLM_PROMPT_PRESETS,
-    MAX_MICROPHONE_PROFILES,
-    MAX_TIME_PRESETS,
-    MODEL_PRESETS,
-    PERFORMANCE_MODE_LABELS,
-    STATUS_IDLE,
-    STATUS_LLM_PROCESSING,
-    STATUS_RECORDING,
-    STATUS_TRANSCRIBING,
-    _load_defaults_bool,
-    _load_defaults_input_device_index,
-    _load_defaults_str,
-    _normalize_performance_mode,
-    _performance_mode_label,
-    _remove_defaults_key,
-    _save_defaults_bool,
-    _save_defaults_input_device_index,
-    _save_defaults_max_time,
-    _save_defaults_str,
-    format_max_time_status,
-)
+from .config import Config, Defaults
 from .hotkeys import (
     _KEYCODE_ESCAPE,
     GlobalKeyListener,
@@ -74,6 +33,8 @@ from .permissions import (
     warn_missing_accessibility_permission,
     warn_missing_input_monitoring_permission,
 )
+
+defaults = Defaults()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -121,8 +82,8 @@ def _normalize_microphone_profile(raw_profile):
     if language is not None:
         language = str(language)
 
-    model_repo = str(raw_profile.get("model_repo") or DEFAULT_MODEL_NAME)
-    performance_mode = _normalize_performance_mode(raw_profile.get("performance_mode"))
+    model_repo = str(raw_profile.get("model_repo") or Config.DEFAULT_MODEL_NAME)
+    performance_mode = Config.normalize_performance_mode(raw_profile.get("performance_mode"))
 
     return {
         "name": name,
@@ -142,7 +103,7 @@ def _normalize_microphone_profile(raw_profile):
 
 def _load_microphone_profiles():
     """Читает быстрые профили микрофона из NSUserDefaults."""
-    raw_value = _load_defaults_str(DEFAULTS_KEY_MICROPHONE_PROFILES, fallback="")
+    raw_value = defaults.load_str(Config.DEFAULTS_KEY_MICROPHONE_PROFILES, fallback="")
     if not raw_value:
         return []
 
@@ -156,7 +117,7 @@ def _load_microphone_profiles():
         return []
 
     profiles = []
-    for raw_profile in payload[:MAX_MICROPHONE_PROFILES]:
+    for raw_profile in payload[:Config.MAX_MICROPHONE_PROFILES]:
         normalized_profile = _normalize_microphone_profile(raw_profile)
         if normalized_profile is not None:
             profiles.append(normalized_profile)
@@ -166,12 +127,12 @@ def _load_microphone_profiles():
 def _save_microphone_profiles(profiles):
     """Сохраняет быстрые профили микрофона в NSUserDefaults."""
     serialized_profiles = []
-    for profile in profiles[:MAX_MICROPHONE_PROFILES]:
+    for profile in profiles[:Config.MAX_MICROPHONE_PROFILES]:
         normalized_profile = _normalize_microphone_profile(profile)
         if normalized_profile is not None:
             serialized_profiles.append(normalized_profile)
-    _save_defaults_str(
-        DEFAULTS_KEY_MICROPHONE_PROFILES,
+    defaults.save_str(
+        Config.DEFAULTS_KEY_MICROPHONE_PROFILES,
         json.dumps(serialized_profiles, ensure_ascii=False),
     )
 
@@ -429,26 +390,26 @@ class StatusBarApp(rumps.App):
         self._secondary_key_combination = "" if use_double_command_hotkey else (secondary_key_combination or "")
         self._llm_key_combination = llm_key_combination or ""
         self.llm_hotkey_status = llm_hotkey_status or "не задан"
-        self.llm_prompt_name = _load_defaults_str(DEFAULTS_KEY_LLM_PROMPT, DEFAULT_LLM_PROMPT_NAME)
-        if self.llm_prompt_name not in LLM_PROMPT_PRESETS:
-            self.llm_prompt_name = DEFAULT_LLM_PROMPT_NAME
-        self.performance_mode = _normalize_performance_mode(
-            _load_defaults_str(DEFAULTS_KEY_PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE),
+        self.llm_prompt_name = defaults.load_str(Config.DEFAULTS_KEY_LLM_PROMPT, Config.DEFAULT_LLM_PROMPT_NAME)
+        if self.llm_prompt_name not in Config.LLM_PROMPT_PRESETS:
+            self.llm_prompt_name = Config.DEFAULT_LLM_PROMPT_NAME
+        self.performance_mode = Config.normalize_performance_mode(
+            defaults.load_str(Config.DEFAULTS_KEY_PERFORMANCE_MODE, Config.DEFAULT_PERFORMANCE_MODE),
         )
-        self.max_time_options = list(MAX_TIME_PRESETS)
+        self.max_time_options = list(Config.MAX_TIME_PRESETS)
         if max_time not in self.max_time_options:
             self.max_time_options.insert(0, max_time)
-        self.model_options = list(MODEL_PRESETS)
+        self.model_options = list(Config.MODEL_PRESETS)
         if self.model_repo not in self.model_options:
             self.model_options.insert(0, self.model_repo)
         self.languages = languages
         self.input_devices = list_input_devices()
-        saved_language = _load_defaults_str(DEFAULTS_KEY_LANGUAGE, fallback=None)
+        saved_language = defaults.load_str(Config.DEFAULTS_KEY_LANGUAGE, fallback=None)
         self.current_language = languages[0] if languages is not None else None
         if languages is not None and saved_language in languages:
             self.current_language = saved_language
         self.current_input_device = next((device for device in self.input_devices if device["is_default"]), None)
-        saved_input_device_index = _load_defaults_input_device_index()
+        saved_input_device_index = defaults.load_input_device_index()
         if saved_input_device_index is not None:
             saved_input_device = next(
                 (device for device in self.input_devices if device["index"] == saved_input_device_index),
@@ -458,7 +419,7 @@ class StatusBarApp(rumps.App):
                 self.current_input_device = saved_input_device
         if self.current_input_device is None and self.input_devices:
             self.current_input_device = self.input_devices[0]
-        self.state = STATUS_IDLE
+        self.state = Config.STATUS_IDLE
         self.permission_status = {
             "accessibility": get_accessibility_status(),
             "input_monitoring": get_input_monitoring_status(),
@@ -477,7 +438,7 @@ class StatusBarApp(rumps.App):
         self.llm_hotkey_item = rumps.MenuItem(f"🤖 LLM-хоткей: {self.llm_hotkey_status}")
         self.change_llm_hotkey_item = rumps.MenuItem("🤖 Изменить LLM-хоткей…", callback=self.change_llm_hotkey)
         self.llm_prompt_menu = rumps.MenuItem("🤖 Системный промпт LLM")
-        for prompt_name in LLM_PROMPT_PRESETS:
+        for prompt_name in Config.LLM_PROMPT_PRESETS:
             item = rumps.MenuItem(prompt_name, callback=self._change_llm_prompt)
             item.state = int(prompt_name == self.llm_prompt_name)
             self.llm_prompt_menu.add(item)
@@ -490,14 +451,14 @@ class StatusBarApp(rumps.App):
             callback=None if llm_cached else self._download_llm_model,
         )
 
-        self.show_recording_notification = _load_defaults_bool(DEFAULTS_KEY_RECORDING_NOTIFICATION, fallback=True)
+        self.show_recording_notification = defaults.load_bool(Config.DEFAULTS_KEY_RECORDING_NOTIFICATION, fallback=True)
         self.recording_notification_item = rumps.MenuItem(
             "🔔 Уведомление о старте записи",
             callback=self.toggle_recording_notification,
         )
         self.recording_notification_item.state = int(self.show_recording_notification)
 
-        self.show_recording_overlay = _load_defaults_bool(DEFAULTS_KEY_RECORDING_OVERLAY, True)
+        self.show_recording_overlay = defaults.load_bool(Config.DEFAULTS_KEY_RECORDING_OVERLAY, True)
         self.recording_overlay_item = rumps.MenuItem(
             "🎯 Индикатор записи у курсора",
             callback=self.toggle_recording_overlay,
@@ -505,8 +466,8 @@ class StatusBarApp(rumps.App):
         self.recording_overlay_item.state = int(self.show_recording_overlay)
         self.recording_overlay = RecordingOverlay()
 
-        self.performance_menu = rumps.MenuItem(f"⚡ Режим работы: {_performance_mode_label(self.performance_mode)}")
-        for performance_mode, title in PERFORMANCE_MODE_LABELS.items():
+        self.performance_menu = rumps.MenuItem(f"⚡ Режим работы: {Config.performance_mode_label(self.performance_mode)}")
+        for performance_mode, title in Config.PERFORMANCE_MODE_LABELS.items():
             item = rumps.MenuItem(title, callback=self.change_performance_mode)
             item.state = int(performance_mode == self.performance_mode)
             self.performance_menu.add(item)
@@ -519,7 +480,7 @@ class StatusBarApp(rumps.App):
             self.private_mode_item.state = int(transcriber.private_mode_enabled)
             self.llm_clipboard_item.state = int(getattr(transcriber, "llm_clipboard_enabled", True))
         else:
-            self.llm_clipboard_item.state = int(_load_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True))
+            self.llm_clipboard_item.state = int(defaults.load_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True))
         self.paste_cgevent_item = rumps.MenuItem("Прямой ввод (CGEvent)", callback=self.toggle_paste_cgevent)
         self.paste_ax_item = rumps.MenuItem("Accessibility API", callback=self.toggle_paste_ax)
         self.paste_clipboard_item = rumps.MenuItem("Буфер обмена (Cmd+V)", callback=self.toggle_paste_clipboard)
@@ -553,7 +514,7 @@ class StatusBarApp(rumps.App):
         self._delete_microphone_profile_titles = {}
         self._refresh_microphone_profiles_menu()
         self._refresh_input_device_menu()
-        self.max_time_item = rumps.MenuItem(f"⏱ Длительность записи: {format_max_time_status(max_time)}")
+        self.max_time_item = rumps.MenuItem(f"⏱ Длительность записи: {Config.format_max_time_status(max_time)}")
         self.accessibility_item = rumps.MenuItem(self._permission_title("Accessibility", self.permission_status["accessibility"]))
         self.input_monitoring_item = rumps.MenuItem(self._permission_title("Input Monitoring", self.permission_status["input_monitoring"]))
         self.microphone_item = rumps.MenuItem(self._permission_title("Microphone", self.permission_status["microphone"]))
@@ -619,9 +580,9 @@ class StatusBarApp(rumps.App):
         self.recorder.set_input_device(self.current_input_device)
         if hasattr(self.recorder, "set_performance_mode"):
             self.recorder.set_performance_mode(self.performance_mode)
-        self.recorder.llm_system_prompt = LLM_PROMPT_PRESETS.get(
+        self.recorder.llm_system_prompt = Config.LLM_PROMPT_PRESETS.get(
             self.llm_prompt_name,
-            LLM_PROMPT_PRESETS[DEFAULT_LLM_PROMPT_NAME],
+            Config.LLM_PROMPT_PRESETS[Config.DEFAULT_LLM_PROMPT_NAME],
         )
         self.recorder.set_status_callback(self.set_state)
         self.recorder.set_permission_callback(self.set_permission_status)
@@ -678,10 +639,10 @@ class StatusBarApp(rumps.App):
     def _state_label(self):
         """Возвращает человекочитаемое имя текущего состояния."""
         labels = {
-            STATUS_IDLE: "ожидание",
-            STATUS_RECORDING: "запись",
-            STATUS_TRANSCRIBING: "распознавание",
-            STATUS_LLM_PROCESSING: "обработка LLM",
+            Config.STATUS_IDLE: "ожидание",
+            Config.STATUS_RECORDING: "запись",
+            Config.STATUS_TRANSCRIBING: "распознавание",
+            Config.STATUS_LLM_PROCESSING: "обработка LLM",
         }
         return labels.get(self.state, "неизвестно")
 
@@ -703,7 +664,7 @@ class StatusBarApp(rumps.App):
 
     def _max_time_menu_title(self, max_time_value):
         """Возвращает подпись пункта меню лимита записи."""
-        return f"Лимит: {format_max_time_status(max_time_value)}"
+        return f"Лимит: {Config.format_max_time_status(max_time_value)}"
 
     def _permission_title(self, permission_name, permission_status):
         """Формирует строку статуса разрешения для меню.
@@ -756,7 +717,7 @@ class StatusBarApp(rumps.App):
             for lang in self.languages:
                 self._menu_item(lang).state = int(lang == self.current_language)
 
-        for performance_mode, title in PERFORMANCE_MODE_LABELS.items():
+        for performance_mode, title in Config.PERFORMANCE_MODE_LABELS.items():
             self.performance_menu[title].state = int(performance_mode == self.performance_mode)
 
         for title, profile in self._microphone_profile_titles.items():
@@ -889,23 +850,23 @@ class StatusBarApp(rumps.App):
 
     def _persist_hotkey_settings(self):
         """Сохраняет активные хоткеи в NSUserDefaults."""
-        _save_defaults_str(DEFAULTS_KEY_PRIMARY_HOTKEY, self._primary_key_combination)
-        _save_defaults_str(DEFAULTS_KEY_SECONDARY_HOTKEY, self._secondary_key_combination)
+        defaults.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self._primary_key_combination)
+        defaults.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self._secondary_key_combination)
 
     def _refresh_title_and_status(self):
         """Обновляет иконку и строку статуса в меню."""
         self.status_item.title = f"🔄 Статус: {self._state_label()}"
         self._refresh_permission_items()
 
-        if self.state == STATUS_TRANSCRIBING:
+        if self.state == Config.STATUS_TRANSCRIBING:
             self.title = "🧠"
             return
 
-        if self.state == STATUS_LLM_PROCESSING:
+        if self.state == Config.STATUS_LLM_PROCESSING:
             self.title = "🤖"
             return
 
-        if self.state == STATUS_IDLE:
+        if self.state == Config.STATUS_IDLE:
             self.title = "⏯"
 
     def _active_key_combinations(self):
@@ -986,7 +947,7 @@ class StatusBarApp(rumps.App):
 
         self.current_input_device = selected_device
         self.recorder.set_input_device(selected_device)
-        _save_defaults_input_device_index(selected_device["index"])
+        defaults.save_input_device_index(selected_device["index"])
         self.input_device_item.title = f"🎙️ Микрофон: {self._format_input_device()}"
         LOGGER.info(
             "🎙️ Выбран микрофон: index=%s, name=%s",
@@ -1008,7 +969,7 @@ class StatusBarApp(rumps.App):
             return
 
         self.current_language = sender.title
-        _save_defaults_str(DEFAULTS_KEY_LANGUAGE, self.current_language)
+        defaults.save_str(Config.DEFAULTS_KEY_LANGUAGE, self.current_language)
         self.language_item.title = f"🌍 Язык: {self._format_language()}"
         self._refresh_selection_states()
 
@@ -1021,7 +982,7 @@ class StatusBarApp(rumps.App):
         self.model_repo = selected_model
         self.model_name = selected_model.rsplit("/", maxsplit=1)[-1]
         self.recorder.transcriber.model_name = selected_model
-        _save_defaults_str(DEFAULTS_KEY_MODEL, selected_model)
+        defaults.save_str(Config.DEFAULTS_KEY_MODEL, selected_model)
         self.model_item.title = f"🧠 Модель: {self.model_name}"
         self._refresh_selection_states()
         LOGGER.info("🧠 Выбрана модель: %s", selected_model)
@@ -1037,10 +998,10 @@ class StatusBarApp(rumps.App):
             return
 
         self.max_time = selected_max_time
-        _save_defaults_max_time(self.max_time)
-        self.max_time_item.title = f"⏱ Длительность записи: {format_max_time_status(self.max_time)}"
+        defaults.save_max_time(self.max_time)
+        self.max_time_item.title = f"⏱ Длительность записи: {Config.format_max_time_status(self.max_time)}"
         self._refresh_selection_states()
-        LOGGER.info("⏱ Обновлен лимит записи: %s", format_max_time_status(self.max_time))
+        LOGGER.info("⏱ Обновлен лимит записи: %s", Config.format_max_time_status(self.max_time))
 
     def add_current_microphone_profile(self, _):
         """Сохраняет текущие настройки как быстрый профиль микрофона."""
@@ -1048,10 +1009,10 @@ class StatusBarApp(rumps.App):
             notify_user("MLX Whisper Dictation", "Нельзя сохранить профиль без выбранного микрофона.")
             return
 
-        if len(self.microphone_profiles) >= MAX_MICROPHONE_PROFILES:
+        if len(self.microphone_profiles) >= Config.MAX_MICROPHONE_PROFILES:
             notify_user(
                 "MLX Whisper Dictation",
-                f"Можно сохранить не больше {MAX_MICROPHONE_PROFILES} быстрых профилей.",
+                f"Можно сохранить не больше {Config.MAX_MICROPHONE_PROFILES} быстрых профилей.",
             )
             return
 
@@ -1090,7 +1051,7 @@ class StatusBarApp(rumps.App):
 
         self.current_input_device = selected_device
         self.recorder.set_input_device(selected_device)
-        _save_defaults_input_device_index(selected_device["index"])
+        defaults.save_input_device_index(selected_device["index"])
         self.input_device_item.title = f"🎙️ Микрофон: {self._format_input_device()}"
 
         self.model_repo = profile["model_repo"]
@@ -1098,7 +1059,7 @@ class StatusBarApp(rumps.App):
         self.model_item.title = f"🧠 Модель: {self.model_name}"
         if hasattr(self.recorder, "transcriber") and self.recorder.transcriber is not None:
             self.recorder.transcriber.model_name = self.model_repo
-        _save_defaults_str(DEFAULTS_KEY_MODEL, self.model_repo)
+        defaults.save_str(Config.DEFAULTS_KEY_MODEL, self.model_repo)
 
         profile_language = profile.get("language")
         if self.languages is None:
@@ -1107,19 +1068,19 @@ class StatusBarApp(rumps.App):
             self.current_language = profile_language
         self.language_item.title = f"🌍 Язык: {self._format_language()}"
         if self.current_language is None:
-            _remove_defaults_key(DEFAULTS_KEY_LANGUAGE)
+            defaults.remove_key(Config.DEFAULTS_KEY_LANGUAGE)
         else:
-            _save_defaults_str(DEFAULTS_KEY_LANGUAGE, self.current_language)
+            defaults.save_str(Config.DEFAULTS_KEY_LANGUAGE, self.current_language)
 
         self.max_time = profile.get("max_time")
-        self.max_time_item.title = f"⏱ Длительность записи: {format_max_time_status(self.max_time)}"
-        _save_defaults_max_time(self.max_time)
+        self.max_time_item.title = f"⏱ Длительность записи: {Config.format_max_time_status(self.max_time)}"
+        defaults.save_max_time(self.max_time)
 
-        self.performance_mode = _normalize_performance_mode(profile.get("performance_mode"))
+        self.performance_mode = Config.normalize_performance_mode(profile.get("performance_mode"))
         if hasattr(self.recorder, "set_performance_mode"):
             self.recorder.set_performance_mode(self.performance_mode)
-        self.performance_menu.title = f"⚡ Режим работы: {_performance_mode_label(self.performance_mode)}"
-        _save_defaults_str(DEFAULTS_KEY_PERFORMANCE_MODE, self.performance_mode)
+        self.performance_menu.title = f"⚡ Режим работы: {Config.performance_mode_label(self.performance_mode)}"
+        defaults.save_str(Config.DEFAULTS_KEY_PERFORMANCE_MODE, self.performance_mode)
 
         transcriber = self.recorder.transcriber if hasattr(self.recorder, "transcriber") else None
         if transcriber is not None:
@@ -1128,7 +1089,7 @@ class StatusBarApp(rumps.App):
                 transcriber.set_private_mode(private_mode)
             else:
                 transcriber.private_mode_enabled = private_mode
-                _save_defaults_bool(DEFAULTS_KEY_PRIVATE_MODE, private_mode)
+                defaults.save_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, private_mode)
             self.private_mode_item.state = int(getattr(transcriber, "private_mode_enabled", False))
 
             transcriber.paste_cgevent_enabled = bool(profile.get("paste_cgevent", True))
@@ -1139,10 +1100,10 @@ class StatusBarApp(rumps.App):
             self.paste_ax_item.state = int(transcriber.paste_ax_enabled)
             self.paste_clipboard_item.state = int(transcriber.paste_clipboard_enabled)
             self.llm_clipboard_item.state = int(transcriber.llm_clipboard_enabled)
-            _save_defaults_bool(DEFAULTS_KEY_PASTE_CGEVENT, transcriber.paste_cgevent_enabled)
-            _save_defaults_bool(DEFAULTS_KEY_PASTE_AX, transcriber.paste_ax_enabled)
-            _save_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, transcriber.paste_clipboard_enabled)
-            _save_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, transcriber.llm_clipboard_enabled)
+            defaults.save_bool(Config.DEFAULTS_KEY_PASTE_CGEVENT, transcriber.paste_cgevent_enabled)
+            defaults.save_bool(Config.DEFAULTS_KEY_PASTE_AX, transcriber.paste_ax_enabled)
+            defaults.save_bool(Config.DEFAULTS_KEY_PASTE_CLIPBOARD, transcriber.paste_clipboard_enabled)
+            defaults.save_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, transcriber.llm_clipboard_enabled)
 
         self._refresh_selection_states()
         LOGGER.info("🎚 Применён быстрый профиль микрофона: %s", profile["name"])
@@ -1234,7 +1195,7 @@ class StatusBarApp(rumps.App):
 
         old_combination = self._llm_key_combination
         self._llm_key_combination = normalized
-        _save_defaults_str(DEFAULTS_KEY_LLM_HOTKEY, self._llm_key_combination)
+        defaults.save_str(Config.DEFAULTS_KEY_LLM_HOTKEY, self._llm_key_combination)
         self._refresh_hotkey_items()
 
         llm_listener = getattr(self, "llm_key_listener", None)
@@ -1278,32 +1239,32 @@ class StatusBarApp(rumps.App):
         """Переключает системное уведомление о старте записи."""
         self.show_recording_notification = not self.show_recording_notification
         sender.state = int(self.show_recording_notification)
-        _save_defaults_bool(DEFAULTS_KEY_RECORDING_NOTIFICATION, self.show_recording_notification)
+        defaults.save_bool(Config.DEFAULTS_KEY_RECORDING_NOTIFICATION, self.show_recording_notification)
         LOGGER.info("🔔 Уведомление о старте записи: %s", "включено" if self.show_recording_notification else "выключено")
 
     def toggle_recording_overlay(self, sender):
         """Переключает всплывающий индикатор записи у курсора."""
         self.show_recording_overlay = not self.show_recording_overlay
         sender.state = int(self.show_recording_overlay)
-        _save_defaults_bool(DEFAULTS_KEY_RECORDING_OVERLAY, self.show_recording_overlay)
+        defaults.save_bool(Config.DEFAULTS_KEY_RECORDING_OVERLAY, self.show_recording_overlay)
         LOGGER.info("🎯 Индикатор записи у курсора: %s", "включён" if self.show_recording_overlay else "выключен")
 
     def change_performance_mode(self, sender):
         """Переключает баланс между задержкой и потреблением ресурсов."""
         selected_mode = next(
-            (performance_mode for performance_mode, title in PERFORMANCE_MODE_LABELS.items() if title == sender.title),
+            (performance_mode for performance_mode, title in Config.PERFORMANCE_MODE_LABELS.items() if title == sender.title),
             None,
         )
         if selected_mode is None or selected_mode == self.performance_mode:
             return
 
         self.performance_mode = selected_mode
-        _save_defaults_str(DEFAULTS_KEY_PERFORMANCE_MODE, self.performance_mode)
+        defaults.save_str(Config.DEFAULTS_KEY_PERFORMANCE_MODE, self.performance_mode)
         if hasattr(self.recorder, "set_performance_mode"):
             self.recorder.set_performance_mode(self.performance_mode)
-        self.performance_menu.title = f"⚡ Режим работы: {_performance_mode_label(self.performance_mode)}"
+        self.performance_menu.title = f"⚡ Режим работы: {Config.performance_mode_label(self.performance_mode)}"
         self._refresh_selection_states()
-        LOGGER.info("⚡ Режим работы переключён: %s", _performance_mode_label(self.performance_mode))
+        LOGGER.info("⚡ Режим работы переключён: %s", Config.performance_mode_label(self.performance_mode))
 
     def toggle_private_mode(self, sender):
         """Переключает private mode для истории текста."""
@@ -1319,7 +1280,7 @@ class StatusBarApp(rumps.App):
         transcriber = self.recorder.transcriber
         transcriber.paste_cgevent_enabled = not transcriber.paste_cgevent_enabled
         sender.state = int(transcriber.paste_cgevent_enabled)
-        _save_defaults_bool(DEFAULTS_KEY_PASTE_CGEVENT, transcriber.paste_cgevent_enabled)
+        defaults.save_bool(Config.DEFAULTS_KEY_PASTE_CGEVENT, transcriber.paste_cgevent_enabled)
         self._refresh_selection_states()
         LOGGER.info("📝 Прямой ввод (CGEvent): %s", "включён" if transcriber.paste_cgevent_enabled else "выключен")
 
@@ -1328,7 +1289,7 @@ class StatusBarApp(rumps.App):
         transcriber = self.recorder.transcriber
         transcriber.paste_ax_enabled = not transcriber.paste_ax_enabled
         sender.state = int(transcriber.paste_ax_enabled)
-        _save_defaults_bool(DEFAULTS_KEY_PASTE_AX, transcriber.paste_ax_enabled)
+        defaults.save_bool(Config.DEFAULTS_KEY_PASTE_AX, transcriber.paste_ax_enabled)
         self._refresh_selection_states()
         LOGGER.info("📝 Accessibility API: %s", "включён" if transcriber.paste_ax_enabled else "выключен")
 
@@ -1337,7 +1298,7 @@ class StatusBarApp(rumps.App):
         transcriber = self.recorder.transcriber
         transcriber.paste_clipboard_enabled = not transcriber.paste_clipboard_enabled
         sender.state = int(transcriber.paste_clipboard_enabled)
-        _save_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, transcriber.paste_clipboard_enabled)
+        defaults.save_bool(Config.DEFAULTS_KEY_PASTE_CLIPBOARD, transcriber.paste_clipboard_enabled)
         self._refresh_selection_states()
         LOGGER.info("📝 Буфер обмена (Cmd+V): %s", "включён" if transcriber.paste_clipboard_enabled else "выключен")
 
@@ -1346,14 +1307,14 @@ class StatusBarApp(rumps.App):
         transcriber = self.recorder.transcriber
         transcriber.llm_clipboard_enabled = not getattr(transcriber, "llm_clipboard_enabled", True)
         sender.state = int(transcriber.llm_clipboard_enabled)
-        _save_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, transcriber.llm_clipboard_enabled)
+        defaults.save_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, transcriber.llm_clipboard_enabled)
         self._refresh_selection_states()
         LOGGER.info("🤖 Буфер обмена для LLM: %s", "включён" if transcriber.llm_clipboard_enabled else "выключен")
 
     def _format_history_title(self, text):
         """Форматирует текст для отображения в подменю истории.
 
-        Заменяет переносы строк пробелами и обрезает до HISTORY_DISPLAY_LENGTH символов.
+        Заменяет переносы строк пробелами и обрезает до Config.HISTORY_DISPLAY_LENGTH символов.
 
         Args:
             text: Полный текст записи.
@@ -1362,8 +1323,8 @@ class StatusBarApp(rumps.App):
             Сокращённая строка для пункта меню.
         """
         single_line = text.replace("\n", " ").replace("\r", " ")
-        if len(single_line) > HISTORY_DISPLAY_LENGTH:
-            return single_line[:HISTORY_DISPLAY_LENGTH] + "…"
+        if len(single_line) > Config.HISTORY_DISPLAY_LENGTH:
+            return single_line[:Config.HISTORY_DISPLAY_LENGTH] + "…"
         return single_line
 
     def _refresh_history_menu(self):
@@ -1424,7 +1385,7 @@ class StatusBarApp(rumps.App):
             _: Аргумент callback от rumps, который здесь не используется.
         """
         LOGGER.info("🎙️ Запись началась")
-        self.state = STATUS_RECORDING
+        self.state = Config.STATUS_RECORDING
         if self.show_recording_notification:
             notify_user(
                 "MLX Whisper Dictation",
@@ -1453,7 +1414,7 @@ class StatusBarApp(rumps.App):
 
         LOGGER.info("⏹ Запись остановлена, запускаю распознавание")
         self.started = False
-        self.state = STATUS_TRANSCRIBING
+        self.state = Config.STATUS_TRANSCRIBING
         self._refresh_title_and_status()
         self._menu_item("Остановить запись").set_callback(None)
         self._menu_item("Начать запись").set_callback(self.start_app)
@@ -1499,13 +1460,15 @@ class StatusBarApp(rumps.App):
             return
 
         LOGGER.info("🤖 Запуск LLM-пайплайна, промпт=%r", self.llm_prompt_name)
-        self.state = STATUS_RECORDING
+        self.state = Config.STATUS_RECORDING
         if self.show_recording_notification:
             notify_user("MLX Whisper Dictation", "Запись для LLM. Говорите.")
         self.started = True
         self._menu_item("Начать запись").set_callback(None)
         self._menu_item("Остановить запись").set_callback(self.stop_app)
-        self.recorder.llm_system_prompt = LLM_PROMPT_PRESETS.get(self.llm_prompt_name, LLM_PROMPT_PRESETS[DEFAULT_LLM_PROMPT_NAME])
+        self.recorder.llm_system_prompt = Config.LLM_PROMPT_PRESETS.get(
+            self.llm_prompt_name, Config.LLM_PROMPT_PRESETS[Config.DEFAULT_LLM_PROMPT_NAME],
+        )
         self.recorder.start_llm(self.current_language)
         self.start_time = time.time()
         self.on_status_tick(None)
@@ -1533,7 +1496,7 @@ class StatusBarApp(rumps.App):
 
         LOGGER.info("❌ Запись отменена пользователем (Escape)")
         self.started = False
-        self.state = STATUS_IDLE
+        self.state = Config.STATUS_IDLE
         self._refresh_title_and_status()
         self._menu_item("Остановить запись").set_callback(None)
         self._menu_item("Начать запись").set_callback(self.start_app)
@@ -1557,7 +1520,7 @@ class StatusBarApp(rumps.App):
             if total_bytes > 0:
                 size_mb = total_bytes / (1024 * 1024)
                 self.llm_download_item.title = f"📥 Загрузка LLM: {pct:.0f}% ({size_mb:.0f} МБ)"
-            elif pct >= DOWNLOAD_COMPLETE_PCT:
+            elif pct >= Config.DOWNLOAD_COMPLETE_PCT:
                 self.llm_download_item.title = "✅ LLM-модель загружена"
             else:
                 self.llm_download_item.title = f"📥 Загрузка LLM: {desc}"
@@ -1588,10 +1551,10 @@ class StatusBarApp(rumps.App):
             sender: Пункт меню с именем пресета.
         """
         self.llm_prompt_name = sender.title
-        _save_defaults_str(DEFAULTS_KEY_LLM_PROMPT, self.llm_prompt_name)
-        self.recorder.llm_system_prompt = LLM_PROMPT_PRESETS.get(
+        defaults.save_str(Config.DEFAULTS_KEY_LLM_PROMPT, self.llm_prompt_name)
+        self.recorder.llm_system_prompt = Config.LLM_PROMPT_PRESETS.get(
             self.llm_prompt_name,
-            LLM_PROMPT_PRESETS[DEFAULT_LLM_PROMPT_NAME],
+            Config.LLM_PROMPT_PRESETS[Config.DEFAULT_LLM_PROMPT_NAME],
         )
         for item_title in self.llm_prompt_menu:
             self.llm_prompt_menu[item_title].state = int(item_title == self.llm_prompt_name)

@@ -8,6 +8,7 @@ import sys
 
 import pytest
 import src.transcriber as transcriber_module
+from src.config import Config
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Тесты буфера обмена только для macOS")
@@ -99,10 +100,10 @@ class TestClipboard:
         transcriber._send_cmd_v()
 
         assert [event["keycode"] for event in created_events] == [
-            app_module.KEYCODE_COMMAND,
-            app_module.KEYCODE_V,
-            app_module.KEYCODE_V,
-            app_module.KEYCODE_COMMAND,
+            Config.KEYCODE_COMMAND,
+            Config.KEYCODE_V,
+            Config.KEYCODE_V,
+            Config.KEYCODE_COMMAND,
         ]
         assert [event["is_key_down"] for event in created_events] == [True, True, False, False]
         assert posted_events[0][0] == transcriber_module.Quartz.kCGHIDEventTap

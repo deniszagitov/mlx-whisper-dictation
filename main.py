@@ -16,45 +16,7 @@ import Quartz
 from Foundation import NSUserDefaults
 from pynput import keyboard
 from src.audio import Recorder, list_input_devices, microphone_menu_title
-from src.config import (
-    CGEVENT_CHUNK_DELAY,
-    CGEVENT_UNICODE_CHUNK_SIZE,
-    CLIPBOARD_RESTORE_DELAY,
-    DEFAULT_LLM_MODEL_NAME,
-    DEFAULT_MODEL_NAME,
-    DEFAULTS_KEY_HISTORY,
-    DEFAULTS_KEY_LANGUAGE,
-    DEFAULTS_KEY_LLM_CLIPBOARD,
-    DEFAULTS_KEY_LLM_HOTKEY,
-    DEFAULTS_KEY_LLM_PROMPT,
-    DEFAULTS_KEY_MAX_TIME,
-    DEFAULTS_KEY_MODEL,
-    DEFAULTS_KEY_PASTE_AX,
-    DEFAULTS_KEY_PASTE_CGEVENT,
-    DEFAULTS_KEY_PASTE_CLIPBOARD,
-    DEFAULTS_KEY_PERFORMANCE_MODE,
-    DEFAULTS_KEY_PRIMARY_HOTKEY,
-    DEFAULTS_KEY_PRIVATE_MODE,
-    DEFAULTS_KEY_RECORDING_NOTIFICATION,
-    DEFAULTS_KEY_RECORDING_OVERLAY,
-    DEFAULTS_KEY_SECONDARY_HOTKEY,
-    DEFAULTS_KEY_TOTAL_TOKENS,
-    HISTORY_DISPLAY_LENGTH,
-    KEYCODE_COMMAND,
-    KEYCODE_V,
-    LLM_PROMPT_PRESETS,
-    LOG_DIR,
-    MAX_HISTORY_SIZE,
-    PERFORMANCE_MODE_FAST,
-    PERFORMANCE_MODE_NORMAL,
-    STATUS_IDLE,
-    STATUS_LLM_PROCESSING,
-    STATUS_RECORDING,
-    STATUS_TRANSCRIBING,
-    _load_defaults_max_time,
-    _load_defaults_str,
-    format_max_time_status,
-)
+from src.config import Config, Defaults
 from src.diagnostics import (
     DiagnosticsStore,
     looks_like_hallucination,
@@ -96,6 +58,8 @@ from src.permissions import (
 from src.transcriber import SpeechTranscriber
 from src.ui import RecordingOverlay, StatusBarApp, _load_microphone_profiles
 
+defaults = Defaults()
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -108,33 +72,33 @@ def _cli_option_was_provided(*option_names):
 def _load_saved_runtime_preferences(args):
     """Подставляет сохранённые настройки, если их не переопределили через CLI."""
     if not _cli_option_was_provided("-m", "--model"):
-        saved_model = _load_defaults_str(DEFAULTS_KEY_MODEL, fallback=None)
+        saved_model = defaults.load_str(Config.DEFAULTS_KEY_MODEL, fallback=None)
         if saved_model:
             args.model = saved_model
 
     if not _cli_option_was_provided("-l", "--language"):
-        saved_language = _load_defaults_str(DEFAULTS_KEY_LANGUAGE, fallback=None)
+        saved_language = defaults.load_str(Config.DEFAULTS_KEY_LANGUAGE, fallback=None)
         if saved_language:
             args.language = saved_language
 
     if not _cli_option_was_provided("-t", "--max_time"):
-        args.max_time = _load_defaults_max_time(args.max_time)
+        args.max_time = defaults.load_max_time(args.max_time)
 
     if not args.k_double_cmd and not _cli_option_was_provided("-k", "--key_combination"):
-        saved_primary = _load_defaults_str(DEFAULTS_KEY_PRIMARY_HOTKEY, fallback=None)
+        saved_primary = defaults.load_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, fallback=None)
         if saved_primary:
             args.key_combination = saved_primary
 
-    defaults = NSUserDefaults.standardUserDefaults()
+    ns_defaults = NSUserDefaults.standardUserDefaults()
     if (
         not args.k_double_cmd
         and not _cli_option_was_provided("--secondary_key_combination")
-        and defaults.objectForKey_(DEFAULTS_KEY_SECONDARY_HOTKEY) is not None
+        and ns_defaults.objectForKey_(Config.DEFAULTS_KEY_SECONDARY_HOTKEY) is not None
     ):
-        args.secondary_key_combination = _load_defaults_str(DEFAULTS_KEY_SECONDARY_HOTKEY, fallback="") or None
+        args.secondary_key_combination = defaults.load_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, fallback="") or None
 
-    if not _cli_option_was_provided("--llm_key_combination") and defaults.objectForKey_(DEFAULTS_KEY_LLM_HOTKEY) is not None:
-        args.llm_key_combination = _load_defaults_str(DEFAULTS_KEY_LLM_HOTKEY, fallback="") or None
+    if not _cli_option_was_provided("--llm_key_combination") and ns_defaults.objectForKey_(Config.DEFAULTS_KEY_LLM_HOTKEY) is not None:
+        args.llm_key_combination = defaults.load_str(Config.DEFAULTS_KEY_LLM_HOTKEY, fallback="") or None
 
 
 def parse_args():
@@ -154,7 +118,7 @@ def parse_args():
         "-m",
         "--model",
         type=str,
-        default=DEFAULT_MODEL_NAME,
+        default=Config.DEFAULT_MODEL_NAME,
         help="Локальный путь к модели MLX или Hugging Face repo для распознавания.",
     )
     parser.add_argument(
@@ -228,8 +192,8 @@ def parse_args():
     parser.add_argument(
         "--llm_model",
         type=str,
-        default=DEFAULT_LLM_MODEL_NAME,
-        help=f"Модель LLM для обработки транскрипций. По умолчанию: {DEFAULT_LLM_MODEL_NAME}.",
+        default=Config.DEFAULT_LLM_MODEL_NAME,
+        help=f"Модель LLM для обработки транскрипций. По умолчанию: {Config.DEFAULT_LLM_MODEL_NAME}.",
     )
 
     args = parser.parse_args()

@@ -16,30 +16,7 @@ import Quartz
 from Foundation import NSUserDefaults
 from pynput import keyboard
 
-from .config import (
-    ARTIFACT_TTL_SECONDS,
-    CGEVENT_CHUNK_DELAY,
-    CGEVENT_UNICODE_CHUNK_SIZE,
-    CLIPBOARD_RESTORE_DELAY,
-    DEFAULTS_KEY_HISTORY,
-    DEFAULTS_KEY_LLM_CLIPBOARD,
-    DEFAULTS_KEY_PASTE_AX,
-    DEFAULTS_KEY_PASTE_CGEVENT,
-    DEFAULTS_KEY_PASTE_CLIPBOARD,
-    DEFAULTS_KEY_PRIVATE_MODE,
-    DEFAULTS_KEY_TOTAL_TOKENS,
-    HALLUCINATION_RMS_THRESHOLD,
-    KEYCODE_COMMAND,
-    KEYCODE_V,
-    LLM_NOTIFICATION_CHAR_LIMIT,
-    LLM_RESPONSE_CHAR_LIMIT,
-    SHORT_AUDIO_WARNING_SECONDS,
-    SILENCE_RMS_THRESHOLD,
-    _load_defaults_bool,
-    _load_defaults_int,
-    _save_defaults_bool,
-    _save_defaults_int,
-)
+from .config import Config, Defaults
 from .diagnostics import DiagnosticsStore, looks_like_hallucination
 from .permissions import (
     frontmost_application_info,
@@ -51,6 +28,8 @@ from .permissions import (
     warn_missing_accessibility_permission,
     warn_missing_input_monitoring_permission,
 )
+
+defaults = Defaults()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -90,7 +69,7 @@ def _normalize_history_record(item, now):
 
     created_at = min(created_at, now)
 
-    if now - created_at > ARTIFACT_TTL_SECONDS:
+    if now - created_at > Config.ARTIFACT_TTL_SECONDS:
         return None
 
     return {"text": text, "created_at": created_at}
@@ -99,8 +78,8 @@ def _normalize_history_record(item, now):
 def _load_history_records(now=None):
     """Читает историю из NSUserDefaults с фильтрацией по TTL."""
     current_time = time.time() if now is None else float(now)
-    defaults = NSUserDefaults.standardUserDefaults()
-    value = defaults.objectForKey_(DEFAULTS_KEY_HISTORY)
+    defaults_ns = NSUserDefaults.standardUserDefaults()
+    value = defaults_ns.objectForKey_(Config.DEFAULTS_KEY_HISTORY)
     if value is None:
         return []
 
@@ -117,7 +96,7 @@ def _save_history_records(records):
     # Явное преобразование в Python-типы, чтобы PyObjC не сериализовал
     # NSDictionary/NSString и не вносил рекурсивные вложенности.
     safe_records = [{"text": str(r["text"]), "created_at": float(r["created_at"])} for r in records]
-    NSUserDefaults.standardUserDefaults().setObject_forKey_(safe_records, DEFAULTS_KEY_HISTORY)
+    NSUserDefaults.standardUserDefaults().setObject_forKey_(safe_records, Config.DEFAULTS_KEY_HISTORY)
 
 
 class SpeechTranscriber:
@@ -144,17 +123,17 @@ class SpeechTranscriber:
         self.pykeyboard = keyboard.Controller()
         self.diagnostics_store = diagnostics_store or DiagnosticsStore()
         self.model_name = model_name
-        self.paste_cgevent_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_CGEVENT, fallback=True)
-        self.paste_ax_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_AX, fallback=False)
-        self.paste_clipboard_enabled = _load_defaults_bool(DEFAULTS_KEY_PASTE_CLIPBOARD, fallback=False)
-        self.llm_clipboard_enabled = _load_defaults_bool(DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True)
-        self.private_mode_enabled = _load_defaults_bool(DEFAULTS_KEY_PRIVATE_MODE, fallback=False)
+        self.paste_cgevent_enabled = defaults.load_bool(Config.DEFAULTS_KEY_PASTE_CGEVENT, fallback=True)
+        self.paste_ax_enabled = defaults.load_bool(Config.DEFAULTS_KEY_PASTE_AX, fallback=False)
+        self.paste_clipboard_enabled = defaults.load_bool(Config.DEFAULTS_KEY_PASTE_CLIPBOARD, fallback=False)
+        self.llm_clipboard_enabled = defaults.load_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True)
+        self.private_mode_enabled = defaults.load_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, fallback=False)
         self._history_records = []
         self.history = []
         if not self.private_mode_enabled:
             self._reload_persisted_history()
         self.history_callback = None
-        self.total_tokens = _load_defaults_int(DEFAULTS_KEY_TOTAL_TOKENS, fallback=0)
+        self.total_tokens = defaults.load_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, fallback=0)
         self.token_usage_callback = None
 
     def set_private_mode(self, enabled):
@@ -168,7 +147,7 @@ class SpeechTranscriber:
             enabled: Нужно ли включить private mode.
         """
         self.private_mode_enabled = bool(enabled)
-        _save_defaults_bool(DEFAULTS_KEY_PRIVATE_MODE, self.private_mode_enabled)
+        defaults.save_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, self.private_mode_enabled)
         if self.private_mode_enabled:
             self._history_records = []
             self.history = []
@@ -241,7 +220,7 @@ class SpeechTranscriber:
             return
 
         self.total_tokens += confirmed_tokens
-        _save_defaults_int(DEFAULTS_KEY_TOTAL_TOKENS, self.total_tokens)
+        defaults.save_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, self.total_tokens)
         LOGGER.debug("🔢 Токены добавлены в счётчик: +%d, всего=%d", confirmed_tokens, self.total_tokens)
         self._notify_token_usage_changed()
 
@@ -329,8 +308,8 @@ class SpeechTranscriber:
         if event_source is None:
             raise RuntimeError("Не удалось создать источник системных keyboard events")
 
-        for i in range(0, len(text), CGEVENT_UNICODE_CHUNK_SIZE):
-            chunk = text[i : i + CGEVENT_UNICODE_CHUNK_SIZE]
+        for i in range(0, len(text), Config.CGEVENT_UNICODE_CHUNK_SIZE):
+            chunk = text[i : i + Config.CGEVENT_UNICODE_CHUNK_SIZE]
 
             event_down = Quartz.CGEventCreateKeyboardEvent(event_source, 0, True)
             if event_down is None:
@@ -344,8 +323,8 @@ class SpeechTranscriber:
             Quartz.CGEventKeyboardSetUnicodeString(event_up, len(chunk), chunk)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
 
-            if i + CGEVENT_UNICODE_CHUNK_SIZE < len(text):
-                time.sleep(CGEVENT_CHUNK_DELAY)
+            if i + Config.CGEVENT_UNICODE_CHUNK_SIZE < len(text):
+                time.sleep(Config.CGEVENT_CHUNK_DELAY)
 
     def _insert_text_via_ax(self, text):
         """Вставляет текст через macOS Accessibility API.
@@ -390,7 +369,7 @@ class SpeechTranscriber:
         try:
             self._copy_text_to_clipboard(text)
             self._send_cmd_v()
-            time.sleep(CLIPBOARD_RESTORE_DELAY)
+            time.sleep(Config.CLIPBOARD_RESTORE_DELAY)
         finally:
             if old_clipboard is not None:
                 try:
@@ -417,10 +396,10 @@ class SpeechTranscriber:
         if event_source is None:
             raise RuntimeError("Не удалось создать источник системных keyboard events")
 
-        command_down = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_COMMAND, True)
-        paste_down = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_V, True)
-        paste_up = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_V, False)
-        command_up = Quartz.CGEventCreateKeyboardEvent(event_source, KEYCODE_COMMAND, False)
+        command_down = Quartz.CGEventCreateKeyboardEvent(event_source, Config.KEYCODE_COMMAND, True)
+        paste_down = Quartz.CGEventCreateKeyboardEvent(event_source, Config.KEYCODE_V, True)
+        paste_up = Quartz.CGEventCreateKeyboardEvent(event_source, Config.KEYCODE_V, False)
+        command_up = Quartz.CGEventCreateKeyboardEvent(event_source, Config.KEYCODE_COMMAND, False)
 
         if not all((command_down, paste_down, paste_up, command_up)):
             raise RuntimeError("Не удалось создать keyboard events для Cmd+V")
@@ -496,13 +475,13 @@ class SpeechTranscriber:
                 language,
                 wav_path,
             )
-        if audio_duration_seconds < SHORT_AUDIO_WARNING_SECONDS:
+        if audio_duration_seconds < Config.SHORT_AUDIO_WARNING_SECONDS:
             LOGGER.warning("⚠️ Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
-        if rms_energy < SILENCE_RMS_THRESHOLD:
+        if rms_energy < Config.SILENCE_RMS_THRESHOLD:
             LOGGER.warning(
                 "🔇 Аудио очень тихое (RMS=%.6f < %.4f), но распознавание всё равно будет запущено",
                 rms_energy,
-                SILENCE_RMS_THRESHOLD,
+                Config.SILENCE_RMS_THRESHOLD,
             )
 
         try:
@@ -540,7 +519,7 @@ class SpeechTranscriber:
             )
             return
 
-        if looks_like_hallucination(text) and rms_energy < HALLUCINATION_RMS_THRESHOLD:
+        if looks_like_hallucination(text) and rms_energy < Config.HALLUCINATION_RMS_THRESHOLD:
             LOGGER.warning("👻 Отброшен вероятный галлюцинаторный результат: %r", text)
 
         # Сохраняем текст в историю независимо от метода вставки
@@ -638,9 +617,9 @@ class SpeechTranscriber:
         rms_energy = diagnostics["rms_energy"]
         self.diagnostics_store.save_audio_recording(stem, audio_data, diagnostics)
 
-        if audio_duration_seconds < SHORT_AUDIO_WARNING_SECONDS:
+        if audio_duration_seconds < Config.SHORT_AUDIO_WARNING_SECONDS:
             LOGGER.warning("⚠️ Аудио короткое (%.2f с) для LLM-пайплайна", audio_duration_seconds)
-        if rms_energy < SILENCE_RMS_THRESHOLD:
+        if rms_energy < Config.SILENCE_RMS_THRESHOLD:
             LOGGER.warning("🔇 Аудио тихое (RMS=%.6f) для LLM-пайплайна", rms_energy)
 
         try:
@@ -659,7 +638,7 @@ class SpeechTranscriber:
             notify_user("MLX Whisper Dictation", "Речь не распознана. Попробуйте ещё раз.")
             return
 
-        if looks_like_hallucination(text) and rms_energy < HALLUCINATION_RMS_THRESHOLD:
+        if looks_like_hallucination(text) and rms_energy < Config.HALLUCINATION_RMS_THRESHOLD:
             LOGGER.warning("👻 Отброшен галлюцинаторный результат в LLM-пайплайне: %r", text)
             return
 
@@ -728,4 +707,4 @@ class SpeechTranscriber:
             self._copy_text_to_clipboard(llm_response)
         else:
             LOGGER.info("📋 Буфер обмена для LLM выключен, ответ не копируется")
-        notify_user("🤖 LLM", llm_response[: min(LLM_NOTIFICATION_CHAR_LIMIT, LLM_RESPONSE_CHAR_LIMIT)])
+        notify_user("🤖 LLM", llm_response[: min(Config.LLM_NOTIFICATION_CHAR_LIMIT, Config.LLM_RESPONSE_CHAR_LIMIT)])

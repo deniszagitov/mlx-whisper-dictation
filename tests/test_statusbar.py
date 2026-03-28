@@ -8,6 +8,7 @@ import time
 
 import pytest
 import src.ui as ui_module
+from src.config import Config
 
 
 class FakeRecorder:
@@ -91,6 +92,15 @@ def patched_app_module(app_module, monkeypatch):
     monkeypatch.setattr(ui_module, "get_input_monitoring_status", lambda: True)
     monkeypatch.setattr(ui_module, "_load_microphone_profiles", lambda: [])
     monkeypatch.setattr(ui_module, "notify_user", lambda *args: None)
+    defaults = ui_module.defaults
+    monkeypatch.setattr(defaults, "load_str", lambda key, fallback=None: fallback)
+    monkeypatch.setattr(defaults, "load_bool", lambda key, fallback: fallback)
+    monkeypatch.setattr(defaults, "load_input_device_index", lambda: None)
+    monkeypatch.setattr(defaults, "save_str", lambda key, value: None)
+    monkeypatch.setattr(defaults, "save_bool", lambda key, value: None)
+    monkeypatch.setattr(defaults, "save_max_time", lambda value: None)
+    monkeypatch.setattr(defaults, "save_input_device_index", lambda value: None)
+    monkeypatch.setattr(defaults, "remove_key", lambda key: None)
     return app_module
 
 
@@ -123,7 +133,7 @@ class TestStatusBarInit:
     def test_initial_state_is_idle(self, make_app, patched_app_module):
         """После создания приложение в состоянии ожидания."""
         app, _ = make_app(languages=["ru"])
-        assert app.state == patched_app_module.STATUS_IDLE
+        assert app.state == Config.STATUS_IDLE
 
     def test_initial_title_is_pause_icon(self, make_app):
         """Начальная иконка — ⏯."""
@@ -212,7 +222,7 @@ class TestStatusBarStateTransitions:
         """Начало записи переключает состояние в recording."""
         app, recorder = make_app(languages=["ru"])
         app.start_app(None)
-        assert app.state == patched_app_module.STATUS_RECORDING
+        assert app.state == Config.STATUS_RECORDING
         assert app.started is True
         assert recorder.started is True
 
@@ -227,7 +237,7 @@ class TestStatusBarStateTransitions:
         app, recorder = make_app(languages=["ru"])
         app.start_app(None)
         app.stop_app(None)
-        assert app.state == patched_app_module.STATUS_TRANSCRIBING
+        assert app.state == Config.STATUS_TRANSCRIBING
         assert app.started is False
         assert recorder.stopped is True
 
@@ -235,7 +245,7 @@ class TestStatusBarStateTransitions:
         """Остановка без старта не меняет состояние."""
         app, recorder = make_app(languages=["ru"])
         app.stop_app(None)
-        assert app.state == patched_app_module.STATUS_IDLE
+        assert app.state == Config.STATUS_IDLE
         assert recorder.stopped is False
 
     def test_toggle_starts_when_idle(self, make_app, patched_app_module):
@@ -292,12 +302,12 @@ class TestStatusBarStateTransitions:
     def test_toggle_recording_notification_persists_flag(self, make_app, patched_app_module, monkeypatch):
         """Флаг уведомления о записи должен сохраняться."""
         saved_values = []
-        monkeypatch.setattr(ui_module, "_save_defaults_bool", lambda key, value: saved_values.append((key, value)))
+        monkeypatch.setattr(ui_module.defaults, "save_bool", lambda key, value: saved_values.append((key, value)))
         app, _ = make_app(languages=["ru"])
 
         app.toggle_recording_notification(app.recording_notification_item)
 
-        assert (patched_app_module.DEFAULTS_KEY_RECORDING_NOTIFICATION, False) in saved_values
+        assert (Config.DEFAULTS_KEY_RECORDING_NOTIFICATION, False) in saved_values
 
 
 class TestStatusBarDisplay:
@@ -313,33 +323,33 @@ class TestStatusBarDisplay:
     def test_transcribing_title_shows_brain(self, make_app, patched_app_module):
         """Во время распознавания отображается мозг."""
         app, _ = make_app(languages=["ru"])
-        app.state = patched_app_module.STATUS_TRANSCRIBING
+        app.state = Config.STATUS_TRANSCRIBING
         app._refresh_title_and_status()
         assert app.title == "🧠"
 
     def test_idle_title_shows_pause(self, make_app, patched_app_module):
         """В состоянии ожидания отображается пауза."""
         app, _ = make_app(languages=["ru"])
-        app.state = patched_app_module.STATUS_IDLE
+        app.state = Config.STATUS_IDLE
         app._refresh_title_and_status()
         assert app.title == "⏯"
 
     def test_state_label_idle(self, make_app, patched_app_module):
         """Метка idle → ожидание."""
         app, _ = make_app(languages=["ru"])
-        app.state = patched_app_module.STATUS_IDLE
+        app.state = Config.STATUS_IDLE
         assert app._state_label() == "ожидание"
 
     def test_state_label_recording(self, make_app, patched_app_module):
         """Метка recording → запись."""
         app, _ = make_app(languages=["ru"])
-        app.state = patched_app_module.STATUS_RECORDING
+        app.state = Config.STATUS_RECORDING
         assert app._state_label() == "запись"
 
     def test_state_label_transcribing(self, make_app, patched_app_module):
         """Метка transcribing → распознавание."""
         app, _ = make_app(languages=["ru"])
-        app.state = patched_app_module.STATUS_TRANSCRIBING
+        app.state = Config.STATUS_TRANSCRIBING
         assert app._state_label() == "распознавание"
 
     def test_refresh_token_usage_item_updates_number(self, make_app):
@@ -386,8 +396,8 @@ class TestStatusBarSetState:
     def test_set_state_updates_state(self, make_app, patched_app_module):
         """set_state обновляет текущее состояние."""
         app, _ = make_app(languages=["ru"])
-        app.set_state(patched_app_module.STATUS_RECORDING)
-        assert app.state == patched_app_module.STATUS_RECORDING
+        app.set_state(Config.STATUS_RECORDING)
+        assert app.state == Config.STATUS_RECORDING
 
     def test_set_permission_status_updates_microphone(self, make_app):
         """set_permission_status обновляет статус микрофона."""
@@ -423,7 +433,7 @@ class TestStatusBarMenuSelections:
         def save_defaults_max_time(value):
             saved_values.append(value)
 
-        monkeypatch.setattr(ui_module, "_save_defaults_max_time", save_defaults_max_time)
+        monkeypatch.setattr(ui_module.defaults, "save_max_time", save_defaults_max_time)
         app, _ = make_app(languages=["ru"], max_time=30)
 
         app.change_max_time(app._menu_item("Лимит: 60 с"))
@@ -445,12 +455,12 @@ class TestStatusBarMenuSelections:
     def test_change_model_persists_selection(self, make_app, patched_app_module, monkeypatch):
         """Выбранная модель должна сохраняться в NSUserDefaults."""
         saved_values = []
-        monkeypatch.setattr(ui_module, "_save_defaults_str", lambda key, value: saved_values.append((key, value)))
+        monkeypatch.setattr(ui_module.defaults, "save_str", lambda key, value: saved_values.append((key, value)))
         app, _ = make_app(languages=["ru"], max_time=30)
 
         app.change_model(app._menu_item("Модель: whisper-turbo"))
 
-        assert (patched_app_module.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_values
+        assert (Config.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_values
 
     def test_change_input_device_persists_selection(self, patched_app_module, monkeypatch):
         """Выбранный микрофон должен сохраняться в настройках."""
@@ -459,7 +469,7 @@ class TestStatusBarMenuSelections:
         def save_defaults_input_device_index(value):
             saved_values.append(value)
 
-        monkeypatch.setattr(ui_module, "_save_defaults_input_device_index", save_defaults_input_device_index)
+        monkeypatch.setattr(ui_module.defaults, "save_input_device_index", save_defaults_input_device_index)
         monkeypatch.setattr(
             ui_module,
             "list_input_devices",
@@ -538,7 +548,7 @@ class TestStatusBarMenuSelections:
                     "model_repo": "mlx-community/whisper-turbo",
                     "language": "ru",
                     "max_time": 60,
-                    "performance_mode": patched_app_module.PERFORMANCE_MODE_FAST,
+                    "performance_mode": Config.PERFORMANCE_MODE_FAST,
                     "private_mode": True,
                     "paste_cgevent": False,
                     "paste_ax": True,
@@ -547,10 +557,10 @@ class TestStatusBarMenuSelections:
                 },
             ],
         )
-        monkeypatch.setattr(ui_module, "_save_defaults_input_device_index", saved_device_indexes.append)
-        monkeypatch.setattr(ui_module, "_save_defaults_str", save_defaults_str)
-        monkeypatch.setattr(ui_module, "_save_defaults_bool", save_defaults_bool)
-        monkeypatch.setattr(ui_module, "_save_defaults_max_time", saved_max_times.append)
+        monkeypatch.setattr(ui_module.defaults, "save_input_device_index", saved_device_indexes.append)
+        monkeypatch.setattr(ui_module.defaults, "save_str", save_defaults_str)
+        monkeypatch.setattr(ui_module.defaults, "save_bool", save_defaults_bool)
+        monkeypatch.setattr(ui_module.defaults, "save_max_time", saved_max_times.append)
 
         recorder = FakeRecorder()
         app = patched_app_module.StatusBarApp(
@@ -567,32 +577,32 @@ class TestStatusBarMenuSelections:
         assert recorder.input_device["index"] == 4
         assert app.model_name == "whisper-turbo"
         assert app.max_time == 60
-        assert app.performance_mode == patched_app_module.PERFORMANCE_MODE_FAST
+        assert app.performance_mode == Config.PERFORMANCE_MODE_FAST
         assert recorder.transcriber.private_mode_enabled is True
         assert recorder.transcriber.paste_cgevent_enabled is False
         assert recorder.transcriber.paste_ax_enabled is True
         assert recorder.transcriber.paste_clipboard_enabled is True
         assert recorder.transcriber.llm_clipboard_enabled is False
         assert saved_device_indexes == [4]
-        assert (patched_app_module.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_strings
-        assert (patched_app_module.DEFAULTS_KEY_PERFORMANCE_MODE, patched_app_module.PERFORMANCE_MODE_FAST) in saved_strings
+        assert (Config.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_strings
+        assert (Config.DEFAULTS_KEY_PERFORMANCE_MODE, Config.PERFORMANCE_MODE_FAST) in saved_strings
         assert saved_max_times == [60]
-        assert (patched_app_module.DEFAULTS_KEY_PASTE_CGEVENT, False) in saved_bools
-        assert (patched_app_module.DEFAULTS_KEY_PASTE_AX, True) in saved_bools
-        assert (patched_app_module.DEFAULTS_KEY_PASTE_CLIPBOARD, True) in saved_bools
-        assert (patched_app_module.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
+        assert (Config.DEFAULTS_KEY_PASTE_CGEVENT, False) in saved_bools
+        assert (Config.DEFAULTS_KEY_PASTE_AX, True) in saved_bools
+        assert (Config.DEFAULTS_KEY_PASTE_CLIPBOARD, True) in saved_bools
+        assert (Config.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
 
     def test_toggle_llm_clipboard_updates_transcriber_and_defaults(self, make_app, patched_app_module, monkeypatch):
         """Переключатель LLM-буфера должен менять runtime-state и сохраняться."""
         saved_bools = []
-        monkeypatch.setattr(ui_module, "_save_defaults_bool", lambda key, value: saved_bools.append((key, value)))
+        monkeypatch.setattr(ui_module.defaults, "save_bool", lambda key, value: saved_bools.append((key, value)))
         app, recorder = make_app(languages=["ru"])
 
         app.toggle_llm_clipboard(app.llm_clipboard_item)
 
         assert recorder.transcriber.llm_clipboard_enabled is False
         assert app.llm_clipboard_item.state == 0
-        assert (patched_app_module.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
+        assert (Config.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
 
     def test_delete_microphone_profile_removes_it(self, patched_app_module, monkeypatch):
         """Сохранённый профиль можно удалить из подменю быстрых профилей."""
@@ -608,7 +618,7 @@ class TestStatusBarMenuSelections:
                     "model_repo": "mlx-community/whisper-large-v3-turbo",
                     "language": "ru",
                     "max_time": 30,
-                    "performance_mode": patched_app_module.PERFORMANCE_MODE_NORMAL,
+                    "performance_mode": Config.PERFORMANCE_MODE_NORMAL,
                     "private_mode": False,
                     "paste_cgevent": True,
                     "paste_ax": False,
@@ -640,27 +650,27 @@ class TestStatusBarMenuSelections:
     def test_change_performance_mode_updates_recorder_and_menu(self, make_app, patched_app_module, monkeypatch):
         """Смена режима должна обновлять рекордер и сохраняться."""
         saved_values = []
-        monkeypatch.setattr(ui_module, "_save_defaults_str", lambda key, value: saved_values.append((key, value)))
+        monkeypatch.setattr(ui_module.defaults, "save_str", lambda key, value: saved_values.append((key, value)))
         app, recorder = make_app(languages=["ru"], max_time=30)
 
         app.change_performance_mode(app.performance_menu["Быстрый"])
 
-        assert app.performance_mode == patched_app_module.PERFORMANCE_MODE_FAST
-        assert recorder.performance_mode == patched_app_module.PERFORMANCE_MODE_FAST
+        assert app.performance_mode == Config.PERFORMANCE_MODE_FAST
+        assert recorder.performance_mode == Config.PERFORMANCE_MODE_FAST
         assert "Быстрый" in app.performance_menu.title
-        assert (patched_app_module.DEFAULTS_KEY_PERFORMANCE_MODE, patched_app_module.PERFORMANCE_MODE_FAST) in saved_values
+        assert (Config.DEFAULTS_KEY_PERFORMANCE_MODE, Config.PERFORMANCE_MODE_FAST) in saved_values
 
     def test_change_llm_prompt_persists_selection(self, make_app, patched_app_module, monkeypatch):
         """Выбор LLM-промпта должен сохраняться и применяться к рекордеру."""
         saved_values = []
-        monkeypatch.setattr(ui_module, "_save_defaults_str", lambda key, value: saved_values.append((key, value)))
+        monkeypatch.setattr(ui_module.defaults, "save_str", lambda key, value: saved_values.append((key, value)))
         app, recorder = make_app(languages=["ru"], max_time=30)
 
         app._change_llm_prompt(app.llm_prompt_menu["Исправь текст"])
 
         assert app.llm_prompt_name == "Исправь текст"
-        assert recorder.llm_system_prompt == patched_app_module.LLM_PROMPT_PRESETS["Исправь текст"]
-        assert (patched_app_module.DEFAULTS_KEY_LLM_PROMPT, "Исправь текст") in saved_values
+        assert recorder.llm_system_prompt == Config.LLM_PROMPT_PRESETS["Исправь текст"]
+        assert (Config.DEFAULTS_KEY_LLM_PROMPT, "Исправь текст") in saved_values
 
 
 class TestStatusBarHotkeys:
@@ -695,14 +705,14 @@ class TestStatusBarHotkeys:
 
         monkeypatch.setattr(ui_module, "capture_hotkey_combination", lambda *args, **kwargs: "ctrl+shift+space")
         monkeypatch.setattr(ui_module, "notify_user", lambda *args: None)
-        monkeypatch.setattr(ui_module, "_save_defaults_str", lambda key, value: saved_values.append((key, value)))
+        monkeypatch.setattr(ui_module.defaults, "save_str", lambda key, value: saved_values.append((key, value)))
         app, _ = make_app(languages=["ru"])
         app.key_listener = ListenerStub()
 
         app.change_secondary_hotkey(None)
 
-        assert (patched_app_module.DEFAULTS_KEY_PRIMARY_HOTKEY, "cmd_l+alt") in saved_values
-        assert (patched_app_module.DEFAULTS_KEY_SECONDARY_HOTKEY, "ctrl+shift+space") in saved_values
+        assert (Config.DEFAULTS_KEY_PRIMARY_HOTKEY, "cmd_l+alt") in saved_values
+        assert (Config.DEFAULTS_KEY_SECONDARY_HOTKEY, "ctrl+shift+space") in saved_values
 
     def test_change_secondary_hotkey_can_disable_it(self, make_app, patched_app_module, monkeypatch):
         """Пустое значение должно отключать дополнительный хоткей."""
@@ -733,12 +743,12 @@ class TestStatusBarHotkeys:
             "GlobalKeyListener",
             lambda *_args, **_kwargs: type("Listener", (), {"start": lambda self: None, "stop": lambda self: None})(),
         )
-        monkeypatch.setattr(ui_module, "_save_defaults_str", lambda key, value: saved_values.append((key, value)))
+        monkeypatch.setattr(ui_module.defaults, "save_str", lambda key, value: saved_values.append((key, value)))
         app, _ = make_app(languages=["ru"])
 
         app.change_llm_hotkey(None)
 
-        assert (patched_app_module.DEFAULTS_KEY_LLM_HOTKEY, "ctrl+shift+l") in saved_values
+        assert (Config.DEFAULTS_KEY_LLM_HOTKEY, "ctrl+shift+l") in saved_values
 
 
 class TestCancelRecording:
@@ -751,7 +761,7 @@ class TestCancelRecording:
 
         app.cancel_recording()
 
-        assert app.state == patched_app_module.STATUS_IDLE
+        assert app.state == Config.STATUS_IDLE
         assert app.started is False
 
     def test_cancel_recording_calls_recorder_cancel(self, make_app):
@@ -769,7 +779,7 @@ class TestCancelRecording:
 
         app.cancel_recording()
 
-        assert app.state == patched_app_module.STATUS_IDLE
+        assert app.state == Config.STATUS_IDLE
         assert recorder.cancelled is False
 
     def test_cancel_recording_updates_menu_items(self, make_app):
@@ -819,7 +829,7 @@ class TestCancelRecording:
 
         app._handle_escape_key(FakeEvent())
 
-        assert app.state == patched_app_module.STATUS_IDLE
+        assert app.state == Config.STATUS_IDLE
         assert recorder.cancelled is False
 
     def test_non_escape_key_ignored(self, make_app):
@@ -882,10 +892,8 @@ class TestRecordingOverlayIntegration:
 
     def test_toggle_recording_overlay_off(self, make_app, monkeypatch):
         """toggle_recording_overlay выключает индикатор."""
-        import src.config as config_module
-
         saved = {}
-        monkeypatch.setattr(ui_module, "_save_defaults_bool", lambda k, v: saved.update({k: v}))
+        monkeypatch.setattr(ui_module.defaults, "save_bool", lambda k, v: saved.update({k: v}))
 
         app, _ = make_app(languages=["ru"])
         assert app.show_recording_overlay is True
@@ -894,14 +902,12 @@ class TestRecordingOverlayIntegration:
 
         assert app.show_recording_overlay is False
         assert app.recording_overlay_item.state == 0
-        assert saved.get(config_module.DEFAULTS_KEY_RECORDING_OVERLAY) is False
+        assert saved.get(Config.DEFAULTS_KEY_RECORDING_OVERLAY) is False
 
     def test_toggle_recording_overlay_on(self, make_app, monkeypatch):
         """toggle_recording_overlay включает индикатор обратно."""
-        import src.config as config_module
-
         saved = {}
-        monkeypatch.setattr(config_module, "_save_defaults_bool", lambda k, v: saved.update({k: v}))
+        monkeypatch.setattr(ui_module.defaults, "save_bool", lambda k, v: saved.update({k: v}))
 
         app, _ = make_app(languages=["ru"])
         app.show_recording_overlay = False

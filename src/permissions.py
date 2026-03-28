@@ -14,13 +14,7 @@ import Quartz
 import rumps
 from Foundation import NSURL, NSDictionary
 
-from .config import (
-    ACCESSIBILITY_SETTINGS_URL,
-    INPUT_MONITORING_SETTINGS_URL,
-    PERMISSION_DENIED,
-    PERMISSION_GRANTED,
-    PERMISSION_UNKNOWN,
-)
+from .config import Config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -183,10 +177,10 @@ def permission_label(status):
         Строковое значение статуса.
     """
     if status is True:
-        return PERMISSION_GRANTED
+        return Config.PERMISSION_GRANTED
     if status is False:
-        return PERMISSION_DENIED
-    return PERMISSION_UNKNOWN
+        return Config.PERMISSION_DENIED
+    return Config.PERMISSION_UNKNOWN
 
 
 def warn_missing_accessibility_permission():
@@ -197,7 +191,7 @@ def warn_missing_accessibility_permission():
         "Откройте System Settings -> Privacy & Security -> Accessibility и включите приложение заново."
     )
     LOGGER.error("🔐 %s", message)
-    open_system_settings(ACCESSIBILITY_SETTINGS_URL)
+    open_system_settings(Config.ACCESSIBILITY_SETTINGS_URL)
     notify_user("MLX Whisper Dictation", message)
 
 
@@ -209,5 +203,5 @@ def warn_missing_input_monitoring_permission():
         "Откройте System Settings -> Privacy & Security -> Input Monitoring и включите приложение заново."
     )
     LOGGER.error("🔐 %s", message)
-    open_system_settings(INPUT_MONITORING_SETTINGS_URL)
+    open_system_settings(Config.INPUT_MONITORING_SETTINGS_URL)
     notify_user("MLX Whisper Dictation", message)
