@@ -8,55 +8,41 @@ import argparse
 import logging
 import platform
 import sys
-import time
-from pathlib import Path
 
-import mlx_whisper
-import Quartz
+import Quartz  # noqa: F401
 from Foundation import NSUserDefaults
 from pynput import keyboard
-from src.audio import Recorder, list_input_devices, microphone_menu_title
+from src.audio import Recorder, list_input_devices, microphone_menu_title  # noqa: F401
 from src.config import Config, Defaults
-from src.diagnostics import (
-    DiagnosticsStore,
-    looks_like_hallucination,
-    setup_logging,
-)
+from src.diagnostics import DiagnosticsStore, setup_logging  # noqa: F401
 from src.hotkeys import (
-    _CARBON_AVAILABLE,
-    _KEYCODE_ESCAPE,
-    MODIFIER_DISPLAY_ORDER,
-    MODIFIER_FLAG_MASKS,
-    MODIFIER_KEYCODES_MAP,
+    MODIFIER_DISPLAY_ORDER,  # noqa: F401
+    MODIFIER_FLAG_MASKS,  # noqa: F401
+    MODIFIER_KEYCODES_MAP,  # noqa: F401
     DoubleCommandKeyListener,
     GlobalKeyListener,
     MultiHotkeyListener,
-    _event_key_name_static,
-    _keycode_to_char,
-    capture_hotkey_combination,
+    _event_key_name_static,  # noqa: F401
     format_hotkey_status,
-    hotkey_name_matches,
+    hotkey_name_matches,  # noqa: F401
     normalize_key_combination,
-    normalize_key_name,
-    parse_key,
-    parse_key_combination,
+    normalize_key_name,  # noqa: F401
+    parse_key_combination,  # noqa: F401
 )
-from src.llm import LLMProcessor, strip_think_blocks
+from src.llm import LLMProcessor
 from src.permissions import (
-    frontmost_application_info,
-    get_accessibility_status,
-    get_input_monitoring_status,
-    is_accessibility_trusted,
-    notify_user,
-    permission_label,
-    permission_preflight_status,
+    get_accessibility_status,  # noqa: F401
+    get_input_monitoring_status,  # noqa: F401
+    is_accessibility_trusted,  # noqa: F401
+    permission_label,  # noqa: F401
+    permission_preflight_status,  # noqa: F401
     request_accessibility_permission,
     request_input_monitoring_permission,
     warn_missing_accessibility_permission,
     warn_missing_input_monitoring_permission,
 )
 from src.transcriber import SpeechTranscriber
-from src.ui import RecordingOverlay, StatusBarApp, _load_microphone_profiles
+from src.ui import RecordingOverlay, StatusBarApp  # noqa: F401
 
 defaults = Defaults()
 

@@ -106,7 +106,7 @@ convention = "google"
 "src/diagnostics.py" = ["N802"]
 "src/llm.py" = ["PLC0415"]
 "src/transcriber.py" = ["PLC0415"]
-"main.py" = ["F401"]
+"main.py" = []
 
 [tool.ruff.format]
 quote-style = "double"

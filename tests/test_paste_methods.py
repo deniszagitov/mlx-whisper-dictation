@@ -29,7 +29,7 @@ class TestCGEventUnicode:
 
         monkeypatch.setattr(transcriber_module.time, "sleep", sleep_calls.append)
         monkeypatch.setattr(
-            app_module,
+            transcriber_module,
             "frontmost_application_info",
             lambda: {"name": "Test", "bundle_id": "com.test", "pid": 1},
         )
@@ -112,7 +112,7 @@ class TestCGEventUnicode:
         transcriber = make_transcriber(app_module)
         monkeypatch.setattr(transcriber_module.time, "sleep", lambda *_: None)
         monkeypatch.setattr(
-            app_module,
+            transcriber_module,
             "frontmost_application_info",
             lambda: None,
         )
