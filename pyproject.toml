@@ -154,8 +154,46 @@ disallow_untyped_calls = false
 [tool.importlinter]
 root_package = "src"
 
+# Контракты ниже задают deny-by-default модель:
+# импорт разрешён только явно перечисленным модулям-импортёрам.
 [[tool.importlinter.contracts]]
-name = "Domain не зависит от остальных слоёв"
+name = "Domain импортируется только разрешёнными слоями"
+type = "protected"
+protected_modules = ["src.domain"]
+allowed_importers = [
+    "src.app",
+    "src.use_cases",
+    "src.adapters",
+    "src.infrastructure",
+]
+
+[[tool.importlinter.contracts]]
+name = "Use cases импортируются только app"
+type = "protected"
+protected_modules = ["src.use_cases"]
+allowed_importers = ["src.app"]
+
+[[tool.importlinter.contracts]]
+name = "App импортируется только UI adapter"
+type = "protected"
+protected_modules = ["src.app"]
+allowed_importers = ["src.adapters.ui"]
+
+[[tool.importlinter.contracts]]
+name = "Adapters не импортируются снаружи без явного разрешения"
+type = "protected"
+protected_modules = ["src.adapters"]
+allowed_importers = []
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure импортируется только hotkey dialog adapter"
+type = "protected"
+protected_modules = ["src.infrastructure"]
+allowed_importers = ["src.adapters.hotkey_dialog"]
+
+# Дополнительно фиксируем запрещённые исходящие и косвенные зависимости.
+[[tool.importlinter.contracts]]
+name = "Domain не зависит от app, use_cases, adapters и infrastructure"
 type = "forbidden"
 source_modules = ["src.domain"]
 forbidden_modules = [
@@ -178,10 +216,10 @@ source_modules = ["src.app"]
 forbidden_modules = ["src.adapters", "src.infrastructure"]
 
 [[tool.importlinter.contracts]]
-name = "UI adapter не зависит от use_cases и infrastructure"
+name = "UI adapter не зависит от use_cases и infrastructure даже косвенно"
 type = "forbidden"
 source_modules = ["src.adapters.ui"]
-allow_indirect_imports = true
+allow_indirect_imports = false
 forbidden_modules = ["src.use_cases", "src.infrastructure"]
 
 [[tool.importlinter.contracts]]
