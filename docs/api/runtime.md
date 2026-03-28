@@ -1,26 +1,29 @@
 # Runtime API
 
-Этот раздел собирается автоматически из docstring entrypoint-файла и модулей в каталоге `src/`.
+Этот раздел описывает runtime-часть после перехода на Clean Architecture.
 
-## Что покрывает автогенерация
+## Что покрывает раздел
 
-- точку входа приложения и CLI-аргументы;
-- конфигурацию и сохранение настроек в NSUserDefaults;
-- запись звука, хоткеи, разрешения macOS и menu bar UI;
-- распознавание речи, вставку текста, историю и LLM-пайплайн.
+- composition root в `main.py`;
+- слой `domain` с чистыми правилами и типами;
+- слой `use_cases` со сценариями приложения;
+- adapters для menu bar UI и overlay;
+- infrastructure для macOS runtime, MLX, persistence и хоткеев.
 
 ## Карта runtime-модулей
 
 - [CLI и запуск](entrypoint.md) — Приложение офлайн-диктовки для macOS на базе MLX Whisper.
-- [Конфигурация](modules/config.md) — Константы и настройки приложения Dictator.
-- [Аудио и микрофон](modules/audio.md) — Запись звука и работа с устройствами ввода приложения Dictator.
-- [Диагностика](modules/diagnostics.md) — Логирование и диагностика приложения Dictator.
-- [Глобальные хоткеи](modules/hotkeys.md) — Горячие клавиши и слушатели клавиатуры приложения Dictator.
-- [Разрешения macOS](modules/permissions.md) — Разрешения macOS и системные утилиты приложения Dictator.
-- [Распознавание и вставка](modules/transcriber.md) — Распознавание речи и вставка текста в активное приложение.
-- [LLM-обработка](modules/llm.md) — Обработка текста через LLM-модели приложения Dictator.
-- [Menu bar UI](modules/ui.md) — UI menu bar приложения Dictator.
+- [Domain и настройки](modules/config.md) — Константы, типы, порты и NSUserDefaults adapter.
+- [Аудио и микрофон](modules/audio.md) — Domain-утилиты микрофона и runtime-запись через PyAudio.
+- [Диагностика](modules/diagnostics.md) — Логирование и сохранение диагностических артефактов приложения.
+- [История распознавания](modules/history.md) — Persistence истории распознанного текста через NSUserDefaults.
+- [LLM runtime](modules/llm_runtime.md) — Runtime-адаптеры для загрузки, генерации и выгрузки MLX LLM.
+- [Горячие клавиши](modules/hotkeys.md) — Domain-правила, runtime-listener'ы и UI-захват комбинаций.
+- [Разрешения macOS](modules/permissions.md) — Разрешения macOS и системные утилиты приложения.
+- [Распознавание и вставка](modules/transcriber.md) — Domain-правила и `TranscriptionUseCases`.
+- [LLM-обработка](modules/llm.md) — Domain-обработка, LLM pipeline и `LlmGateway`.
+- [Menu bar UI](modules/ui.md) — `StatusBarApp`, `RecordingOverlay` и `DictationApp`.
 
 ## Как обновляется документация
 
-Перед каждой сборкой MkDocs запускается `scripts/generate_docs.py`, который перечитывает текущий Python-код и перегенерирует страницы API в каталоге `docs/api/`.
+Страницы в `docs/api/` синхронизируются вместе с кодом при архитектурных и пользовательских изменениях. Для текущего refactor-а они обновлены вручную под новую слоистую структуру.

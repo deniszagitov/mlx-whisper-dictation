@@ -12,10 +12,24 @@ import sys
 import Quartz  # noqa: F401
 from Foundation import NSUserDefaults
 from pynput import keyboard
-from src.audio import Recorder, list_input_devices, microphone_menu_title  # noqa: F401
-from src.config import Config, Defaults
-from src.diagnostics import DiagnosticsStore, setup_logging  # noqa: F401
-from src.hotkeys import (
+from src.adapters.hotkey_dialog import capture_hotkey_combination
+from src.adapters.overlay import RecordingOverlay
+from src.adapters.ui import StatusBarApp
+from src.app import (  # noqa: F401
+    AppSnapshot,
+    ClipboardService,
+    DictationApp,
+    HotkeyCaptureService,
+    HotkeyListenerFactoryService,
+    InputDeviceCatalogService,
+    MicrophoneProfilesService,
+    SystemIntegrationService,
+)
+from src.domain.audio import microphone_menu_title  # noqa: F401
+from src.domain.constants import Config
+from src.domain.hotkeys import format_hotkey_status, normalize_key_combination, normalize_key_name  # noqa: F401
+from src.infrastructure.audio_runtime import Recorder, list_input_devices
+from src.infrastructure.hotkeys import (
     MODIFIER_DISPLAY_ORDER,  # noqa: F401
     MODIFIER_FLAG_MASKS,  # noqa: F401
     MODIFIER_KEYCODES_MAP,  # noqa: F401
@@ -23,17 +37,25 @@ from src.hotkeys import (
     GlobalKeyListener,
     MultiHotkeyListener,
     _event_key_name_static,  # noqa: F401
-    format_hotkey_status,
     hotkey_name_matches,  # noqa: F401
-    normalize_key_combination,
-    normalize_key_name,  # noqa: F401
     parse_key_combination,  # noqa: F401
 )
-from src.llm import LLMProcessor
-from src.permissions import (
-    get_accessibility_status,  # noqa: F401
-    get_input_monitoring_status,  # noqa: F401
-    is_accessibility_trusted,  # noqa: F401
+from src.infrastructure.llm_runtime import (
+    LlmGateway as LLMProcessor,
+)
+from src.infrastructure.llm_runtime import (
+    cleanup_llm_runtime_memory,
+    ensure_llm_model_downloaded,
+    generate_llm_text,
+    is_llm_model_cached,
+    load_llm_runtime_objects,
+)
+from src.infrastructure.permissions import (
+    frontmost_application_info,
+    get_accessibility_status,
+    get_input_monitoring_status,
+    is_accessibility_trusted,
+    notify_user,
     permission_label,  # noqa: F401
     permission_preflight_status,  # noqa: F401
     request_accessibility_permission,
@@ -41,21 +63,32 @@ from src.permissions import (
     warn_missing_accessibility_permission,
     warn_missing_input_monitoring_permission,
 )
-from src.transcriber import SpeechTranscriber
-from src.ui import RecordingOverlay, StatusBarApp  # noqa: F401
+from src.infrastructure.persistence.defaults import Defaults
+from src.infrastructure.persistence.diagnostics import DiagnosticsStore, setup_logging
+from src.infrastructure.persistence.history import load_history_items, save_history_records
+from src.infrastructure.persistence.microphone_profiles import _load_microphone_profiles, _save_microphone_profiles
+from src.infrastructure.text_input import (
+    copy_to_clipboard,
+    insert_text_via_ax,
+    read_clipboard,
+    send_cmd_v,
+    type_text_via_cgevent,
+)
+from src.infrastructure.whisper_runtime import run_whisper_transcription
+from src.use_cases.transcription import TranscriptionUseCases as SpeechTranscriber
 
 defaults = Defaults()
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _cli_option_was_provided(*option_names):
+def _cli_option_was_provided(*option_names: str) -> bool:
     """Проверяет, был ли аргумент командной строки передан явно."""
     argv = sys.argv[1:]
     return any(option_name in argv for option_name in option_names)
 
 
-def _load_saved_runtime_preferences(args):
+def _load_saved_runtime_preferences(args: argparse.Namespace) -> None:
     """Подставляет сохранённые настройки, если их не переопределили через CLI."""
     if not _cli_option_was_provided("-m", "--model"):
         saved_model = defaults.load_str(Config.DEFAULTS_KEY_MODEL, fallback=None)
@@ -87,7 +120,7 @@ def _load_saved_runtime_preferences(args):
         args.llm_key_combination = defaults.load_str(Config.DEFAULTS_KEY_LLM_HOTKEY, fallback="") or None
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     """Разбирает аргументы командной строки.
 
     Returns:
@@ -218,7 +251,7 @@ def parse_args():
     return args
 
 
-def _log_startup_configuration(args):
+def _log_startup_configuration(args: argparse.Namespace) -> None:
     """Пишет в лог итоговую конфигурацию запуска приложения."""
     LOGGER.info("Запуск с моделью: %s", args.model)
     if args.k_double_cmd:
@@ -231,7 +264,7 @@ def _log_startup_configuration(args):
         LOGGER.info("LLM-хоткей: %s", args.llm_key_combination)
 
 
-def main():
+def main() -> None:
     """Запускает приложение диктовки и глобальные обработчики клавиш."""
     setup_logging()
 
@@ -247,12 +280,67 @@ def main():
     if input_monitoring_granted is False:
         warn_missing_input_monitoring_permission()
 
-    transcriber = SpeechTranscriber(args.model)
-    recorder = Recorder(transcriber)
-    recorder.llm_processor = LLMProcessor(args.llm_model)
+    transcriber = SpeechTranscriber(
+        args.model,
+        settings_store=defaults,
+        diagnostics_store=DiagnosticsStore(),
+        transcription_runner=run_whisper_transcription,
+        type_text_via_cgevent=lambda text: type_text_via_cgevent(text, frontmost_app_info=frontmost_application_info),
+        insert_text_via_ax=insert_text_via_ax,
+        send_cmd_v=lambda: send_cmd_v(frontmost_app_info=frontmost_application_info),
+        clipboard_reader=read_clipboard,
+        clipboard_writer=copy_to_clipboard,
+        history_item_loader=load_history_items,
+        history_record_saver=save_history_records,
+        notify_user=notify_user,
+        is_accessibility_trusted=is_accessibility_trusted,
+        get_input_monitoring_status=get_input_monitoring_status,
+        request_accessibility_permission=request_accessibility_permission,
+        request_input_monitoring_permission=request_input_monitoring_permission,
+        warn_missing_accessibility_permission=warn_missing_accessibility_permission,
+        warn_missing_input_monitoring_permission=warn_missing_input_monitoring_permission,
+    )
+    recorder = Recorder()
+    llm_processor = LLMProcessor(
+        args.llm_model,
+        runtime_loader=load_llm_runtime_objects,
+        generation_runner=generate_llm_text,
+        model_cache_checker=is_llm_model_cached,
+        model_downloader=ensure_llm_model_downloaded,
+        memory_cleanup=cleanup_llm_runtime_memory,
+    )
+    clipboard_service = ClipboardService(
+        read_text=read_clipboard,
+        write_text=copy_to_clipboard,
+    )
+    microphone_profiles_service = MicrophoneProfilesService(
+        load_profiles=_load_microphone_profiles,
+        save_profiles=_save_microphone_profiles,
+    )
+    system_integration_service = SystemIntegrationService(
+        notify=notify_user,
+        get_accessibility_status=get_accessibility_status,
+        get_input_monitoring_status=get_input_monitoring_status,
+        request_accessibility_permission=request_accessibility_permission,
+        request_input_monitoring_permission=request_input_monitoring_permission,
+        warn_missing_accessibility_permission=warn_missing_accessibility_permission,
+        warn_missing_input_monitoring_permission=warn_missing_input_monitoring_permission,
+    )
+    input_device_catalog = InputDeviceCatalogService(list_input_devices=list_input_devices)
+    hotkey_capture_service = HotkeyCaptureService(capture_combination=capture_hotkey_combination)
+    hotkey_listener_factory = HotkeyListenerFactoryService(
+        create_listener=lambda app, key_combination, callback: GlobalKeyListener(
+            app,
+            key_combination,
+            callback=callback,
+        ),
+    )
+    recording_overlay = RecordingOverlay()
 
-    app = StatusBarApp(
+    app_controller = DictationApp(
         recorder,
+        transcriber,
+        llm_processor,
         args.model,
         format_hotkey_status(args.key_combination, use_double_cmd=args.k_double_cmd),
         args.language,
@@ -263,24 +351,37 @@ def main():
         llm_hotkey_status=format_hotkey_status(args.llm_key_combination) if args.llm_key_combination else "не задан",
         llm_key_combination=args.llm_key_combination,
         use_double_command_hotkey=args.k_double_cmd,
+        clipboard_service=clipboard_service,
+        microphone_profiles_service=microphone_profiles_service,
+        system_integration_service=system_integration_service,
+        input_device_catalog=input_device_catalog,
+        hotkey_capture_service=hotkey_capture_service,
+        hotkey_listener_factory=hotkey_listener_factory,
+        recording_overlay=recording_overlay,
+        settings_store=defaults,
     )
+    app = StatusBarApp(app_controller)
     if args.k_double_cmd:
-        key_listener = DoubleCommandKeyListener(app)
+        key_listener = DoubleCommandKeyListener(app_controller)
         listener = keyboard.Listener(
             on_press=key_listener.on_key_press,
             on_release=key_listener.on_key_release,
         )
         listener.start()
-        app.key_listener = listener
+        app_controller.key_listener = listener
     else:
-        key_listener = MultiHotkeyListener(app, app._active_key_combinations())
-        key_listener.start()
-        app.key_listener = key_listener
+        key_listener = MultiHotkeyListener(app_controller, app_controller._active_key_combinations())  # type: ignore[assignment]
+        key_listener.start()  # type: ignore[attr-defined]
+        app_controller.key_listener = key_listener
 
-    if app._llm_key_combination:
-        llm_listener = GlobalKeyListener(app, app._llm_key_combination, callback=app.toggle_llm)
+    if app_controller._llm_key_combination:
+        llm_listener = GlobalKeyListener(
+            app_controller,
+            app_controller._llm_key_combination,
+            callback=app_controller.toggle_llm,
+        )
         llm_listener.start()
-        app.llm_key_listener = llm_listener
+        app_controller.llm_key_listener = llm_listener
 
     _log_startup_configuration(args)
     app.run()

@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 
-from src import config
-from src.config import Defaults
+from src.infrastructure.persistence import defaults as defaults_module
+from src.infrastructure.persistence.defaults import Defaults
 
 
 class FakeDefaults:
@@ -40,7 +40,7 @@ class FakeDefaults:
 def install_defaults(monkeypatch, fake_defaults):
     """Подменяет NSUserDefaults на тестовый дублер."""
     monkeypatch.setattr(
-        config,
+        defaults_module,
         "NSUserDefaults",
         SimpleNamespace(standardUserDefaults=lambda: fake_defaults),
     )
@@ -70,7 +70,7 @@ def test_save_defaults_bool_persists_boolean(monkeypatch):
     install_defaults(monkeypatch, fake_defaults)
 
     defaults = Defaults.__new__(Defaults)
-    defaults.save_bool("flag", 1)
+    defaults.save_bool("flag", 1)  # type: ignore[arg-type]  # намеренно передаём int для проверки приведения типа
 
     assert fake_defaults.saved_bool is True
 
@@ -99,6 +99,6 @@ def test_save_defaults_list_stores_copy(monkeypatch):
     install_defaults(monkeypatch, fake_defaults)
 
     defaults = Defaults.__new__(Defaults)
-    defaults.save_list("history", ("a", "b"))
+    defaults.save_list("history", ("a", "b"))  # type: ignore[arg-type]  # намеренно передаём tuple для проверки приведения типа
 
     assert fake_defaults.saved_object == ["a", "b"]

@@ -3,32 +3,84 @@
 import sys
 
 import pytest
-import src.transcriber as transcriber_module
-from src.config import Config
+from src.domain.constants import Config
+from src.domain.transcription import normalize_history_record
 
 
-def make_transcriber(app_module, diagnostics_enabled=False):
+class FakeSettingsStore:
+    """Простое in-memory хранилище настроек для тестов истории."""
+
+    def __init__(self) -> None:
+        self.private_mode_enabled = False
+
+    def load_bool(self, key, fallback):
+        if key == Config.DEFAULTS_KEY_PRIVATE_MODE:
+            return self.private_mode_enabled
+        return fallback
+
+    def save_bool(self, _key, _value):
+        return None
+
+    def load_list(self, _key):
+        return []
+
+    def save_list(self, _key, _value):
+        return None
+
+    def load_int(self, _key, fallback):
+        return fallback
+
+    def save_int(self, _key, _value):
+        return None
+
+    def load_str(self, _key, fallback=None):
+        return fallback
+
+    def save_str(self, _key, _value):
+        return None
+
+    def load_max_time(self, fallback):
+        return fallback
+
+    def save_max_time(self, _value):
+        return None
+
+    def load_input_device_index(self):
+        return None
+
+    def save_input_device_index(self, _value):
+        return None
+
+    def remove_key(self, _key):
+        return None
+
+
+def make_transcriber(app_module, diagnostics_enabled=False, settings_store=None):
     """Создает transcriber с отключённой диагностикой для тестов."""
     diagnostics_store = app_module.DiagnosticsStore(root_dir=Config.LOG_DIR, enabled=diagnostics_enabled)
-    return app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
+    return app_module.SpeechTranscriber(
+        "dummy-model",
+        settings_store=settings_store or FakeSettingsStore(),
+        diagnostics_store=diagnostics_store,
+    )
 
 
 # ---------------------------------------------------------------------------
-# _add_to_history
+# add_to_history
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="NSUserDefaults только на macOS")
 class TestAddToHistory:
-    """Тесты _add_to_history."""
+    """Тесты add_to_history."""
 
     def test_inserts_at_front(self, app_module, monkeypatch):
         """Новый текст добавляется в начало списка."""
         transcriber = make_transcriber(app_module)
         transcriber.history = ["первый"]
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_: None)
 
-        transcriber._add_to_history("второй")
+        transcriber.add_to_history("второй")
 
         assert transcriber.history[0] == "второй"
         assert transcriber.history[1] == "первый"
@@ -44,9 +96,9 @@ class TestAddToHistory:
         transcriber.history = ["старый", "свежий"]
 
         monkeypatch.setattr(transcriber, "_current_time", lambda: now)
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_: None)
 
-        transcriber._add_to_history("новый")
+        transcriber.add_to_history("новый")
 
         assert transcriber.history == ["новый", "свежий"]
 
@@ -56,9 +108,9 @@ class TestAddToHistory:
         transcriber.history = []
         saved = []
 
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda value: saved.append(list(value)))
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda value: saved.append(list(value)))
 
-        transcriber._add_to_history("тест")
+        transcriber.add_to_history("тест")
 
         assert len(saved) == 1
         assert saved[0][0]["text"] == "тест"
@@ -71,27 +123,18 @@ class TestAddToHistory:
         transcriber.private_mode_enabled = True
         saved = []
 
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda value: saved.append(list(value)))
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda value: saved.append(list(value)))
 
-        transcriber._add_to_history("секрет")
+        transcriber.add_to_history("секрет")
 
         assert transcriber.history == ["секрет"]
         assert saved == []
 
     def test_private_mode_starts_with_empty_history(self, app_module, monkeypatch):
         """При активном private mode история не должна подниматься из defaults."""
-        monkeypatch.setattr(
-            transcriber_module.defaults,
-            "load_bool",
-            lambda key, fallback: True if key == Config.DEFAULTS_KEY_PRIVATE_MODE else fallback,
-        )
-        monkeypatch.setattr(
-            transcriber_module,
-            "_load_history_records",
-            lambda *_args, **_kwargs: [{"text": "старый текст", "created_at": 2_000_000.0}],
-        )
-
-        transcriber = make_transcriber(app_module)
+        settings_store = FakeSettingsStore()
+        settings_store.private_mode_enabled = True
+        transcriber = make_transcriber(app_module, settings_store=settings_store)
 
         assert transcriber.private_mode_enabled is True
         assert transcriber.history == []
@@ -103,14 +146,15 @@ class TestAddToHistory:
         callback_calls = []
         saved_flags = []
         transcriber.history_callback = lambda: callback_calls.append(True)
+        monkeypatch.setattr(transcriber, "_current_time", lambda: 2_000_000.0)
 
-        monkeypatch.setattr(transcriber_module.defaults, "save_bool", lambda key, value: saved_flags.append((key, value)))
+        monkeypatch.setattr(transcriber.settings_store, "save_bool", lambda key, value: saved_flags.append((key, value)))
         monkeypatch.setattr(
-            transcriber_module,
-            "_load_history_records",
-            lambda *_args, **_kwargs: [{"text": "обычная история", "created_at": 2_000_000.0}],
+            transcriber,
+            "_load_history_items",
+            lambda: [{"text": "обычная история", "created_at": 2_000_000.0}],
         )
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_args: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_args: None)
 
         transcriber.set_private_mode(True)
         assert transcriber.history == []
@@ -130,9 +174,9 @@ class TestAddToHistory:
         transcriber.history = []
         callback_calls = []
         transcriber.history_callback = lambda: callback_calls.append(True)
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_: None)
 
-        transcriber._add_to_history("тест")
+        transcriber.add_to_history("тест")
 
         assert callback_calls == [True]
 
@@ -141,16 +185,16 @@ class TestAddToHistory:
         transcriber = make_transcriber(app_module)
         transcriber.history = []
         transcriber.history_callback = None
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_: None)
 
         # Не должно выбрасывать исключение
-        transcriber._add_to_history("тест")
+        transcriber.add_to_history("тест")
 
     def test_callback_exception_does_not_propagate(self, app_module, monkeypatch):
         """Исключение в history_callback не прерывает работу."""
         transcriber = make_transcriber(app_module)
         transcriber.history = []
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_: None)
 
         def failing_callback():
             raise ValueError("callback error")
@@ -158,18 +202,18 @@ class TestAddToHistory:
         transcriber.history_callback = failing_callback
 
         # Не должно выбрасывать исключение
-        transcriber._add_to_history("тест")
+        transcriber.add_to_history("тест")
         assert transcriber.history == ["тест"]
 
     def test_multiple_additions_maintain_order(self, app_module, monkeypatch):
         """Несколько добавлений сохраняют порядок: новейшее первым."""
         transcriber = make_transcriber(app_module)
         transcriber.history = []
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_: None)
 
-        transcriber._add_to_history("первый")
-        transcriber._add_to_history("второй")
-        transcriber._add_to_history("третий")
+        transcriber.add_to_history("первый")
+        transcriber.add_to_history("второй")
+        transcriber.add_to_history("третий")
 
         assert transcriber.history == ["третий", "второй", "первый"]
 
@@ -177,9 +221,9 @@ class TestAddToHistory:
         """Пустая строка тоже добавляется в историю (без фильтрации)."""
         transcriber = make_transcriber(app_module)
         transcriber.history = []
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda *_: None)
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda *_: None)
 
-        transcriber._add_to_history("")
+        transcriber.add_to_history("")
 
         assert transcriber.history == [""]
 
@@ -195,7 +239,7 @@ class TestAddToHistory:
         saved = []
 
         monkeypatch.setattr(transcriber, "_current_time", lambda: now)
-        monkeypatch.setattr(transcriber_module, "_save_history_records", lambda value: saved.append(list(value)))
+        monkeypatch.setattr(transcriber, "_save_history_records", lambda value: saved.append(list(value)))
 
         changed = transcriber.prune_expired_history()
 
@@ -228,7 +272,7 @@ class TestAddToHistory:
             "created_at": now - 10,
         })
 
-        result = transcriber_module._normalize_history_record(corrupted_item, now)
+        result = normalize_history_record(corrupted_item, now)
         assert result is None
 
     def test_valid_nsdictionary_record_is_loaded(self, monkeypatch):
@@ -252,7 +296,7 @@ class TestAddToHistory:
 
         valid_item = FakeNSDict({"text": "нормальный текст", "created_at": now - 10})
 
-        result = transcriber_module._normalize_history_record(valid_item, now)
+        result = normalize_history_record(valid_item, now)
         assert result is not None
         assert result["text"] == "нормальный текст"
 
@@ -269,9 +313,9 @@ class TestTokenUsage:
         callback_calls = []
         transcriber.token_usage_callback = lambda: callback_calls.append(True)
 
-        monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda key, value: saved.append((key, value)))
+        monkeypatch.setattr(transcriber.settings_store, "save_int", lambda key, value: saved.append((key, value)))
 
-        transcriber._add_token_usage(7)
+        transcriber.add_token_usage(7)
 
         assert transcriber.total_tokens == 17
         assert saved == [(Config.DEFAULTS_KEY_TOTAL_TOKENS, 17)]
@@ -281,10 +325,10 @@ class TestTokenUsage:
         """Нулевые и отрицательные значения не меняют счётчик."""
         transcriber = make_transcriber(app_module)
         transcriber.total_tokens = 10
-        monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_: pytest.fail("save should not be called"))
+        monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_: pytest.fail("save should not be called"))
 
-        transcriber._add_token_usage(0)
-        transcriber._add_token_usage(-5)
+        transcriber.add_token_usage(0)
+        transcriber.add_token_usage(-5)
 
         assert transcriber.total_tokens == 10
 
@@ -309,8 +353,8 @@ class TestFormatHistoryTitle:
         class FakeApp:
             pass
 
-        fake = FakeApp()
-        fake._format_history_title = app_module.StatusBarApp._format_history_title.__get__(fake)
+        fake: object = FakeApp()
+        fake._format_history_title = app_module.StatusBarApp._format_history_title.__get__(fake)  # type: ignore[attr-defined]
         return fake
 
     def test_short_text_unchanged(self, app_module, monkeypatch):

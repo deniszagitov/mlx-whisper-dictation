@@ -2,8 +2,8 @@
 
 import numpy as np
 import pytest
-import src.transcriber as transcriber_module
-from src.config import Config
+import src.infrastructure.whisper_runtime as whisper_runtime_module
+from src.domain.constants import Config
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -19,7 +19,11 @@ class TestTranscriptionIntegration:
     def test_run_transcription_returns_expected_shape(self, app_module):
         """Интеграция с моделью должна возвращать словарь с text/language/segments."""
         diagnostics_store = app_module.DiagnosticsStore(enabled=False)
-        transcriber = app_module.SpeechTranscriber(Config.DEFAULT_MODEL_NAME, diagnostics_store=diagnostics_store)
+        transcriber = app_module.SpeechTranscriber(
+            Config.DEFAULT_MODEL_NAME,
+            diagnostics_store=diagnostics_store,
+            transcription_runner=whisper_runtime_module.run_whisper_transcription,
+        )
 
         result = transcriber._run_transcription(make_audio(seconds=1.0, amplitude=0.0), "ru")
 
@@ -32,13 +36,17 @@ class TestTranscriptionIntegration:
         """Transcriber должен прокидывать language в mlx_whisper без искажений."""
         calls = []
         diagnostics_store = app_module.DiagnosticsStore(enabled=False)
-        transcriber = app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
+        transcriber = app_module.SpeechTranscriber(
+            "dummy-model",
+            diagnostics_store=diagnostics_store,
+            transcription_runner=whisper_runtime_module.run_whisper_transcription,
+        )
 
         def fake_transcribe(audio_data, **kwargs):
             calls.append(kwargs)
             return {"text": "ok", "language": kwargs["language"], "segments": []}
 
-        monkeypatch.setattr(transcriber_module.mlx_whisper, "transcribe", fake_transcribe)
+        monkeypatch.setattr(whisper_runtime_module.mlx_whisper, "transcribe", fake_transcribe)  # type: ignore[attr-defined]
 
         result = transcriber._run_transcription(make_audio(), "ru")
 

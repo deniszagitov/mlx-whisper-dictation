@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 import setuptools
 
@@ -24,7 +25,7 @@ def load_setup_module(monkeypatch, argv, with_fake_py2app=False):
         class FakeBasePy2App:
             def __init__(self, distribution=None):
                 self.distribution = distribution
-                self.copy_calls = []
+                self.copy_calls: list[object] = []
 
                 def _copy(source, *_args, **_kwargs):
                     self.copy_calls.append(source)
@@ -50,14 +51,14 @@ def load_setup_module(monkeypatch, argv, with_fake_py2app=False):
         def failing_imp_find_module(_name, _path=None):
             raise ImportError("not found")
 
-        fake_py2app_package = types.ModuleType("py2app")
-        fake_py2app_build = types.ModuleType("py2app.build_app")
+        fake_py2app_package: Any = types.ModuleType("py2app")
+        fake_py2app_build: Any = types.ModuleType("py2app.build_app")
         fake_py2app_build.py2app = FakeBasePy2App
         fake_py2app_build.imp_find_module = failing_imp_find_module
         fake_py2app_package.build_app = fake_py2app_build
 
-        fake_modulegraph_package = types.ModuleType("modulegraph")
-        fake_modulegraph_util = types.ModuleType("modulegraph.util")
+        fake_modulegraph_package: Any = types.ModuleType("modulegraph")
+        fake_modulegraph_util: Any = types.ModuleType("modulegraph.util")
         fake_modulegraph_util.imp_find_module = failing_imp_find_module
         fake_modulegraph_package.util = fake_modulegraph_util
 
@@ -74,6 +75,7 @@ def load_setup_module(monkeypatch, argv, with_fake_py2app=False):
 
     module_name = f"dictator_setup_{'_'.join(argv)}"
     spec = importlib.util.spec_from_file_location(module_name, SETUP_PATH)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

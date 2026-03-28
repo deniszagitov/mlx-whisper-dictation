@@ -55,6 +55,7 @@ def pytest_collection_modifyitems(config, items):
 def app_module():
     """Загружает runtime-модуль приложения для unit-тестов."""
     spec = importlib.util.spec_from_file_location("whisper_dictation_app", MODULE_PATH)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

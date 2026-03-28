@@ -47,6 +47,22 @@ MLX Whisper Dictation для macOS на Apple Silicon.
 
 Подробные правила для агента вынесены в [AGENTS.md](AGENTS.md).
 
+## Структура кода
+
+Текущая структура проекта соответствует Clean Architecture:
+
+```text
+src/
+├── domain/          # типы, константы, порты и чистые правила
+├── use_cases/       # сценарии записи, транскрибации, LLM, настроек и хоткеев
+├── adapters/        # menu bar UI, overlay и hotkey dialog
+├── infrastructure/  # macOS runtime, MLX, persistence, text input, hotkeys
+└── app.py           # тонкий координатор DictationApp
+main.py              # composition root
+```
+
+Ключевое правило: `domain` не знает о runtime, `use_cases` не импортируют `infrastructure`, а concrete macOS/MLX/NSUserDefaults зависимости собираются только в `main.py`.
+
 ## Как это работает
 
 1. Приложение запускается как приложение в строке меню.

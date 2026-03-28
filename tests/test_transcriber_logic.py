@@ -1,8 +1,50 @@
 """Юнит-тесты основного сценария распознавания и автовставки."""
 
 import numpy as np
-import src.transcriber as transcriber_module
-from src.config import Config
+from src.domain.constants import Config
+
+
+class FakeSettingsStore:
+    """Простое in-memory хранилище настроек для тестов транскрибации."""
+
+    def load_bool(self, _key, fallback):
+        return fallback
+
+    def save_bool(self, _key, _value):
+        return None
+
+    def load_list(self, _key):
+        return []
+
+    def save_list(self, _key, _value):
+        return None
+
+    def load_int(self, _key, fallback):
+        return fallback
+
+    def save_int(self, _key, _value):
+        return None
+
+    def load_str(self, _key, fallback=None):
+        return fallback
+
+    def save_str(self, _key, _value):
+        return None
+
+    def load_max_time(self, fallback):
+        return fallback
+
+    def save_max_time(self, _value):
+        return None
+
+    def load_input_device_index(self):
+        return None
+
+    def save_input_device_index(self, _value):
+        return None
+
+    def remove_key(self, _key):
+        return None
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -14,7 +56,11 @@ def make_audio(seconds=1.0, amplitude=0.01):
 def make_transcriber(app_module, diagnostics_enabled=False):
     """Создает transcriber с управляемым diagnostics store для тестов."""
     diagnostics_store = app_module.DiagnosticsStore(root_dir=Config.LOG_DIR, enabled=diagnostics_enabled)
-    return app_module.SpeechTranscriber("dummy-model", diagnostics_store=diagnostics_store)
+    return app_module.SpeechTranscriber(
+        "dummy-model",
+        settings_store=FakeSettingsStore(),
+        diagnostics_store=diagnostics_store,
+    )
 
 
 def test_transcribe_inserts_via_cgevent_when_enabled(app_module, monkeypatch):
@@ -23,14 +69,11 @@ def test_transcribe_inserts_via_cgevent_when_enabled(app_module, monkeypatch):
     transcriber.paste_cgevent_enabled = True
     transcriber.paste_ax_enabled = False
     transcriber.paste_clipboard_enabled = False
-    inserted = []
+    inserted: list[object] = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Автовставка"})
     monkeypatch.setattr(transcriber, "_type_text_via_cgevent", inserted.append)
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
@@ -43,7 +86,7 @@ def test_transcribe_falls_back_from_cgevent_to_clipboard(app_module, monkeypatch
     transcriber.paste_cgevent_enabled = True
     transcriber.paste_ax_enabled = False
     transcriber.paste_clipboard_enabled = True
-    clipboard_inserted = []
+    clipboard_inserted: list[object] = []
 
     def failing_cgevent(text):
         raise RuntimeError("CGEvent failed")
@@ -51,10 +94,7 @@ def test_transcribe_falls_back_from_cgevent_to_clipboard(app_module, monkeypatch
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
     monkeypatch.setattr(transcriber, "_type_text_via_cgevent", failing_cgevent)
     monkeypatch.setattr(transcriber, "_paste_via_clipboard", clipboard_inserted.append)
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
@@ -62,90 +102,101 @@ def test_transcribe_falls_back_from_cgevent_to_clipboard(app_module, monkeypatch
 
 
 def test_transcribe_falls_back_to_history_when_accessibility_missing(app_module, monkeypatch):
-    """Без Accessibility текст должен сохраниться в истории и уведомить пользователя."""
+    """Без Accessibility текст должен попасть в clipboard fallback и уведомление."""
     transcriber = make_transcriber(app_module)
-    history_added = []
+    history_added: list[object] = []
     notifications = []
     warned = []
+    clipboard_saved: list[str] = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
-    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
-    monkeypatch.setattr(transcriber_module, "request_accessibility_permission", lambda: False)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: False)
-    monkeypatch.setattr(transcriber_module, "warn_missing_accessibility_permission", lambda: warned.append(True))
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "add_to_history", history_added.append)
+    monkeypatch.setattr(transcriber, "_request_accessibility_permission", lambda: False)
+    monkeypatch.setattr(transcriber, "_get_input_monitoring_status", lambda: True)
+    monkeypatch.setattr(transcriber, "_is_accessibility_trusted", lambda: False)
+    monkeypatch.setattr(transcriber, "_warn_missing_accessibility_permission", lambda: warned.append(True))
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "_copy_to_clipboard", clipboard_saved.append)
 
     transcriber.transcribe(make_audio(), "ru")
 
     assert history_added == ["Текст"]
+    assert clipboard_saved == ["Текст"]
     assert warned == [True]
     assert notifications
+    assert "буфер обмена" in notifications[-1][1]
 
 
 def test_transcribe_falls_back_to_history_when_input_monitoring_missing(app_module, monkeypatch):
-    """Без Input Monitoring текст должен сохраниться в истории."""
+    """Без Input Monitoring текст должен попасть в clipboard fallback."""
     transcriber = make_transcriber(app_module)
-    history_added = []
+    history_added: list[object] = []
     notifications = []
     warned = []
+    clipboard_saved: list[str] = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
-    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
-    monkeypatch.setattr(transcriber_module, "request_input_monitoring_permission", lambda: False)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: False)
-    monkeypatch.setattr(transcriber_module, "warn_missing_input_monitoring_permission", lambda: warned.append(True))
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "add_to_history", history_added.append)
+    monkeypatch.setattr(transcriber, "_request_input_monitoring_permission", lambda: False)
+    monkeypatch.setattr(transcriber, "_is_accessibility_trusted", lambda: True)
+    monkeypatch.setattr(transcriber, "_get_input_monitoring_status", lambda: False)
+    monkeypatch.setattr(transcriber, "_warn_missing_input_monitoring_permission", lambda: warned.append(True))
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "_copy_to_clipboard", clipboard_saved.append)
 
     transcriber.transcribe(make_audio(), "ru")
 
     assert history_added == ["Текст"]
+    assert clipboard_saved == ["Текст"]
     assert warned == [True]
     assert notifications
+    assert "буфер обмена" in notifications[-1][1]
 
 
 def test_transcribe_notifies_when_all_methods_fail(app_module, monkeypatch):
-    """При ошибке всех включённых методов вставки пользователь получает уведомление."""
+    """При ошибке всех методов текст остаётся в clipboard fallback и истории."""
     transcriber = make_transcriber(app_module)
     transcriber.paste_cgevent_enabled = True
     transcriber.paste_ax_enabled = False
     transcriber.paste_clipboard_enabled = False
     notifications = []
+    clipboard_saved: list[str] = []
 
     def failing_cgevent(text):
         raise RuntimeError("CGEvent failed")
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
     monkeypatch.setattr(transcriber, "_type_text_via_cgevent", failing_cgevent)
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "_copy_to_clipboard", clipboard_saved.append)
 
     transcriber.transcribe(make_audio(), "ru")
 
     assert notifications
-    assert "История текста" in notifications[-1][1]
+    assert clipboard_saved == ["Текст"]
+    assert "буфер обмена" in notifications[-1][1]
 
 
 def test_transcribe_notifies_when_no_methods_enabled(app_module, monkeypatch):
-    """Если ни один метод вставки не включён, пользователь получает уведомление."""
+    """Если все методы выключены, текст остаётся доступен через clipboard fallback."""
     transcriber = make_transcriber(app_module)
     transcriber.paste_cgevent_enabled = False
     transcriber.paste_ax_enabled = False
     transcriber.paste_clipboard_enabled = False
     notifications = []
+    clipboard_saved: list[str] = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "_copy_to_clipboard", clipboard_saved.append)
 
     transcriber.transcribe(make_audio(), "ru")
 
     assert notifications
+    assert clipboard_saved == ["Текст"]
+    assert "буфер обмена" in notifications[-1][1]
 
 
 def test_transcribe_notifies_on_empty_result(app_module, monkeypatch):
@@ -154,7 +205,7 @@ def test_transcribe_notifies_on_empty_result(app_module, monkeypatch):
     notifications = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": ""})
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: notifications.append(args))
 
     transcriber.transcribe(make_audio(), None)
 
@@ -164,14 +215,11 @@ def test_transcribe_notifies_on_empty_result(app_module, monkeypatch):
 def test_transcribe_always_adds_to_history(app_module, monkeypatch):
     """Распознанный текст всегда должен сохраняться в историю."""
     transcriber = make_transcriber(app_module)
-    history_added = []
+    history_added: list[object] = []
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
-    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
+    monkeypatch.setattr(transcriber, "add_to_history", history_added.append)
     monkeypatch.setattr(transcriber, "_type_text_via_cgevent", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
@@ -188,250 +236,95 @@ def test_transcribe_accumulates_tokens_from_segments(app_module, monkeypatch):
         "_run_transcription",
         lambda *_args: {"text": "Текст", "segments": [{"tokens": [1, 2, 3]}, {"tokens": [4, 5]}]},
     )
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_type_text_via_cgevent", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 
     assert transcriber.total_tokens == 5
 
 
-def test_transcribe_for_llm_accumulates_whisper_and_llm_tokens(app_module, monkeypatch):
-    """LLM-пайплайн должен суммировать токены Whisper и LLM."""
+def test_transcribe_to_text_returns_text(app_module, monkeypatch):
+    """transcribe_to_text должен вернуть распознанный текст."""
     transcriber = make_transcriber(app_module)
     transcriber.total_tokens = 0
-
-    class LLMStub:
-        def __init__(self):
-            self.last_token_usage = 0
-
-        def process_text(self, text, system_prompt, *, context=None):
-            del context
-            self.last_token_usage = 7
-            return "Ответ"
 
     monkeypatch.setattr(
         transcriber,
         "_run_transcription",
         lambda *_args: {"text": "Текст", "segments": [{"tokens": [1, 2, 3]}]},
     )
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь текст")
+    result = transcriber.transcribe_to_text(make_audio(), "ru")
 
-    assert transcriber.total_tokens == 10
+    assert result == "Текст"
+    assert transcriber.total_tokens == 3
 
 
-def test_transcribe_for_llm_passes_clipboard_as_context(app_module, monkeypatch):
-    """LLM-пайплайн должен передавать содержимое буфера обмена как контекст."""
+def test_transcribe_to_text_returns_none_on_empty(app_module, monkeypatch):
+    """transcribe_to_text должен вернуть None при пустом результате."""
     transcriber = make_transcriber(app_module)
 
-    captured_context = {}
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": ""})
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
 
-    class LLMStub:
-        def __init__(self):
-            self.last_token_usage = 0
+    result = transcriber.transcribe_to_text(make_audio(), "ru")
 
-        def process_text(self, text, system_prompt, *, context=None):
-            captured_context["text"] = text
-            captured_context["context"] = context
-            self.last_token_usage = 5
-            return "Ответ"
+    assert result is None
+
+
+def test_transcribe_to_text_returns_none_on_error(app_module, monkeypatch):
+    """transcribe_to_text должен вернуть None при ошибке распознавания."""
+    transcriber = make_transcriber(app_module)
+
+    def failing_transcription(*_args):
+        raise RuntimeError("Ошибка модели")
+
+    monkeypatch.setattr(transcriber, "_run_transcription", failing_transcription)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
+
+    result = transcriber.transcribe_to_text(make_audio(), "ru")
+
+    assert result is None
+
+
+def test_transcribe_to_text_accumulates_tokens(app_module, monkeypatch):
+    """transcribe_to_text должен считать токены из сегментов Whisper."""
+    transcriber = make_transcriber(app_module)
+    transcriber.total_tokens = 10
 
     monkeypatch.setattr(
         transcriber,
         "_run_transcription",
-        lambda *_args: {"text": "Переведи это", "segments": [{"tokens": [1, 2]}]},
+        lambda *_args: {"text": "Текст", "segments": [{"tokens": [1, 2, 3]}, {"tokens": [4, 5]}]},
     )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "Hello world")
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь текст")
+    transcriber.transcribe_to_text(make_audio(), "ru")
 
-    assert captured_context["text"] == "Переведи это"
-    assert captured_context["context"] == "Hello world"
+    assert transcriber.total_tokens == 15
 
 
-def test_transcribe_for_llm_passes_none_context_when_clipboard_empty(app_module, monkeypatch):
-    """LLM-пайплайн должен передавать context=None при пустом буфере обмена."""
+def test_transcribe_to_text_filters_hallucination(app_module, monkeypatch):
+    """transcribe_to_text должен отбрасывать галлюцинаторные результаты."""
     transcriber = make_transcriber(app_module)
-
-    captured_context = {}
-
-    class LLMStub:
-        def __init__(self):
-            self.last_token_usage = 0
-
-        def process_text(self, text, system_prompt, *, context=None):
-            captured_context["context"] = context
-            self.last_token_usage = 5
-            return "Ответ"
 
     monkeypatch.setattr(
         transcriber,
         "_run_transcription",
-        lambda *_args: {"text": "Что угодно", "segments": [{"tokens": [1]}]},
+        lambda *_args: {"text": "Thank you."},
     )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь")
+    # Тихое аудио + галлюцинация = None
+    result = transcriber.transcribe_to_text(make_audio(amplitude=0.0001), "ru")
 
-    assert captured_context["context"] is None
-
-
-def test_transcribe_for_llm_disables_clipboard_io_when_option_off(app_module, monkeypatch):
-    """При выключенном LLM-буфере контекст не читается и ответ не пишется в clipboard."""
-    transcriber = make_transcriber(app_module)
-    transcriber.llm_clipboard_enabled = False
-    copied = []
-    read_calls = []
-    captured_context = {}
-    notifications = []
-
-    class LLMStub:
-        def __init__(self):
-            self.last_token_usage = 2
-
-        def process_text(self, text, system_prompt, *, context=None):
-            del text, system_prompt
-            captured_context["context"] = context
-            return "Готово 🙂"
-
-    monkeypatch.setattr(
-        transcriber,
-        "_run_transcription",
-        lambda *_args: {"text": "О чем этот текст?", "segments": [{"tokens": [1]}]},
-    )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: read_calls.append(True) or "Текст из буфера")
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
-
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
-
-    assert read_calls == []
-    assert captured_context["context"] is None
-    assert copied == []
-    assert notifications == [("🤖 LLM", "Готово 🙂")]
-
-
-def test_transcribe_for_llm_skips_clipboard_for_unrelated_request(app_module, monkeypatch):
-    """Нерелевантный запрос не должен тащить в LLM содержимое буфера обмена."""
-    transcriber = make_transcriber(app_module)
-
-    captured_context = {}
-
-    class LLMStub:
-        def __init__(self):
-            self.last_token_usage = 0
-
-        def process_text(self, text, system_prompt, *, context=None):
-            del text, system_prompt
-            captured_context["context"] = context
-            self.last_token_usage = 5
-            return "Анекдот 🙂"
-
-    monkeypatch.setattr(
-        transcriber,
-        "_run_transcription",
-        lambda *_args: {"text": "Расскажи анекдот.", "segments": [{"tokens": [1]}]},
-    )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "технические логи LLM")
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
-
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
-
-    assert captured_context["context"] is None
-
-
-def test_transcribe_for_llm_copies_clean_answer_and_notifies(app_module, monkeypatch):
-    """LLM-пайплайн должен отдавать в буфер и уведомление уже очищенный короткий ответ."""
-    transcriber = make_transcriber(app_module)
-    copied = []
-    notifications = []
-
-    class LLMStub:
-        def __init__(self):
-            self.last_token_usage = 3
-
-        def process_text(self, text, system_prompt, *, context=None):
-            del text, system_prompt, context
-            return "Привет! Всё готово 🙂"
-
-    monkeypatch.setattr(
-        transcriber,
-        "_run_transcription",
-        lambda *_args: {"text": "Скажи красиво", "segments": [{"tokens": [1]}]},
-    )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
-
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь")
-
-    assert copied == ["Привет! Всё готово 🙂"]
-    assert notifications == [("🤖 LLM", "Привет! Всё готово 🙂")]
-
-
-def test_transcribe_for_llm_defers_stale_response_when_newer_request_exists(app_module, monkeypatch):
-    """Устаревший ответ LLM не должен перетирать буфер обмена поверх нового запроса."""
-    transcriber = make_transcriber(app_module)
-    copied = []
-    notifications = []
-    history_added = []
-
-    class LLMStub:
-        def __init__(self):
-            self.last_token_usage = 4
-
-        def process_text(self, text, system_prompt, *, context=None):
-            del text, system_prompt, context
-            return "Ответ агента"
-
-    monkeypatch.setattr(
-        transcriber,
-        "_run_transcription",
-        lambda *_args: {"text": "Подготовь ответ", "segments": [{"tokens": [1]}]},
-    )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
-    monkeypatch.setattr(transcriber, "_add_to_history", history_added.append)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
-    monkeypatch.setattr(transcriber_module.defaults, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
-
-    transcriber.transcribe_for_llm(
-        make_audio(),
-        "ru",
-        llm_processor=LLMStub(),
-        system_prompt="Исправь",
-        should_deliver_result=lambda: False,
-    )
-
-    assert copied == []
-    assert history_added == ["🤖 Ответ агента"]
-    assert notifications == [
-        ("MLX Whisper Dictation", "Ответ LLM сохранён в историю. Новый запрос диктовки получил приоритет."),
-    ]
+    assert result is None
 
 
 def test_transcribe_clipboard_not_touched_when_disabled(app_module, monkeypatch):
@@ -444,11 +337,8 @@ def test_transcribe_clipboard_not_touched_when_disabled(app_module, monkeypatch)
 
     monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "Текст"})
     monkeypatch.setattr(transcriber, "_type_text_via_cgevent", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: clipboard_calls.append(True))
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(transcriber_module, "get_input_monitoring_status", lambda: True)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber, "_copy_to_clipboard", lambda *_args: clipboard_calls.append(True))
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
 
     transcriber.transcribe(make_audio(), "ru")
 

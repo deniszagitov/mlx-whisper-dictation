@@ -9,8 +9,8 @@
 import numpy as np
 import pyaudio
 import pytest
-from src import audio
-from src.config import Config
+from src.domain.constants import Config
+from src.infrastructure import audio_runtime
 
 
 @pytest.mark.hardware
@@ -151,7 +151,7 @@ class TestMicrophoneListing:
 
     def test_list_input_devices_filters_output_only(self, app_module, monkeypatch):
         """В список должны попадать только устройства с input channels > 0."""
-        monkeypatch.setattr(audio.pyaudio, "PyAudio", FakePyAudio)
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
 
         devices = app_module.list_input_devices()
 
@@ -159,7 +159,7 @@ class TestMicrophoneListing:
 
     def test_list_input_devices_marks_default_first(self, app_module, monkeypatch):
         """Устройство по умолчанию должно быть отмечено и идти первым."""
-        monkeypatch.setattr(audio.pyaudio, "PyAudio", FakePyAudio)
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
 
         devices = app_module.list_input_devices()
 
@@ -168,7 +168,7 @@ class TestMicrophoneListing:
 
     def test_recorder_can_store_selected_input_device(self, app_module):
         """Recorder должен сохранять выбранный индекс и имя микрофона."""
-        recorder = app_module.Recorder(transcriber=None)
+        recorder = app_module.Recorder()
         recorder.set_input_device({"index": 7, "name": "External Mic"})
 
         assert recorder.input_device_index == 7
@@ -176,22 +176,12 @@ class TestMicrophoneListing:
 
     def test_recorder_performance_mode_changes_buffer_size(self, app_module):
         """Режим работы должен менять размер аудиобуфера."""
-
-        class LLMStub:
-            def __init__(self):
-                self.performance_mode = None
-
-            def set_performance_mode(self, performance_mode):
-                self.performance_mode = performance_mode
-
-        recorder = app_module.Recorder(transcriber=None)
-        recorder.llm_processor = LLMStub()
+        recorder = app_module.Recorder()
 
         recorder.set_performance_mode("fast")
 
         assert recorder.performance_mode == "fast"
         assert recorder.frames_per_buffer == 512
-        assert recorder.llm_processor.performance_mode == "fast"
 
         recorder.set_performance_mode("normal")
 
@@ -200,18 +190,18 @@ class TestMicrophoneListing:
 
     def test_recorder_marks_only_latest_request_as_current(self, app_module):
         """Только самый новый запрос должен считаться актуальным для вывода и статуса."""
-        recorder = app_module.Recorder(transcriber=None)
+        recorder = app_module.Recorder()
 
         first_request_id = recorder._begin_request()
         second_request_id = recorder._begin_request()
 
-        assert recorder.should_deliver_llm_result(first_request_id) is False
-        assert recorder.should_deliver_llm_result(second_request_id) is True
+        assert recorder._is_request_current(first_request_id) is False
+        assert recorder._is_request_current(second_request_id) is True
 
     def test_recorder_ignores_stale_status_updates(self, app_module):
         """Старый запрос не должен сбрасывать UI-статус поверх нового."""
-        recorder = app_module.Recorder(transcriber=None)
-        statuses = []
+        recorder = app_module.Recorder()
+        statuses: list[object] = []
         recorder.set_status_callback(statuses.append)
 
         first_request_id = recorder._begin_request()
@@ -234,7 +224,7 @@ class TestRecorderCancel:
 
     def test_cancel_sets_flags(self, app_module):
         """cancel() должен установить cancelled=True и recording=False."""
-        recorder = app_module.Recorder(transcriber=None)
+        recorder = app_module.Recorder()
         recorder.recording = True
 
         recorder.cancel()
@@ -244,14 +234,10 @@ class TestRecorderCancel:
 
     def test_cancel_skips_transcription(self, app_module):
         """После cancel() _record_impl должен пропустить транскрибирование."""
-        transcribe_called = []
+        transcribe_called: list[bool] = []
 
-        class FakeTranscriber:
-            def transcribe(self, audio, language):
-                transcribe_called.append(True)
-
-        recorder = app_module.Recorder(transcriber=FakeTranscriber())
-        statuses = []
+        recorder = app_module.Recorder()
+        statuses: list[object] = []
         recorder.set_status_callback(statuses.append)
 
         recorder._begin_request()
@@ -268,12 +254,12 @@ class TestRecorderCancel:
 
     def test_cancel_resets_cancelled_flag_after_init(self, app_module):
         """Recorder.__init__ должен инициализировать cancelled=False."""
-        recorder = app_module.Recorder(transcriber=None)
+        recorder = app_module.Recorder()
         assert recorder.cancelled is False
 
     def test_stop_does_not_set_cancelled(self, app_module):
         """stop() не должен устанавливать cancelled — только recording=False."""
-        recorder = app_module.Recorder(transcriber=None)
+        recorder = app_module.Recorder()
         recorder.recording = True
         recorder.cancelled = False
 

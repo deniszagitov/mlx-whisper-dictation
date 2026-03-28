@@ -13,6 +13,7 @@ SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "selfcheck.py
 def load_selfcheck_module():
     """Загружает scripts/selfcheck.py как тестируемый модуль."""
     spec = importlib.util.spec_from_file_location("dictator_selfcheck", SCRIPT_PATH)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -75,8 +76,8 @@ def test_main_runs_ruff_and_pytest_by_default(monkeypatch):
     exit_code = selfcheck.main()
 
     assert exit_code == 0
-    assert [title for title, _command in steps] == ["Ruff", "Import-linter", "Pytest"]
-    assert steps[2][1] == ["uv", "run", "pytest", "tests/", "-q"]
+    assert [title for title, _command in steps] == ["Ruff", "Import-linter", "Mypy", "Pytest"]
+    assert steps[3][1] == ["uv", "run", "pytest", "tests/", "-q"]
 
 
 def test_main_adds_coverage_flags(monkeypatch):
