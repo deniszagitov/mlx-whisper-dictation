@@ -16,7 +16,7 @@
 ### `parse_args`
 
 ```python
-parse_args()
+parse_args() -> argparse.Namespace
 ```
 
 Разбирает аргументы командной строки.
@@ -31,7 +31,7 @@ Raises:
 ### `main`
 
 ```python
-main()
+main() -> None
 ```
 
 Запускает приложение диктовки и глобальные обработчики клавиш.
@@ -41,7 +41,7 @@ main()
 ### `_cli_option_was_provided`
 
 ```python
-_cli_option_was_provided(*option_names)
+_cli_option_was_provided(*option_names: str) -> bool
 ```
 
 _Внутренняя функция._
@@ -51,7 +51,7 @@ _Внутренняя функция._
 ### `_load_saved_runtime_preferences`
 
 ```python
-_load_saved_runtime_preferences(args)
+_load_saved_runtime_preferences(args: argparse.Namespace) -> None
 ```
 
 _Внутренняя функция._
@@ -61,7 +61,7 @@ _Внутренняя функция._
 ### `_log_startup_configuration`
 
 ```python
-_log_startup_configuration(args)
+_log_startup_configuration(args: argparse.Namespace) -> None
 ```
 
 _Внутренняя функция._

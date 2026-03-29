@@ -26,12 +26,14 @@ Repository = "https://github.com/zagitov/mlx-whisper-dictation"
 
 [dependency-groups]
 dev = [
+	"import-linter[ui]>=2.11",
 	"modulegraph",
+	"mypy>=1.19.1",
 	"py2app==0.28.10",
 	"pytest>=8.0",
-    "pytest-cov>=5.0",
+	"pytest-cov>=5.0",
 	"ruff>=0.11.0",
-    "setuptools<81",
+	"setuptools<81",
 ]
 docs = [
     "mkdocs>=1.6",
@@ -101,11 +103,10 @@ fixable = ["ALL"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ARG", "PLR2004", "PLC0415", "D104", "N802"]
-"src/diagnostics.py" = ["N802"]
-"src/llm.py" = ["PLC0415"]
-"src/transcriber.py" = ["PLC0415"]
-"main.py" = ["F401"]
+"tests/*" = ["ARG", "PLR2004", "PLC0415", "D", "N802"]
+"src/infrastructure/persistence/diagnostics.py" = ["N802"]
+"src/infrastructure/llm_runtime.py" = ["PLC0415"]
+"main.py" = []
 
 [tool.ruff.format]
 quote-style = "double"
@@ -113,8 +114,119 @@ docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.11"
-strict = true
 mypy_path = "."
+exclude = ["^dist/", "^build/"]
+strict = true
+implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = [
+    "AppKit.*",
+    "Foundation.*",
+    "Quartz.*",
+    "HIServices.*",
+    "objc.*",
+    "rumps.*",
+    "mlx_whisper.*",
+    "mlx_lm.*",
+    "pyaudio.*",
+    "pynput.*",
+    "py2app.*",
+    "modulegraph.*",
+    "setuptools.*",
+    "tqdm.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*", "conftest"]
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = "setup"
+disallow_untyped_defs = false
+disallow_subclassing_any = false
+disallow_untyped_calls = false
+
+[tool.importlinter]
+root_package = "src"
+
+# Контракты ниже задают deny-by-default модель:
+# импорт разрешён только явно перечисленным модулям-импортёрам.
+[[tool.importlinter.contracts]]
+name = "Domain импортируется только разрешёнными слоями"
+type = "protected"
+protected_modules = ["src.domain"]
+allowed_importers = [
+    "src.app",
+    "src.use_cases",
+    "src.adapters",
+    "src.infrastructure",
+]
+
+[[tool.importlinter.contracts]]
+name = "Use cases импортируются только app"
+type = "protected"
+protected_modules = ["src.use_cases"]
+allowed_importers = ["src.app"]
+
+[[tool.importlinter.contracts]]
+name = "App импортируется только UI adapter"
+type = "protected"
+protected_modules = ["src.app"]
+allowed_importers = ["src.adapters.ui"]
+
+[[tool.importlinter.contracts]]
+name = "Adapters не импортируются снаружи без явного разрешения"
+type = "protected"
+protected_modules = ["src.adapters"]
+allowed_importers = []
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure импортируется только hotkey dialog adapter"
+type = "protected"
+protected_modules = ["src.infrastructure"]
+allowed_importers = ["src.adapters.hotkey_dialog"]
+
+# Дополнительно фиксируем запрещённые исходящие и косвенные зависимости.
+[[tool.importlinter.contracts]]
+name = "Domain не зависит от app, use_cases, adapters и infrastructure"
+type = "forbidden"
+source_modules = ["src.domain"]
+forbidden_modules = [
+    "src.app",
+    "src.use_cases",
+    "src.adapters",
+    "src.infrastructure",
+]
+
+[[tool.importlinter.contracts]]
+name = "Use cases не зависят от app, adapters и infrastructure"
+type = "forbidden"
+source_modules = ["src.use_cases"]
+forbidden_modules = ["src.app", "src.adapters", "src.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "App не зависит от adapters и infrastructure"
+type = "forbidden"
+source_modules = ["src.app"]
+forbidden_modules = ["src.adapters", "src.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "UI adapter не зависит от use_cases и infrastructure даже косвенно"
+type = "forbidden"
+source_modules = ["src.adapters.ui"]
+allow_indirect_imports = false
+forbidden_modules = ["src.use_cases", "src.infrastructure"]
+
+[[tool.importlinter.contracts]]
+name = "Infrastructure не зависит от app, use_cases и adapters"
+type = "forbidden"
+source_modules = ["src.infrastructure"]
+forbidden_modules = ["src.app", "src.use_cases", "src.adapters"]
 
 [tool.coverage.run]
 branch = true

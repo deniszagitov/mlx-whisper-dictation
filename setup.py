@@ -3,10 +3,6 @@
 import sys
 import zlib
 from pathlib import Path
-from typing import Any, cast
-
-# Добавляем src/ в sys.path, чтобы modulegraph находил модули приложения
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from setuptools import setup
 from setuptools.dist import Distribution
@@ -44,16 +40,15 @@ if build_py2app is not None:
 
         def finalize_options(self):
             """Очищает install_requires до внутренней проверки py2app."""
-            distribution = cast("Any", self.distribution)
-            distribution.install_requires = []
-            distribution.extras_require = {}
+            self.distribution.install_requires = []
+            self.distribution.extras_require = {}
             super().finalize_options()
 
         def build_executable(self, target, arcname, pkgexts, copyexts, script, extra_scripts):
             """Подкладывает py2app безопасный zlib.__file__ для uv Python без shared-модуля."""
             sentinel = object()
             original_zlib_file = getattr(zlib, "__file__", sentinel)
-            original_copy_file = self.copy_file
+            original_copy_file = self.copy_file  # type: ignore[has-type]
 
             def _copy_file(source, *args, **kwargs):
                 if not source:
@@ -75,7 +70,7 @@ APP = ["main.py"]
 ROOT = Path(__file__).parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
-_PY2APP_PACKAGES = ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "tqdm"]
+_PY2APP_PACKAGES = ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "src", "tqdm"]
 
 if "py2app" in sys.argv:
     # py2app (через modulegraph) использует устаревший imp.find_module, который

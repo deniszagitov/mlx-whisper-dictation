@@ -1,8 +1,6 @@
-"""Логирование и диагностика приложения Dictator.
+"""Логирование и сохранение диагностических артефактов приложения."""
 
-Содержит настройку логирования, фильтры, хранилище диагностических
-артефактов и функцию проверки галлюцинаций Whisper.
-"""
+from __future__ import annotations
 
 import json
 import logging
@@ -11,33 +9,31 @@ import sys
 import time
 import wave
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 
-from config import (
-    ARTIFACT_TTL_SECONDS,
-    HALLUCINATION_RMS_THRESHOLD,
-    KNOWN_HALLUCINATIONS,
-    LOG_DIR,
-    MAX_DEBUG_ARTIFACTS,
-    SILENCE_RMS_THRESHOLD,
-)
+from ...domain.constants import Config
+
+if TYPE_CHECKING:
+    from ...domain.types import AudioDiagnostics
 
 
 class MaxLevelFilter(logging.Filter):
     """Пропускает записи не выше заданного уровня логирования."""
 
-    def __init__(self, level):
+    def __init__(self, level: int) -> None:
         """Сохраняет максимальный уровень логов для фильтрации."""
         super().__init__()
         self.level = level
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         """Возвращает True, если запись не превышает допустимый уровень."""
         return record.levelno < self.level
 
 
-def _cleanup_expired_files(directory, pattern, retention_seconds, *, include_current_file=False):
+def _cleanup_expired_files(directory: Path, pattern: str, retention_seconds: float, *, include_current_file: bool = False) -> None:
     """Удаляет файлы старше retention_seconds."""
     threshold = time.time() - retention_seconds
     for path in directory.glob(pattern):
@@ -52,26 +48,26 @@ def _cleanup_expired_files(directory, pattern, retention_seconds, *, include_cur
 class DailyRetentionFileHandler(logging.handlers.TimedRotatingFileHandler):
     """Ротирует лог-файл раз в 24 часа и удаляет старые файлы."""
 
-    def __init__(self, filename, *, retention_seconds=ARTIFACT_TTL_SECONDS, **kwargs):
+    def __init__(self, filename: str | Path, *, retention_seconds: float = Config.ARTIFACT_TTL_SECONDS, **kwargs: Any) -> None:
         self.retention_seconds = retention_seconds
         super().__init__(filename, when="H", interval=24, backupCount=0, **kwargs)
         self._cleanup_expired_log_family()
 
-    def doRollover(self):
+    def doRollover(self) -> None:
         """Создает новый суточный лог-файл и чистит просроченные ротации."""
         super().doRollover()
         self._cleanup_expired_log_family()
 
-    def _cleanup_expired_log_family(self):
+    def _cleanup_expired_log_family(self) -> None:
         """Удаляет старые файлы текущего лог-семейства."""
         base_path = Path(self.baseFilename)
         _cleanup_expired_files(base_path.parent, f"{base_path.name}*", self.retention_seconds)
 
 
-def setup_logging():
+def setup_logging() -> None:
     """Настраивает консольное и файловое логирование приложения."""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    _cleanup_expired_files(LOG_DIR, "*.log*", ARTIFACT_TTL_SECONDS, include_current_file=True)
+    Config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _cleanup_expired_files(Config.LOG_DIR, "*.log*", Config.ARTIFACT_TTL_SECONDS, include_current_file=True)
 
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     root_logger = logging.getLogger()
@@ -83,7 +79,7 @@ def setup_logging():
     console_handler.setFormatter(formatter)
 
     stdout_handler = DailyRetentionFileHandler(
-        LOG_DIR / "stdout.log",
+        Config.LOG_DIR / "stdout.log",
         encoding="utf-8",
     )
     stdout_handler.setLevel(logging.INFO)
@@ -91,7 +87,7 @@ def setup_logging():
     stdout_handler.setFormatter(formatter)
 
     stderr_handler = DailyRetentionFileHandler(
-        LOG_DIR / "stderr.log",
+        Config.LOG_DIR / "stderr.log",
         encoding="utf-8",
     )
     stderr_handler.setLevel(logging.ERROR)
@@ -102,15 +98,16 @@ def setup_logging():
     root_logger.addHandler(stderr_handler)
 
 
-def looks_like_hallucination(text):
-    """Проверяет, похож ли результат на типичную галлюцинацию Whisper."""
-    return text.strip().lower() in KNOWN_HALLUCINATIONS
-
-
 class DiagnosticsStore:
     """Изолирует сохранение диагностических артефактов от основного runtime-кода."""
 
-    def __init__(self, root_dir=LOG_DIR, enabled=True, max_artifacts=MAX_DEBUG_ARTIFACTS, retention_seconds=ARTIFACT_TTL_SECONDS):
+    def __init__(
+        self,
+        root_dir: str | Path = Config.LOG_DIR,
+        enabled: bool = True,
+        max_artifacts: int = Config.MAX_DEBUG_ARTIFACTS,
+        retention_seconds: float = Config.ARTIFACT_TTL_SECONDS,
+    ) -> None:
         """Создает хранилище диагностических файлов.
 
         Args:
@@ -125,26 +122,26 @@ class DiagnosticsStore:
         self.retention_seconds = retention_seconds
 
     @property
-    def recordings_dir(self):
+    def recordings_dir(self) -> Path:
         """Возвращает путь к папке с диагностическими аудиозаписями."""
         return self.root_dir / "recordings"
 
     @property
-    def transcriptions_dir(self):
+    def transcriptions_dir(self) -> Path:
         """Возвращает путь к папке с диагностическими транскрипциями."""
         return self.root_dir / "transcriptions"
 
-    def artifact_stem(self):
+    def artifact_stem(self) -> str:
         """Возвращает уникальное имя группы диагностических файлов."""
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         milliseconds = int((time.time() % 1) * 1000)
         return f"{timestamp}-{milliseconds:03d}"
 
-    def _cleanup_directory(self, directory):
+    def _cleanup_directory(self, directory: Path) -> None:
         """Удаляет диагностические файлы старше retention_seconds."""
         _cleanup_expired_files(directory, "*", self.retention_seconds, include_current_file=True)
 
-    def build_audio_diagnostics(self, audio_data, language):
+    def build_audio_diagnostics(self, audio_data: npt.NDArray[np.float32], language: str | None) -> AudioDiagnostics:
         """Собирает компактную диагностику входного аудиосигнала."""
         audio_duration_seconds = len(audio_data) / 16000
         rms_energy = float(np.sqrt(np.mean(audio_data**2)))
@@ -154,14 +151,14 @@ class DiagnosticsStore:
             "duration_seconds": audio_duration_seconds,
             "rms_energy": rms_energy,
             "peak_amplitude": peak_amplitude,
-            "silence_threshold": SILENCE_RMS_THRESHOLD,
-            "hallucination_threshold": HALLUCINATION_RMS_THRESHOLD,
+            "silence_threshold": Config.SILENCE_RMS_THRESHOLD,
+            "hallucination_threshold": Config.HALLUCINATION_RMS_THRESHOLD,
             "sample_rate": 16000,
             "samples": len(audio_data),
             "first_samples": audio_data[:16].tolist(),
         }
 
-    def save_audio_recording(self, stem, audio_data, diagnostics):
+    def save_audio_recording(self, stem: str, audio_data: npt.NDArray[np.float32], diagnostics: AudioDiagnostics) -> Path | None:
         """Сохраняет аудиозапись и метаданные, если диагностика включена."""
         if not self.enabled:
             return None
@@ -180,7 +177,14 @@ class DiagnosticsStore:
         self._cleanup_directory(self.recordings_dir)
         return wav_path
 
-    def save_transcription_artifacts(self, stem, diagnostics, result=None, text="", error_message=None):
+    def save_transcription_artifacts(
+        self,
+        stem: str,
+        diagnostics: AudioDiagnostics,
+        result: Any = None,
+        text: str = "",
+        error_message: str | None = None,
+    ) -> Path | None:
         """Сохраняет результат распознавания и метаданные, если диагностика включена."""
         if not self.enabled:
             return None

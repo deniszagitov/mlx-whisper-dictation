@@ -6,8 +6,9 @@ import os
 
 import numpy as np
 import pytest
-
-import diagnostics
+from src.domain.constants import Config
+from src.domain.transcription import looks_like_hallucination
+from src.infrastructure.persistence import diagnostics as diagnostics_module
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -83,8 +84,8 @@ def test_diagnostics_retention_removes_files_older_than_24_hours(app_module, tmp
     os.utime(fresh_txt, (fresh_time, fresh_time))
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(diagnostics.logging, "time", __import__("time"))
-    monkeypatch.setattr(diagnostics.time, "time", lambda: current_time)
+    monkeypatch.setattr(diagnostics_module.logging, "time", __import__("time"))  # type: ignore[attr-defined]
+    monkeypatch.setattr(diagnostics_module.time, "time", lambda: current_time)  # type: ignore[attr-defined]
     diagnostics_store._cleanup_directory(transcriptions_dir)
     monkeypatch.undo()
 
@@ -122,12 +123,12 @@ def test_diagnostics_payload_serializes_result(app_module, tmp_path):
 )
 def test_looks_like_hallucination_detects_known_phrases(text, expected):
     """Фильтр галлюцинаций должен распознавать известные шаблоны."""
-    assert diagnostics.looks_like_hallucination(text) is expected
+    assert looks_like_hallucination(text) is expected
 
 
 def test_max_level_filter_blocks_records_at_and_above_limit():
     """MaxLevelFilter должен пропускать только записи ниже указанного уровня."""
-    filter_instance = diagnostics.MaxLevelFilter(logging.ERROR)
+    filter_instance = diagnostics_module.MaxLevelFilter(logging.ERROR)
     debug_record = logging.LogRecord("test", logging.DEBUG, __file__, 1, "debug", (), None)
     error_record = logging.LogRecord("test", logging.ERROR, __file__, 1, "error", (), None)
 
@@ -140,9 +141,9 @@ def test_setup_logging_creates_stdout_and_stderr_handlers(tmp_path, monkeypatch)
     root_logger = logging.getLogger()
     original_handlers = list(root_logger.handlers)
 
-    monkeypatch.setattr(diagnostics, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(Config, "LOG_DIR", tmp_path)
 
-    diagnostics.setup_logging()
+    diagnostics_module.setup_logging()
 
     try:
         logger = logging.getLogger("diagnostics-test")

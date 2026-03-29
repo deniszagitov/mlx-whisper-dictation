@@ -14,18 +14,12 @@ import Quartz
 import rumps
 from Foundation import NSURL, NSDictionary
 
-from config import (
-    ACCESSIBILITY_SETTINGS_URL,
-    INPUT_MONITORING_SETTINGS_URL,
-    PERMISSION_DENIED,
-    PERMISSION_GRANTED,
-    PERMISSION_UNKNOWN,
-)
+from ..domain.constants import Config
 
 LOGGER = logging.getLogger(__name__)
 
 
-def notify_user(title, message):
+def notify_user(title: str, message: str) -> None:
     """Показывает системное уведомление macOS.
 
     Args:
@@ -38,7 +32,7 @@ def notify_user(title, message):
         LOGGER.exception("❌ Не удалось показать системное уведомление macOS")
 
 
-def open_system_settings(url):
+def open_system_settings(url: str) -> bool:
     """Открывает нужный раздел System Settings по специальной ссылке macOS."""
     if platform.system() != "Darwin":
         return False
@@ -51,7 +45,7 @@ def open_system_settings(url):
         return False
 
 
-def frontmost_application_info():
+def frontmost_application_info() -> dict[str, str | int] | None:
     """Возвращает краткую информацию о текущем активном приложении."""
     try:
         workspace = AppKit.NSWorkspace.sharedWorkspace()
@@ -69,7 +63,7 @@ def frontmost_application_info():
         return None
 
 
-def is_accessibility_trusted():
+def is_accessibility_trusted() -> bool:
     """Проверяет, выдан ли процессу доступ к Accessibility на macOS.
 
     Returns:
@@ -86,7 +80,7 @@ def is_accessibility_trusted():
         return True
 
 
-def permission_preflight_status(function_name):
+def permission_preflight_status(function_name: str) -> bool | None:
     """Вызывает preflight-функцию из ApplicationServices, если она доступна.
 
     Args:
@@ -110,17 +104,17 @@ def permission_preflight_status(function_name):
         return None
 
 
-def get_accessibility_status():
+def get_accessibility_status() -> bool | None:
     """Возвращает статус доступа к Accessibility."""
     return permission_preflight_status("AXIsProcessTrusted")
 
 
-def get_input_monitoring_status():
+def get_input_monitoring_status() -> bool | None:
     """Возвращает статус доступа к Input Monitoring."""
     return permission_preflight_status("CGPreflightListenEventAccess")
 
 
-def request_accessibility_permission():
+def request_accessibility_permission() -> bool:
     """Запрашивает Accessibility через системный диалог macOS.
 
     Вызывает AXIsProcessTrustedWithOptions с kAXTrustedCheckOptionPrompt=True,
@@ -150,7 +144,7 @@ def request_accessibility_permission():
         return result
 
 
-def request_input_monitoring_permission():
+def request_input_monitoring_permission() -> bool:
     """Запрашивает Input Monitoring через системный диалог macOS.
 
     Вызывает CGRequestListenEventAccess, чтобы macOS показала пользователю
@@ -173,7 +167,7 @@ def request_input_monitoring_permission():
         return False
 
 
-def permission_label(status):
+def permission_label(status: bool | None) -> str:
     """Преобразует булев статус разрешения в строку для меню.
 
     Args:
@@ -183,13 +177,13 @@ def permission_label(status):
         Строковое значение статуса.
     """
     if status is True:
-        return PERMISSION_GRANTED
+        return Config.PERMISSION_GRANTED
     if status is False:
-        return PERMISSION_DENIED
-    return PERMISSION_UNKNOWN
+        return Config.PERMISSION_DENIED
+    return Config.PERMISSION_UNKNOWN
 
 
-def warn_missing_accessibility_permission():
+def warn_missing_accessibility_permission() -> None:
     """Показывает пользователю предупреждение об отсутствии Accessibility-доступа."""
     message = (
         "Нет доступа к Accessibility для MLX Whisper Dictation. "
@@ -197,11 +191,11 @@ def warn_missing_accessibility_permission():
         "Откройте System Settings -> Privacy & Security -> Accessibility и включите приложение заново."
     )
     LOGGER.error("🔐 %s", message)
-    open_system_settings(ACCESSIBILITY_SETTINGS_URL)
+    open_system_settings(Config.ACCESSIBILITY_SETTINGS_URL)
     notify_user("MLX Whisper Dictation", message)
 
 
-def warn_missing_input_monitoring_permission():
+def warn_missing_input_monitoring_permission() -> None:
     """Показывает пользователю предупреждение об отсутствии Input Monitoring."""
     message = (
         "Нет доступа к Input Monitoring для MLX Whisper Dictation. "
@@ -209,5 +203,5 @@ def warn_missing_input_monitoring_permission():
         "Откройте System Settings -> Privacy & Security -> Input Monitoring и включите приложение заново."
     )
     LOGGER.error("🔐 %s", message)
-    open_system_settings(INPUT_MONITORING_SETTINGS_URL)
+    open_system_settings(Config.INPUT_MONITORING_SETTINGS_URL)
     notify_user("MLX Whisper Dictation", message)

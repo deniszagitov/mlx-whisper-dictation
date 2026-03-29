@@ -55,14 +55,16 @@ class ModuleTarget:
 
 RUNTIME_TARGETS = (
     ModuleTarget("CLI и запуск", ROOT / "main.py", "api/entrypoint.md"),
-    ModuleTarget("Конфигурация", ROOT / "src/config.py", "api/modules/config.md"),
-    ModuleTarget("Аудио и микрофон", ROOT / "src/audio.py", "api/modules/audio.md"),
-    ModuleTarget("Диагностика", ROOT / "src/diagnostics.py", "api/modules/diagnostics.md"),
-    ModuleTarget("Глобальные хоткеи", ROOT / "src/hotkeys.py", "api/modules/hotkeys.md"),
-    ModuleTarget("Разрешения macOS", ROOT / "src/permissions.py", "api/modules/permissions.md"),
-    ModuleTarget("Распознавание и вставка", ROOT / "src/transcriber.py", "api/modules/transcriber.md"),
-    ModuleTarget("LLM-обработка", ROOT / "src/llm.py", "api/modules/llm.md"),
-    ModuleTarget("Menu bar UI", ROOT / "src/ui.py", "api/modules/ui.md"),
+    ModuleTarget("Domain и настройки", ROOT / "src/domain/constants.py", "api/modules/config.md"),
+    ModuleTarget("Аудио и микрофон", ROOT / "src/infrastructure/audio_runtime.py", "api/modules/audio.md"),
+    ModuleTarget("Диагностика", ROOT / "src/infrastructure/persistence/diagnostics.py", "api/modules/diagnostics.md"),
+    ModuleTarget("История распознавания", ROOT / "src/infrastructure/persistence/history.py", "api/modules/history.md"),
+    ModuleTarget("LLM runtime", ROOT / "src/infrastructure/llm_runtime.py", "api/modules/llm_runtime.md"),
+    ModuleTarget("Глобальные хоткеи", ROOT / "src/infrastructure/hotkeys.py", "api/modules/hotkeys.md"),
+    ModuleTarget("Разрешения macOS", ROOT / "src/infrastructure/permissions.py", "api/modules/permissions.md"),
+    ModuleTarget("Распознавание и вставка", ROOT / "src/use_cases/transcription.py", "api/modules/transcriber.md"),
+    ModuleTarget("LLM-обработка", ROOT / "src/use_cases/llm_pipeline.py", "api/modules/llm.md"),
+    ModuleTarget("Menu bar UI", ROOT / "src/adapters/ui.py", "api/modules/ui.md"),
 )
 SETUP_TARGET = ModuleTarget("API сборки", ROOT / "setup.py", "api/setup.md")
 
@@ -302,14 +304,14 @@ def _render_runtime_overview(runtime_modules: list[ModuleDoc]) -> str:
     lines = [
         "# Runtime API",
         "",
-        "Этот раздел собирается автоматически из docstring entrypoint-файла и модулей в каталоге `src/`.",
+        "Этот раздел собирается автоматически по актуальной слоистой структуре проекта в каталоге `src/`.",
         "",
         "## Что покрывает автогенерация",
         "",
         "- точку входа приложения и CLI-аргументы;",
-        "- конфигурацию и сохранение настроек в NSUserDefaults;",
-        "- запись звука, хоткеи, разрешения macOS и menu bar UI;",
-        "- распознавание речи, вставку текста, историю и LLM-пайплайн.",
+        "- domain-правила, настройки и типы;",
+        "- запись звука, hotkey runtime, разрешения macOS и menu bar UI;",
+        "- use case-сценарии распознавания, истории и LLM-пайплайна.",
         "",
         "## Карта runtime-модулей",
         "",
@@ -341,7 +343,7 @@ def _render_index(runtime_modules: list[ModuleDoc], setup_module: ModuleDoc) -> 
     lines = [
         "# Dictator",
         "",
-        "Этот сайт собирается автоматически из docstring и структуры Python-кода в репозитории.",
+        "Этот сайт собирается автоматически из docstring и текущей слоистой структуры Python-кода в репозитории.",
         "",
         entrypoint_doc.docstring,
         "",
@@ -355,7 +357,7 @@ def _render_index(runtime_modules: list[ModuleDoc], setup_module: ModuleDoc) -> 
         "",
         "- [Обзор runtime API](api/runtime.md)",
         "- [Точка входа и CLI](api/entrypoint.md)",
-        "- [Модули runtime](api/modules/config.md)",
+        "- [Domain и настройки](api/modules/config.md)",
         "- [API сборки](api/setup.md)",
         "- [Архитектура](architecture.md)",
     ]

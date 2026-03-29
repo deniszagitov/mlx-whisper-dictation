@@ -21,7 +21,7 @@ nav:
       - Runtime overview: api/runtime.md
       - CLI и запуск: api/entrypoint.md
       - Runtime-модули:
-          - Конфигурация: api/modules/config.md
+          - Domain и настройки: api/modules/config.md
           - Аудио и микрофон: api/modules/audio.md
           - Диагностика: api/modules/diagnostics.md
           - Глобальные хоткеи: api/modules/hotkeys.md
