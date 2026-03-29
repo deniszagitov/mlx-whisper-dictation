@@ -77,6 +77,7 @@ class Recorder:
         self.transcriber = transcriber
         self.llm_processor = None
         self.llm_system_prompt = ""
+        self.llm_prompt_name = ""
         self.status_callback = None
         self.permission_callback = None
         self.input_device_index = None
@@ -312,6 +313,7 @@ class Recorder:
             language,
             llm_processor=self.llm_processor,
             system_prompt=self.llm_system_prompt,
+            prompt_name=self.llm_prompt_name,
             on_llm_processing_started=lambda: self._set_status_if_current(request_id, STATUS_LLM_PROCESSING),
             should_deliver_result=lambda: self.should_deliver_llm_result(request_id),
         )

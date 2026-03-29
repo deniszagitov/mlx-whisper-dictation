@@ -229,26 +229,27 @@ def test_transcribe_for_llm_accumulates_whisper_and_llm_tokens(app_module, monke
     assert transcriber.total_tokens == 10
 
 
-def test_transcribe_for_llm_passes_clipboard_as_context(app_module, monkeypatch):
-    """LLM-пайплайн должен передавать содержимое буфера обмена как контекст."""
+def test_transcribe_for_llm_uses_clipboard_as_primary_input_without_speech(app_module, monkeypatch):
+    """При пустой диктовке LLM должна обрабатывать текст из буфера обмена."""
     transcriber = make_transcriber(app_module)
 
-    captured_context = {}
+    captured_request = {}
 
     class LLMStub:
         def __init__(self):
             self.last_token_usage = 0
 
         def process_text(self, text, system_prompt, *, context=None):
-            captured_context["text"] = text
-            captured_context["context"] = context
+            captured_request["text"] = text
+            captured_request["system_prompt"] = system_prompt
+            captured_request["context"] = context
             self.last_token_usage = 5
             return "Ответ"
 
     monkeypatch.setattr(
         transcriber,
         "_run_transcription",
-        lambda *_args: {"text": "Переведи это", "segments": [{"tokens": [1, 2]}]},
+        lambda *_args: {"text": "", "segments": [{"tokens": [1, 2]}]},
     )
     monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "Hello world")
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
@@ -256,50 +257,69 @@ def test_transcribe_for_llm_passes_clipboard_as_context(app_module, monkeypatch)
     monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь текст")
+    transcriber.transcribe_for_llm(
+        make_audio(),
+        "ru",
+        llm_processor=LLMStub(),
+        system_prompt="Исправь текст",
+        prompt_name="Исправь текст",
+    )
 
-    assert captured_context["text"] == "Переведи это"
-    assert captured_context["context"] == "Hello world"
+    assert "Исходный текст для обработки:" in captured_request["text"]
+    assert "Hello world" in captured_request["text"]
+    assert "Дополнительная инструкция пользователя" not in captured_request["text"]
+    assert captured_request["context"] is None
 
 
-def test_transcribe_for_llm_passes_none_context_when_clipboard_empty(app_module, monkeypatch):
-    """LLM-пайплайн должен передавать context=None при пустом буфере обмена."""
+def test_transcribe_for_llm_combines_clipboard_text_with_voice_instruction(app_module, monkeypatch):
+    """При наличии буфера и голоса буфер становится текстом, а голос — инструкцией."""
     transcriber = make_transcriber(app_module)
 
-    captured_context = {}
+    captured_request = {}
 
     class LLMStub:
         def __init__(self):
             self.last_token_usage = 0
 
         def process_text(self, text, system_prompt, *, context=None):
-            captured_context["context"] = context
+            captured_request["text"] = text
+            captured_request["context"] = context
             self.last_token_usage = 5
             return "Ответ"
 
     monkeypatch.setattr(
         transcriber,
         "_run_transcription",
-        lambda *_args: {"text": "Что угодно", "segments": [{"tokens": [1]}]},
+        lambda *_args: {"text": "Переведи в дружелюбный стиль", "segments": [{"tokens": [1]}]},
     )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "Hello world")
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь")
+    transcriber.transcribe_for_llm(
+        make_audio(),
+        "ru",
+        llm_processor=LLMStub(),
+        system_prompt="Исправь",
+        prompt_name="Переведи на English",
+    )
 
-    assert captured_context["context"] is None
+    assert "Исходный текст для обработки:" in captured_request["text"]
+    assert "Hello world" in captured_request["text"]
+    assert "Дополнительная инструкция пользователя:" in captured_request["text"]
+    assert "Переведи в дружелюбный стиль" in captured_request["text"]
+    assert captured_request["context"] is None
 
 
 def test_transcribe_for_llm_disables_clipboard_io_when_option_off(app_module, monkeypatch):
-    """При выключенном LLM-буфере контекст не читается и ответ не пишется в clipboard."""
+    """При выключенном LLM-буфере пайплайн работает только с голосом."""
     transcriber = make_transcriber(app_module)
     transcriber.llm_clipboard_enabled = False
     copied = []
     read_calls = []
-    captured_context = {}
+    captured_request = {}
     notifications = []
 
     class LLMStub:
@@ -307,8 +327,9 @@ def test_transcribe_for_llm_disables_clipboard_io_when_option_off(app_module, mo
             self.last_token_usage = 2
 
         def process_text(self, text, system_prompt, *, context=None):
-            del text, system_prompt
-            captured_context["context"] = context
+            del system_prompt
+            captured_request["text"] = text
+            captured_request["context"] = context
             return "Готово 🙂"
 
     monkeypatch.setattr(
@@ -322,48 +343,54 @@ def test_transcribe_for_llm_disables_clipboard_io_when_option_off(app_module, mo
     monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
+    transcriber.transcribe_for_llm(
+        make_audio(),
+        "ru",
+        llm_processor=LLMStub(),
+        system_prompt="Универсальный",
+        prompt_name="Универсальный помощник",
+    )
 
     assert read_calls == []
-    assert captured_context["context"] is None
+    assert captured_request["text"] == "О чем этот текст?"
+    assert captured_request["context"] is None
     assert copied == []
-    assert notifications == [("🤖 LLM", "Готово 🙂")]
+    assert notifications == [("🤖 LLM", "Ответ LLM готов. Результат сохранён в буфер обмена.")]
 
 
-def test_transcribe_for_llm_skips_clipboard_for_unrelated_request(app_module, monkeypatch):
-    """Нерелевантный запрос не должен тащить в LLM содержимое буфера обмена."""
+def test_transcribe_for_llm_notifies_when_speech_missing_and_clipboard_empty(app_module, monkeypatch):
+    """При пустой диктовке и пустом буфере LLM не должна запускаться."""
     transcriber = make_transcriber(app_module)
-
-    captured_context = {}
+    notifications = []
 
     class LLMStub:
         def __init__(self):
             self.last_token_usage = 0
 
         def process_text(self, text, system_prompt, *, context=None):
-            del text, system_prompt
-            captured_context["context"] = context
-            self.last_token_usage = 5
-            return "Анекдот 🙂"
+            raise AssertionError("LLM не должна вызываться")
 
     monkeypatch.setattr(
         transcriber,
         "_run_transcription",
-        lambda *_args: {"text": "Расскажи анекдот.", "segments": [{"tokens": [1]}]},
+        lambda *_args: {"text": "", "segments": [{"tokens": [1]}]},
     )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "технические логи LLM")
-    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: None)
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "")
+    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Универсальный")
+    transcriber.transcribe_for_llm(
+        make_audio(),
+        "ru",
+        llm_processor=LLMStub(),
+        system_prompt="Исправь",
+        prompt_name="Исправь текст",
+    )
 
-    assert captured_context["context"] is None
+    assert notifications == [("MLX Whisper Dictation", "Речь не распознана, а буфер обмена пуст. Попробуйте ещё раз.")]
 
 
-def test_transcribe_for_llm_copies_clean_answer_and_notifies(app_module, monkeypatch):
-    """LLM-пайплайн должен отдавать в буфер и уведомление уже очищенный короткий ответ."""
+def test_transcribe_for_llm_copies_answer_and_reports_buffer_action(app_module, monkeypatch):
+    """При обработке текста из буфера уведомление должно описывать выполненное действие."""
     transcriber = make_transcriber(app_module)
     copied = []
     notifications = []
@@ -374,23 +401,65 @@ def test_transcribe_for_llm_copies_clean_answer_and_notifies(app_module, monkeyp
 
         def process_text(self, text, system_prompt, *, context=None):
             del text, system_prompt, context
-            return "Привет! Всё готово 🙂"
+            return "Hello world"
 
     monkeypatch.setattr(
         transcriber,
         "_run_transcription",
-        lambda *_args: {"text": "Скажи красиво", "segments": [{"tokens": [1]}]},
+        lambda *_args: {"text": "", "segments": [{"tokens": [1]}]},
     )
-    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: None)
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "Привет мир")
     monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
     monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
     monkeypatch.setattr(transcriber_module, "_save_defaults_int", lambda *_args: None)
     monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
 
-    transcriber.transcribe_for_llm(make_audio(), "ru", llm_processor=LLMStub(), system_prompt="Исправь")
+    transcriber.transcribe_for_llm(
+        make_audio(),
+        "ru",
+        llm_processor=LLMStub(),
+        system_prompt="Переведи",
+        prompt_name="Переведи на English",
+    )
 
-    assert copied == ["Привет! Всё готово 🙂"]
-    assert notifications == [("🤖 LLM", "Привет! Всё готово 🙂")]
+    assert copied == ["Hello world"]
+    assert notifications == [("🤖 LLM", "Текст из буфера переведён на английский. Результат сохранён в буфер обмена.")]
+
+
+def test_transcribe_for_llm_keeps_clipboard_unchanged_when_llm_fails_on_buffer_input(app_module, monkeypatch):
+    """Если LLM упала при работе по буферу, исходный буфер не должен перезаписываться."""
+    transcriber = make_transcriber(app_module)
+    copied = []
+    notifications = []
+
+    class LLMStub:
+        def __init__(self):
+            self.last_token_usage = 0
+
+        def process_text(self, text, system_prompt, *, context=None):
+            del text, system_prompt, context
+            raise RuntimeError("LLM failed")
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "", "segments": [{"tokens": [1]}]},
+    )
+    monkeypatch.setattr(transcriber, "_read_clipboard", lambda: "Текст из буфера")
+    monkeypatch.setattr(transcriber, "_add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_copy_text_to_clipboard", copied.append)
+    monkeypatch.setattr(transcriber_module, "notify_user", lambda *args: notifications.append(args))
+
+    transcriber.transcribe_for_llm(
+        make_audio(),
+        "ru",
+        llm_processor=LLMStub(),
+        system_prompt="Исправь",
+        prompt_name="Исправь текст",
+    )
+
+    assert copied == []
+    assert notifications == [("MLX Whisper Dictation", "Ошибка LLM. Исходный текст сохранён без изменения.")]
 
 
 def test_transcribe_for_llm_defers_stale_response_when_newer_request_exists(app_module, monkeypatch):
@@ -406,6 +475,7 @@ def test_transcribe_for_llm_defers_stale_response_when_newer_request_exists(app_
 
         def process_text(self, text, system_prompt, *, context=None):
             del text, system_prompt, context
+            self.last_token_usage = 5
             return "Ответ агента"
 
     monkeypatch.setattr(
@@ -424,6 +494,7 @@ def test_transcribe_for_llm_defers_stale_response_when_newer_request_exists(app_
         "ru",
         llm_processor=LLMStub(),
         system_prompt="Исправь",
+        prompt_name="Исправь текст",
         should_deliver_result=lambda: False,
     )
 

@@ -76,7 +76,9 @@ def main() -> int:
     if args.coverage:
         pytest_command.extend(
             [
-                "--cov=.",
+                "--cov=src",
+                "--cov=main.py",
+                "--cov=scripts",
                 "--cov-report=term",
                 f"--cov-fail-under={args.min_coverage}",
             ]

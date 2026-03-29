@@ -130,3 +130,13 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    "build",
+    "dist",
+    ".venv",
+    "logs",
+    "__pycache__",
+]

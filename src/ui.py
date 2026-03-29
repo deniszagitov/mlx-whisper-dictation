@@ -404,6 +404,7 @@ class StatusBarApp(rumps.App):
         self.recorder.set_input_device(self.current_input_device)
         if hasattr(self.recorder, "set_performance_mode"):
             self.recorder.set_performance_mode(self.performance_mode)
+        self.recorder.llm_prompt_name = self.llm_prompt_name
         self.recorder.llm_system_prompt = LLM_PROMPT_PRESETS.get(
             self.llm_prompt_name,
             LLM_PROMPT_PRESETS[DEFAULT_LLM_PROMPT_NAME],
@@ -1271,6 +1272,7 @@ class StatusBarApp(rumps.App):
         self.started = True
         self._menu_item("Начать запись").set_callback(None)
         self._menu_item("Остановить запись").set_callback(self.stop_app)
+        self.recorder.llm_prompt_name = self.llm_prompt_name
         self.recorder.llm_system_prompt = LLM_PROMPT_PRESETS.get(self.llm_prompt_name, LLM_PROMPT_PRESETS[DEFAULT_LLM_PROMPT_NAME])
         self.recorder.start_llm(self.current_language)
         self.start_time = time.time()
@@ -1325,6 +1327,7 @@ class StatusBarApp(rumps.App):
         """
         self.llm_prompt_name = sender.title
         _save_defaults_str(DEFAULTS_KEY_LLM_PROMPT, self.llm_prompt_name)
+        self.recorder.llm_prompt_name = self.llm_prompt_name
         self.recorder.llm_system_prompt = LLM_PROMPT_PRESETS.get(
             self.llm_prompt_name,
             LLM_PROMPT_PRESETS[DEFAULT_LLM_PROMPT_NAME],
