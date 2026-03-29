@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, cast
 
 from src.domain.constants import Config
+from src.domain.types import MicrophoneProfile
 from src.infrastructure.persistence import microphone_profiles as microphone_profiles_module
-
-if TYPE_CHECKING:
-    from src.domain.types import MicrophoneProfile
 
 
 def test_load_microphone_profiles_returns_empty_list_when_value_is_missing(monkeypatch):
@@ -77,16 +74,16 @@ def test_load_microphone_profiles_normalizes_and_limits_profiles(monkeypatch):
     profiles = microphone_profiles_module._load_microphone_profiles()
 
     assert len(profiles) == Config.MAX_MICROPHONE_PROFILES - 1
-    assert profiles[0]["name"] == "Основной"
-    assert profiles[0]["input_device_index"] == 7
-    assert profiles[0]["max_time"] == 30
-    assert profiles[0]["model_repo"] == Config.DEFAULT_MODEL_NAME
-    assert profiles[0]["performance_mode"] == Config.DEFAULT_PERFORMANCE_MODE
-    assert profiles[0]["private_mode"] is True
-    assert profiles[0]["paste_cgevent"] is False
-    assert profiles[0]["paste_ax"] is True
-    assert profiles[0]["paste_clipboard"] is True
-    assert profiles[0]["llm_clipboard"] is False
+    assert profiles[0].name == "Основной"
+    assert profiles[0].input_device_index == 7
+    assert profiles[0].max_time == 30
+    assert profiles[0].model_repo == Config.DEFAULT_MODEL_NAME
+    assert profiles[0].performance_mode == Config.DEFAULT_PERFORMANCE_MODE
+    assert profiles[0].private_mode is True
+    assert profiles[0].paste_cgevent is False
+    assert profiles[0].paste_ax is True
+    assert profiles[0].paste_clipboard is True
+    assert profiles[0].llm_clipboard is False
 
 
 def test_save_microphone_profiles_writes_normalized_json(monkeypatch):
@@ -101,39 +98,19 @@ def test_save_microphone_profiles_writes_normalized_json(monkeypatch):
 
     microphone_profiles_module._save_microphone_profiles(
         [
-            cast(
-                "MicrophoneProfile",
-                {
-                "name": "Тестовый",
-                "input_device_index": 3,
-                "input_device_name": "USB Mic",
-                "model_repo": "custom/model",
-                "language": "en",
-                "max_time": 12.5,
-                "performance_mode": "fast",
-                "private_mode": False,
-                "paste_cgevent": True,
-                "paste_ax": False,
-                "paste_clipboard": True,
-                "llm_clipboard": True,
-                },
-            ),
-            cast(
-                "MicrophoneProfile",
-                {
-                "name": "",
-                "input_device_index": None,
-                "input_device_name": "",
-                "model_repo": Config.DEFAULT_MODEL_NAME,
-                "language": None,
-                "max_time": None,
-                "performance_mode": Config.DEFAULT_PERFORMANCE_MODE,
-                "private_mode": False,
-                "paste_cgevent": True,
-                "paste_ax": False,
-                "paste_clipboard": False,
-                "llm_clipboard": True,
-                },
+            MicrophoneProfile.from_runtime(
+                "Тестовый",
+                input_device_index=3,
+                input_device_name="USB Mic",
+                model_repo="custom/model",
+                language="en",
+                max_time=12.5,
+                performance_mode="fast",
+                private_mode=False,
+                paste_cgevent=True,
+                paste_ax=False,
+                paste_clipboard=True,
+                llm_clipboard=True,
             ),
         ]
     )

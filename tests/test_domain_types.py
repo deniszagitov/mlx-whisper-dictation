@@ -1,66 +1,100 @@
-"""Тесты импорта и контракта доменных TypedDict."""
+"""Тесты доменных value objects конфигурации."""
 
 from __future__ import annotations
 
 from src.domain import types as domain_types
+from src.domain.constants import Config
 
 
-def test_domain_typed_dicts_expose_expected_fields() -> None:
-    """Доменные TypedDict должны объявлять ожидаемые ключи для orchestration-слоя."""
-    history_record: domain_types.HistoryRecord = {"text": "пример", "created_at": 1.0}
-    audio_device: domain_types.AudioDeviceInfo = {
-        "index": 0,
-        "name": "Built-in Microphone",
-        "max_input_channels": 2,
-        "default_sample_rate": 44_100.0,
-        "is_default": True,
-    }
-    microphone_profile: domain_types.MicrophoneProfile = {
-        "name": "Основной",
-        "input_device_index": 0,
-        "input_device_name": "Built-in Microphone",
-        "model_repo": "mlx-community/whisper-large-v3-turbo",
-        "language": "ru",
-        "max_time": 30.0,
-        "performance_mode": "normal",
+def test_microphone_profile_from_payload_normalizes_fields() -> None:
+    """Профиль микрофона должен нормализоваться в immutable dataclass."""
+    profile = domain_types.MicrophoneProfile.from_payload(
+        {
+            "name": "  Основной  ",
+            "input_device_index": "7",
+            "input_device_name": "USB Mic",
+            "model_repo": "",
+            "language": "ru",
+            "max_time": "30.0",
+            "performance_mode": "turbo",
+            "private_mode": 1,
+            "paste_cgevent": False,
+            "paste_ax": True,
+            "paste_clipboard": True,
+            "llm_clipboard": False,
+        }
+    )
+
+    assert profile is not None
+    assert profile.name == "Основной"
+    assert profile.input_device_index == 7
+    assert profile.model_repo == Config.DEFAULT_MODEL_NAME
+    assert profile.max_time == 30
+    assert profile.performance_mode == Config.DEFAULT_PERFORMANCE_MODE
+    assert profile.private_mode is True
+    assert profile.paste_ax is True
+    assert profile.llm_clipboard is False
+
+
+def test_microphone_profile_to_payload_roundtrip() -> None:
+    """Профиль должен сериализоваться обратно в JSON-совместимый словарь."""
+    profile = domain_types.MicrophoneProfile.from_runtime(
+        "Звонки",
+        input_device_index=4,
+        input_device_name="USB Mic",
+        model_repo="mlx-community/whisper-turbo",
+        language="en",
+        max_time=12.5,
+        performance_mode=Config.PERFORMANCE_MODE_FAST,
+        private_mode=False,
+        paste_cgevent=True,
+        paste_ax=False,
+        paste_clipboard=True,
+        llm_clipboard=True,
+    )
+
+    assert profile.to_payload() == {
+        "name": "Звонки",
+        "input_device_index": 4,
+        "input_device_name": "USB Mic",
+        "model_repo": "mlx-community/whisper-turbo",
+        "language": "en",
+        "max_time": 12.5,
+        "performance_mode": Config.PERFORMANCE_MODE_FAST,
         "private_mode": False,
         "paste_cgevent": True,
         "paste_ax": False,
         "paste_clipboard": True,
         "llm_clipboard": True,
     }
-    audio_diagnostics: domain_types.AudioDiagnostics = {
-        "language": "ru",
-        "duration_seconds": 1.5,
-        "rms_energy": 0.2,
-        "peak_amplitude": 0.9,
-        "silence_threshold": 0.01,
-        "hallucination_threshold": 0.001,
-        "sample_rate": 16_000,
-        "samples": 24_000,
-        "first_samples": [0.1, 0.2, 0.3],
-    }
 
-    assert history_record["text"] == "пример"
-    assert audio_device["is_default"] is True
-    assert microphone_profile["model_repo"].endswith("turbo")
-    assert audio_diagnostics["sample_rate"] == 16_000
-    assert set(domain_types.HistoryRecord.__annotations__) == {"text", "created_at"}
-    assert set(domain_types.AudioDeviceInfo.__annotations__) == {
-        "index",
-        "name",
-        "max_input_channels",
-        "default_sample_rate",
-        "is_default",
-    }
-    assert set(domain_types.MicrophoneProfile.__annotations__) >= {
-        "name",
-        "performance_mode",
-        "private_mode",
-        "llm_clipboard",
-    }
-    assert set(domain_types.AudioDiagnostics.__annotations__) >= {
-        "duration_seconds",
-        "peak_amplitude",
-        "first_samples",
+
+def test_launch_config_exposes_compatible_alias_properties() -> None:
+    """LaunchConfig должен сохранять совместимые alias-свойства для runtime."""
+    launch_config = domain_types.LaunchConfig.from_sources(
+        model="mlx-community/whisper-turbo",
+        language="ru,en",
+        max_time="45",
+        llm_model=Config.DEFAULT_LLM_MODEL_NAME,
+        key_combination="Command+Option+Space",
+        secondary_key_combination="Control+Shift+T",
+        llm_key_combination="",
+        k_double_cmd=False,
+    )
+
+    assert launch_config.model == "mlx-community/whisper-turbo"
+    assert launch_config.language == ["ru", "en"]
+    assert launch_config.max_time == 45
+    assert launch_config.key_combination == "cmd+alt+space"
+    assert launch_config.secondary_key_combination == "ctrl+shift+t"
+    assert launch_config.llm_key_combination is None
+
+
+def test_app_snapshot_type_annotations_stay_available() -> None:
+    """AppSnapshot должен сохранять контракт полей для UI-слоя."""
+    assert set(domain_types.AppSnapshot.__annotations__) >= {
+        "model_repo",
+        "hotkey_status",
+        "microphone_profiles",
+        "show_recording_overlay",
     }

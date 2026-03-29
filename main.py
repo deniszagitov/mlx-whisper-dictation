@@ -8,9 +8,9 @@ import argparse
 import logging
 import platform
 import sys
+from typing import Any, cast
 
 import Quartz  # noqa: F401
-from Foundation import NSUserDefaults
 from pynput import keyboard
 from src.adapters.hotkey_dialog import capture_hotkey_combination
 from src.adapters.overlay import RecordingOverlay
@@ -28,6 +28,7 @@ from src.app import (  # noqa: F401
 from src.domain.audio import microphone_menu_title  # noqa: F401
 from src.domain.constants import Config
 from src.domain.hotkeys import format_hotkey_status, normalize_key_combination, normalize_key_name  # noqa: F401
+from src.domain.types import AppPreferences, LaunchConfig, TranscriberPreferences
 from src.infrastructure.audio_runtime import Recorder, list_input_devices
 from src.infrastructure.hotkeys import (
     MODIFIER_DISPLAY_ORDER,  # noqa: F401
@@ -88,43 +89,11 @@ def _cli_option_was_provided(*option_names: str) -> bool:
     return any(option_name in argv for option_name in option_names)
 
 
-def _load_saved_runtime_preferences(args: argparse.Namespace) -> None:
-    """Подставляет сохранённые настройки, если их не переопределили через CLI."""
-    if not _cli_option_was_provided("-m", "--model"):
-        saved_model = defaults.load_str(Config.DEFAULTS_KEY_MODEL, fallback=None)
-        if saved_model:
-            args.model = saved_model
-
-    if not _cli_option_was_provided("-l", "--language"):
-        saved_language = defaults.load_str(Config.DEFAULTS_KEY_LANGUAGE, fallback=None)
-        if saved_language:
-            args.language = saved_language
-
-    if not _cli_option_was_provided("-t", "--max_time"):
-        args.max_time = defaults.load_max_time(args.max_time)
-
-    if not args.k_double_cmd and not _cli_option_was_provided("-k", "--key_combination"):
-        saved_primary = defaults.load_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, fallback=None)
-        if saved_primary:
-            args.key_combination = saved_primary
-
-    ns_defaults = NSUserDefaults.standardUserDefaults()
-    if (
-        not args.k_double_cmd
-        and not _cli_option_was_provided("--secondary_key_combination")
-        and ns_defaults.objectForKey_(Config.DEFAULTS_KEY_SECONDARY_HOTKEY) is not None
-    ):
-        args.secondary_key_combination = defaults.load_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, fallback="") or None
-
-    if not _cli_option_was_provided("--llm_key_combination") and ns_defaults.objectForKey_(Config.DEFAULTS_KEY_LLM_HOTKEY) is not None:
-        args.llm_key_combination = defaults.load_str(Config.DEFAULTS_KEY_LLM_HOTKEY, fallback="") or None
-
-
-def parse_args() -> argparse.Namespace:
+def parse_args() -> LaunchConfig:
     """Разбирает аргументы командной строки.
 
     Returns:
-        Пространство имен argparse с настройками запуска приложения.
+        Нормализованная конфигурация запуска приложения.
 
     Raises:
         SystemExit: Если передана некорректная комбинация клавиш.
@@ -216,42 +185,41 @@ def parse_args() -> argparse.Namespace:
     )
 
     args = parser.parse_args()
+    cli_overrides = {
+        option_name
+        for option_names in (
+            ("-m", "--model"),
+            ("-k", "--key_combination"),
+            ("--secondary_key_combination",),
+            ("--k_double_cmd",),
+            ("-l", "--language"),
+            ("-t", "--max_time"),
+            ("--llm_key_combination",),
+            ("--llm_model",),
+        )
+        if _cli_option_was_provided(*option_names)
+        for option_name in option_names
+    }
 
-    _load_saved_runtime_preferences(args)
-
-    if args.secondary_key_combination is not None and not args.secondary_key_combination.strip():
-        args.secondary_key_combination = None
-
-    if args.llm_key_combination is not None and not args.llm_key_combination.strip():
-        args.llm_key_combination = None
-
-    if args.k_double_cmd and args.secondary_key_combination:
-        if "--secondary_key_combination" in sys.argv:
-            parser.error("Параметр --secondary_key_combination нельзя использовать вместе с --k_double_cmd.")
-        args.secondary_key_combination = None
-
-    if not args.k_double_cmd:
-        try:
-            args.key_combination = normalize_key_combination(args.key_combination)
-            if args.secondary_key_combination:
-                args.secondary_key_combination = normalize_key_combination(args.secondary_key_combination)
-                if args.secondary_key_combination == args.key_combination:
-                    parser.error("Дополнительный хоткей должен отличаться от основного.")
-            if args.llm_key_combination:
-                args.llm_key_combination = normalize_key_combination(args.llm_key_combination)
-        except ValueError as error:
-            parser.error(str(error))
-
-    if args.language is not None:
-        args.language = args.language.split(",")
-
-    if args.model.endswith(".en") and args.language is not None and any(lang != "en" for lang in args.language):
-        raise ValueError("Для модели с суффиксом .en нельзя указывать язык, отличный от английского.")
-
-    return args
+    try:
+        return LaunchConfig.from_sources(
+            model=args.model,
+            language=args.language,
+            max_time=args.max_time,
+            llm_model=args.llm_model,
+            key_combination=args.key_combination,
+            secondary_key_combination=args.secondary_key_combination,
+            llm_key_combination=args.llm_key_combination,
+            k_double_cmd=args.k_double_cmd,
+            settings_store=defaults,
+            cli_overrides=cli_overrides,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+        raise AssertionError("parser.error() должен завершить выполнение") from error
 
 
-def _log_startup_configuration(args: argparse.Namespace) -> None:
+def _log_startup_configuration(args: LaunchConfig) -> None:
     """Пишет в лог итоговую конфигурацию запуска приложения."""
     LOGGER.info("Запуск с моделью: %s", args.model)
     if args.k_double_cmd:
@@ -280,9 +248,13 @@ def main() -> None:
     if input_monitoring_granted is False:
         warn_missing_input_monitoring_permission()
 
+    app_preferences = AppPreferences.from_store(defaults)
+    transcriber_preferences = TranscriberPreferences.from_store(defaults)
+
     transcriber = SpeechTranscriber(
         args.model,
         settings_store=defaults,
+        preferences=transcriber_preferences,
         diagnostics_store=DiagnosticsStore(),
         transcription_runner=run_whisper_transcription,
         type_text_via_cgevent=lambda text: type_text_via_cgevent(text, frontmost_app_info=frontmost_application_info),
@@ -341,16 +313,8 @@ def main() -> None:
         recorder,
         transcriber,
         llm_processor,
-        args.model,
-        format_hotkey_status(args.key_combination, use_double_cmd=args.k_double_cmd),
-        args.language,
-        args.max_time,
-        key_combination=args.key_combination if not args.k_double_cmd else None,
-        secondary_hotkey_status=format_hotkey_status(args.secondary_key_combination) if args.secondary_key_combination else "не задан",
-        secondary_key_combination=args.secondary_key_combination,
-        llm_hotkey_status=format_hotkey_status(args.llm_key_combination) if args.llm_key_combination else "не задан",
-        llm_key_combination=args.llm_key_combination,
-        use_double_command_hotkey=args.k_double_cmd,
+        args,
+        app_preferences,
         clipboard_service=clipboard_service,
         microphone_profiles_service=microphone_profiles_service,
         system_integration_service=system_integration_service,
@@ -360,7 +324,7 @@ def main() -> None:
         recording_overlay=recording_overlay,
         settings_store=defaults,
     )
-    app = StatusBarApp(app_controller)
+    app = StatusBarApp(cast("Any", app_controller))
     if args.k_double_cmd:
         key_listener = DoubleCommandKeyListener(app_controller)
         listener = keyboard.Listener(
@@ -374,10 +338,10 @@ def main() -> None:
         key_listener.start()  # type: ignore[attr-defined]
         app_controller.key_listener = key_listener
 
-    if app_controller._llm_key_combination:
+    if app_controller.llm_key_combination:
         llm_listener = GlobalKeyListener(
             app_controller,
-            app_controller._llm_key_combination,
+            app_controller.llm_key_combination,
             callback=app_controller.toggle_llm,
         )
         llm_listener.start()

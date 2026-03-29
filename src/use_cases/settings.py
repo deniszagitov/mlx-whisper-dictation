@@ -40,6 +40,9 @@ class SettingsUseCases:
                 return
 
         self.runtime.current_input_device = selected_device
+        self.runtime.app_preferences = self.runtime.app_preferences.with_selected_input_device_index(
+            None if selected_device is None else selected_device["index"],
+        )
         self.recorder.set_input_device(selected_device)
         self.settings_store.save_input_device_index(None if selected_device is None else selected_device["index"])
         if selected_device is not None:
@@ -85,7 +88,7 @@ class SettingsUseCases:
             return
 
         self.runtime.max_time = max_time
-        self.settings_store.save_max_time(self.runtime.max_time)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_MAX_TIME, self.runtime.launch_config.max_time_store_value)
         LOGGER.info("⏱ Обновлен лимит записи: %s", Config.format_max_time_status(self.runtime.max_time))
         self.publish_snapshot()
 

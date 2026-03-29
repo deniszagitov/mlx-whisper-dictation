@@ -301,6 +301,10 @@ class DiagnosticsStoreProtocol(Protocol):
 class SettingsStoreProtocol(Protocol):
     """Протокол чтения и записи runtime-настроек."""
 
+    def contains_key(self, key: str) -> bool:
+        """Сообщает, существует ли ключ в хранилище."""
+        ...
+
     def load_bool(self, key: str, fallback: bool) -> bool:
         """Читает bool."""
         ...
