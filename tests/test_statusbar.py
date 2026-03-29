@@ -13,6 +13,7 @@ import src.adapters.ui as ui_module
 import src.app as app_controller_module
 from src.adapters import overlay
 from src.domain.constants import Config
+from src.domain.types import LaunchConfig, MicrophoneProfile
 
 
 class FakeRecorder:
@@ -79,8 +80,16 @@ class FakeLLMProcessor:
 class FakeSettingsStore:
     """Фейковое хранилище настроек для тестов StatusBarApp."""
 
+    def contains_key(self, _key):
+        """Сообщает, что сохранённых значений нет."""
+        return False
+
     def load_str(self, _key, fallback=None):
         """Возвращает fallback-значение для строковых настроек."""
+        return fallback
+
+    def load_int(self, _key, fallback=0):
+        """Возвращает fallback-значение для int-настроек."""
         return fallback
 
     def load_bool(self, _key, fallback):
@@ -156,14 +165,18 @@ def make_clipboard_service(*, initial_text=None, written_texts=None):
 
 def make_microphone_profiles_service(*, profiles=None, saved_profiles=None):
     """Создаёт concrete persistence bundle профилей микрофона для тестов."""
-    current_profiles = list(profiles or [])
+    current_profiles = [
+        profile if isinstance(profile, MicrophoneProfile) else MicrophoneProfile.from_payload(profile)
+        for profile in (profiles or [])
+    ]
+    current_profiles = [profile for profile in current_profiles if profile is not None]
     sink = saved_profiles if saved_profiles is not None else []
 
     def load_profiles():
-        return [dict(profile) for profile in current_profiles]
+        return list(current_profiles)
 
     def save_profiles(profiles_to_save):
-        sink.append([dict(profile) for profile in profiles_to_save])
+        sink.append([profile.to_payload() for profile in profiles_to_save])
 
     return app_controller_module.MicrophoneProfilesService(
         load_profiles=load_profiles,
@@ -204,6 +217,20 @@ def make_input_device_catalog(*, devices=None):
         ],
     )
     return app_controller_module.InputDeviceCatalogService(list_input_devices=lambda: list(input_devices))
+
+
+def make_launch_config(*, languages=None, max_time=30, secondary_key_combination=None):
+    """Создаёт launch-конфиг для тестов UI."""
+    return LaunchConfig.from_sources(
+        model="mlx-community/whisper-large-v3-turbo",
+        language=languages,
+        max_time=max_time,
+        llm_model=Config.DEFAULT_LLM_MODEL_NAME,
+        key_combination="cmd_l+alt",
+        secondary_key_combination=secondary_key_combination,
+        llm_key_combination=None,
+        k_double_cmd=False,
+    )
 
 
 def make_snapshot(**overrides):
@@ -375,15 +402,11 @@ def make_app(patched_app_module):
             recorder=recorder,
             transcriber=transcriber,
             llm_processor=llm_processor,
-            model_name="mlx-community/whisper-large-v3-turbo",
-            hotkey_status="левая ⌘ + ⌥",
-            languages=languages,
-            max_time=max_time,
-            key_combination="cmd_l+alt",
-            secondary_hotkey_status=(
-                patched_app_module.format_hotkey_status(secondary_key_combination) if secondary_key_combination else "не задан"
+            launch_config=make_launch_config(
+                languages=languages,
+                max_time=max_time,
+                secondary_key_combination=secondary_key_combination,
             ),
-            secondary_key_combination=secondary_key_combination,
             clipboard_service=clipboard_service,
             microphone_profiles_service=microphone_profiles_service,
             system_integration_service=system_integration_service,
@@ -700,15 +723,12 @@ class TestStatusBarMenuSelections:
         """Лимит записи должен сохраняться между перезапусками."""
         saved_values = []
 
-        def save_defaults_max_time(value):
-            saved_values.append(value)
-
         app, *_ = make_app(languages=["ru"], max_time=30)
-        monkeypatch.setattr(app.app.settings_store, "save_max_time", save_defaults_max_time)
+        monkeypatch.setattr(app.app.settings_store, "save_str", lambda key, value: saved_values.append((key, value)))
 
         app.change_max_time(app._menu_item("Лимит: 60 с"))
 
-        assert saved_values == [60]
+        assert (Config.DEFAULTS_KEY_MAX_TIME, "60") in saved_values
 
     def test_change_model_from_menu_updates_transcriber(self, make_app):
         """Выбор модели из меню должен переключать модель в transcriber."""
@@ -752,11 +772,7 @@ class TestStatusBarMenuSelections:
             recorder=recorder,
             transcriber=FakeTranscriber(),
             llm_processor=FakeLLMProcessor(),
-            model_name="mlx-community/whisper-large-v3-turbo",
-            hotkey_status="левая ⌘ + ⌥",
-            languages=["ru"],
-            max_time=30,
-            key_combination="cmd_l+alt",
+            launch_config=make_launch_config(languages=["ru"], max_time=30),
             clipboard_service=make_clipboard_service(),
             microphone_profiles_service=make_microphone_profiles_service(),
             system_integration_service=make_system_integration_service(),
@@ -783,7 +799,7 @@ class TestStatusBarMenuSelections:
 
         app.add_current_microphone_profile(None)
 
-        assert app.microphone_profiles[0]["name"] == "Звонки"
+        assert app.microphone_profiles[0].name == "Звонки"
         assert app.microphone_profiles_menu["Звонки"].state == 1
         assert saved_profiles[-1][0]["input_device_index"] == 0
         assert saved_profiles[-1][0]["paste_ax"] is True
@@ -795,7 +811,6 @@ class TestStatusBarMenuSelections:
         saved_device_indexes: list[object] = []
         saved_strings = []
         saved_bools = []
-        saved_max_times: list[object] = []
         settings_store = FakeSettingsStore()
         input_device_catalog = make_input_device_catalog(
             devices=[
@@ -813,7 +828,6 @@ class TestStatusBarMenuSelections:
         monkeypatch.setattr(settings_store, "save_input_device_index", saved_device_indexes.append)
         monkeypatch.setattr(settings_store, "save_str", save_defaults_str)
         monkeypatch.setattr(settings_store, "save_bool", save_defaults_bool)
-        monkeypatch.setattr(settings_store, "save_max_time", saved_max_times.append)
 
         recorder = FakeRecorder()
         transcriber = FakeTranscriber()
@@ -821,11 +835,7 @@ class TestStatusBarMenuSelections:
             recorder=recorder,
             transcriber=transcriber,
             llm_processor=FakeLLMProcessor(),
-            model_name="mlx-community/whisper-large-v3-turbo",
-            hotkey_status="левая ⌘ + ⌥",
-            languages=["ru"],
-            max_time=30,
-            key_combination="cmd_l+alt",
+            launch_config=make_launch_config(languages=["ru"], max_time=30),
             clipboard_service=make_clipboard_service(),
             microphone_profiles_service=make_microphone_profiles_service(
                 profiles=[
@@ -865,8 +875,8 @@ class TestStatusBarMenuSelections:
         assert transcriber.llm_clipboard_enabled is False
         assert saved_device_indexes == [4]
         assert (Config.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_strings
+        assert (Config.DEFAULTS_KEY_MAX_TIME, "60") in saved_strings
         assert (Config.DEFAULTS_KEY_PERFORMANCE_MODE, Config.PERFORMANCE_MODE_FAST) in saved_strings
-        assert saved_max_times == [60]
         assert (Config.DEFAULTS_KEY_PASTE_CGEVENT, False) in saved_bools
         assert (Config.DEFAULTS_KEY_PASTE_AX, True) in saved_bools
         assert (Config.DEFAULTS_KEY_PASTE_CLIPBOARD, True) in saved_bools
@@ -893,11 +903,7 @@ class TestStatusBarMenuSelections:
             recorder=recorder,
             transcriber=FakeTranscriber(),
             llm_processor=FakeLLMProcessor(),
-            model_name="mlx-community/whisper-large-v3-turbo",
-            hotkey_status="левая ⌘ + ⌥",
-            languages=["ru"],
-            max_time=30,
-            key_combination="cmd_l+alt",
+            launch_config=make_launch_config(languages=["ru"], max_time=30),
             clipboard_service=make_clipboard_service(),
             microphone_profiles_service=make_microphone_profiles_service(
                 profiles=[

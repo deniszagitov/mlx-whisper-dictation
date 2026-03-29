@@ -192,6 +192,7 @@ class TestParseArgs:
     @pytest.fixture(autouse=True)
     def _clean_defaults(self, app_module, monkeypatch):
         """Изолирует parse_args-тесты от реальных NSUserDefaults пользователя."""
+        import src.infrastructure.persistence.defaults as defaults_module
 
         class EmptyDefaults:
             def objectForKey_(self, _key):
@@ -209,7 +210,7 @@ class TestParseArgs:
             return empty_defaults
 
         monkeypatch.setattr(
-            app_module,
+            defaults_module,
             "NSUserDefaults",
             SimpleNamespace(standardUserDefaults=standard_user_defaults),
         )
@@ -332,7 +333,6 @@ class TestParseArgs:
             return fake_defaults
 
         fake_ns = SimpleNamespace(standardUserDefaults=standard_user_defaults)
-        monkeypatch.setattr(app_module, "NSUserDefaults", fake_ns)
         monkeypatch.setattr(config_module, "NSUserDefaults", fake_ns)
         monkeypatch.setattr(sys, "argv", ["main.py"])
 

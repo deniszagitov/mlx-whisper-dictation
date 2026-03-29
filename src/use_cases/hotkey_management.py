@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from ..domain.constants import Config
-from ..domain.hotkeys import format_hotkey_status, normalize_key_combination
+from ..domain.hotkeys import normalize_key_combination
 
 LOGGER = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ class HotkeyManagementUseCases:
 
         old_combination = self.runtime.llm_key_combination
         self.runtime.llm_key_combination = normalized
-        self.settings_store.save_str(Config.DEFAULTS_KEY_LLM_HOTKEY, self.runtime.llm_key_combination)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_LLM_HOTKEY, self.runtime.launch_config.hotkeys.llm_store_value)
         self._refresh_hotkey_statuses()
 
         if self.runtime.llm_key_listener is not None:
@@ -164,31 +164,20 @@ class HotkeyManagementUseCases:
 
     def active_key_combinations(self) -> list[str]:
         """Возвращает все включённые комбинации для основного listener-а."""
-        return [
-            key_combination
-            for key_combination in (self.runtime.primary_key_combination, self.runtime.secondary_key_combination)
-            if key_combination
-        ]
+        return list(self.runtime.launch_config.hotkeys.active_key_combinations)
 
     def refresh_hotkey_statuses(self) -> None:
         """Синхронизирует display-строки хоткеев с текущими комбинациями."""
         self._refresh_hotkey_statuses()
 
     def _refresh_hotkey_statuses(self) -> None:
-        if self.runtime.primary_key_combination:
-            self.runtime.hotkey_status = format_hotkey_status(self.runtime.primary_key_combination)
-        if self.runtime.secondary_key_combination:
-            self.runtime.secondary_hotkey_status = format_hotkey_status(self.runtime.secondary_key_combination)
-        else:
-            self.runtime.secondary_hotkey_status = "не задан"
-        if self.runtime.llm_key_combination:
-            self.runtime.llm_hotkey_status = format_hotkey_status(self.runtime.llm_key_combination)
-        else:
-            self.runtime.llm_hotkey_status = "не задан"
+        self.runtime.hotkey_status = self.runtime.launch_config.hotkeys.hotkey_status
+        self.runtime.secondary_hotkey_status = self.runtime.launch_config.hotkeys.secondary_hotkey_status
+        self.runtime.llm_hotkey_status = self.runtime.launch_config.hotkeys.llm_hotkey_status
 
     def _persist_hotkey_settings(self) -> None:
-        self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self.runtime.primary_key_combination)
-        self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self.runtime.secondary_key_combination)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self.runtime.launch_config.hotkeys.primary_store_value)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self.runtime.launch_config.hotkeys.secondary_store_value)
 
     def _can_update_hotkeys_runtime(self) -> bool:
         return hasattr(self.runtime.key_listener, "update_key_combinations")

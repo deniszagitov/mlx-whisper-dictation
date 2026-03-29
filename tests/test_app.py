@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import src.app as app_module
 from src.domain.constants import Config
+from src.domain.types import LaunchConfig
 
 
 class FakeRecorder:
@@ -119,8 +120,16 @@ class FakeLLMProcessor:
 class FakeSettingsStore:
     """Фейковое хранилище настроек для тестов DictationApp."""
 
+    def contains_key(self, _key) -> bool:
+        """Сообщает, что сохранённых значений нет."""
+        return False
+
     def load_str(self, _key, fallback=None):
         """Возвращает fallback-значение для строковых настроек."""
+        return fallback
+
+    def load_int(self, _key, fallback=0):
+        """Возвращает fallback-значение для целочисленных настроек."""
         return fallback
 
     def load_bool(self, _key, fallback):
@@ -203,15 +212,21 @@ def make_controller(monkeypatch):
         save_profiles=lambda _profiles: None,
     )
     system_integration_service = make_system_integration_service()
+    launch_config = LaunchConfig.from_sources(
+        model="mlx-community/whisper-large-v3-turbo",
+        language=["ru"],
+        max_time=30,
+        llm_model=Config.DEFAULT_LLM_MODEL_NAME,
+        key_combination="cmd_l+alt",
+        secondary_key_combination=None,
+        llm_key_combination=None,
+        k_double_cmd=False,
+    )
     controller = app_module.DictationApp(
         recorder=cast("Any", recorder),
         transcriber=cast("Any", transcriber),
         llm_processor=cast("Any", llm_processor),
-        model_name="mlx-community/whisper-large-v3-turbo",
-        hotkey_status="левая ⌘ + ⌥",
-        languages=["ru"],
-        max_time=30,
-        key_combination="cmd_l+alt",
+        launch_config=launch_config,
         clipboard_service=clipboard_service,
         microphone_profiles_service=microphone_profiles_service,
         system_integration_service=system_integration_service,
@@ -275,15 +290,21 @@ def test_copy_history_text_uses_injected_clipboard_service(monkeypatch):
     """Копирование записи истории должно идти через clipboard bundle приложения."""
     written_texts: list[str] = []
     settings_store = FakeSettingsStore()
+    launch_config = LaunchConfig.from_sources(
+        model="mlx-community/whisper-large-v3-turbo",
+        language=["ru"],
+        max_time=30,
+        llm_model=Config.DEFAULT_LLM_MODEL_NAME,
+        key_combination="cmd_l+alt",
+        secondary_key_combination=None,
+        llm_key_combination=None,
+        k_double_cmd=False,
+    )
     controller = app_module.DictationApp(
         recorder=cast("Any", FakeRecorder()),
         transcriber=cast("Any", FakeTranscriber()),
         llm_processor=cast("Any", FakeLLMProcessor()),
-        model_name="mlx-community/whisper-large-v3-turbo",
-        hotkey_status="левая ⌘ + ⌥",
-        languages=["ru"],
-        max_time=30,
-        key_combination="cmd_l+alt",
+        launch_config=launch_config,
         clipboard_service=app_module.ClipboardService(
             read_text=lambda: None,
             write_text=written_texts.append,

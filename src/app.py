@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from .domain.audio import microphone_menu_title as format_microphone_menu_title
 from .domain.constants import Config
-from .domain.types import AppSnapshot
+from .domain.types import AppPreferences, AppSnapshot, LaunchConfig, MicrophoneProfile
 from .use_cases.hotkey_management import HotkeyManagementUseCases
 from .use_cases.llm_pipeline import LlmPipelineUseCases
 from .use_cases.microphone_profiles import MicrophoneProfilesUseCases
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .domain.ports import LlmGatewayProtocol, RecorderProtocol, SettingsStoreProtocol
-    from .domain.types import AudioDeviceInfo, MicrophoneProfile
+    from .domain.types import AudioDeviceInfo
     from .use_cases.transcription import TranscriptionUseCases
 
 LOGGER = logging.getLogger(__name__)
@@ -163,6 +163,10 @@ class _InMemorySettingsStore:
         value = self._values.get(key, fallback)
         return bool(value)
 
+    def contains_key(self, key: str) -> bool:
+        """Проверяет наличие ключа в in-memory хранилище."""
+        return key in self._values
+
     def save_bool(self, key: str, value: bool) -> None:
         """Сохраняет bool-значение."""
         self._values[key] = bool(value)
@@ -226,16 +230,8 @@ class DictationApp:
         recorder: RecorderProtocol,
         transcriber: TranscriptionUseCases,
         llm_processor: LlmGatewayProtocol | None,
-        model_name: str,
-        hotkey_status: str,
-        languages: list[str] | None = None,
-        max_time: float | None = None,
-        key_combination: str | None = None,
-        secondary_hotkey_status: str | None = None,
-        secondary_key_combination: str | None = None,
-        llm_hotkey_status: str | None = None,
-        llm_key_combination: str | None = None,
-        use_double_command_hotkey: bool = False,
+        launch_config: LaunchConfig,
+        app_preferences: AppPreferences | None = None,
         clipboard_service: ClipboardService | None = None,
         microphone_profiles_service: MicrophoneProfilesService | None = None,
         system_integration_service: SystemIntegrationService | None = None,
@@ -249,15 +245,12 @@ class DictationApp:
         self.recorder = recorder
         self.transcriber = transcriber
         self.llm_processor = llm_processor
-        self.model_repo = model_name
-        self.model_name = model_name.rsplit("/", maxsplit=1)[-1]
-        self.hotkey_status = hotkey_status
-        self.secondary_hotkey_status = secondary_hotkey_status or "не задан"
-        self._primary_key_combination = "" if use_double_command_hotkey else (key_combination or "")
-        self._secondary_key_combination = "" if use_double_command_hotkey else (secondary_key_combination or "")
-        self._llm_key_combination = llm_key_combination or ""
-        self.llm_hotkey_status = llm_hotkey_status or "не задан"
-        self.use_double_command_hotkey = use_double_command_hotkey
+        self.launch_config = launch_config
+        self.app_preferences = app_preferences or AppPreferences.from_store(self.settings_store)
+        self.hotkey_status = self.launch_config.hotkeys.hotkey_status
+        self.secondary_hotkey_status = self.launch_config.hotkeys.secondary_hotkey_status
+        self.llm_hotkey_status = self.launch_config.hotkeys.llm_hotkey_status
+        self.use_double_command_hotkey = self.launch_config.k_double_cmd
         self.clipboard_service = clipboard_service or ClipboardService(read_text=lambda: None, write_text=lambda _text: None)
         self.microphone_profiles_service = microphone_profiles_service or MicrophoneProfilesService(
             load_profiles=lambda: [],
@@ -279,32 +272,22 @@ class DictationApp:
         )
         self.recording_overlay = recording_overlay or _NullRecordingOverlay()
 
-        self.llm_prompt_name = (
-            self.settings_store.load_str(Config.DEFAULTS_KEY_LLM_PROMPT, Config.DEFAULT_LLM_PROMPT_NAME)
-            or Config.DEFAULT_LLM_PROMPT_NAME
-        )
-        if self.llm_prompt_name not in Config.LLM_PROMPT_PRESETS:
-            self.llm_prompt_name = Config.DEFAULT_LLM_PROMPT_NAME
-
-        self.performance_mode = Config.normalize_performance_mode(
-            self.settings_store.load_str(Config.DEFAULTS_KEY_PERFORMANCE_MODE, Config.DEFAULT_PERFORMANCE_MODE),
-        )
-        self.max_time_options: list[float | None] = list(Config.MAX_TIME_PRESETS)
-        if max_time not in self.max_time_options:
-            self.max_time_options.insert(0, max_time)
         self.model_options = list(Config.MODEL_PRESETS)
-        if self.model_repo not in self.model_options:
-            self.model_options.insert(0, self.model_repo)
+        if self.launch_config.model not in self.model_options:
+            self.model_options.insert(0, self.launch_config.model)
+        self.max_time_options: list[float | None] = list(Config.MAX_TIME_PRESETS)
+        if self.launch_config.max_time not in self.max_time_options:
+            self.max_time_options.insert(0, self.launch_config.max_time)
 
-        self.languages = languages
+        self.model_name = self.launch_config.model.rsplit("/", maxsplit=1)[-1]
         self.input_devices = self.input_device_catalog.list_input_devices()
-        saved_language = self.settings_store.load_str(Config.DEFAULTS_KEY_LANGUAGE, fallback=None)
-        self.current_language = languages[0] if languages is not None else None
-        if languages is not None and saved_language in languages:
-            self.current_language = saved_language
+        initial_language = self.languages[0] if self.languages is not None else None
+        if self.languages is not None and self.app_preferences.selected_language in self.languages:
+            initial_language = self.app_preferences.selected_language
+        self.current_language = initial_language
 
         self.current_input_device = next((device for device in self.input_devices if device["is_default"]), None)
-        saved_input_device_index = self.settings_store.load_input_device_index()
+        saved_input_device_index = self.app_preferences.selected_input_device_index
         if saved_input_device_index is not None:
             saved_input_device = next(
                 (device for device in self.input_devices if device["index"] == saved_input_device_index),
@@ -321,10 +304,12 @@ class DictationApp:
             "input_monitoring": self.system_integration_service.get_input_monitoring_status(),
             "microphone": None,
         }
-        self.max_time = max_time
+        self.max_time = self.launch_config.max_time
         self.microphone_profiles = self.microphone_profiles_service.load_profiles()
-        self.show_recording_notification = self.settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_NOTIFICATION, fallback=True)
-        self.show_recording_overlay = self.settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_OVERLAY, True)
+        self.llm_prompt_name = self.app_preferences.llm_prompt_name
+        self.performance_mode = self.app_preferences.performance_mode
+        self.show_recording_notification = self.app_preferences.show_recording_notification
+        self.show_recording_overlay = self.app_preferences.show_recording_overlay
         self.started = False
         self.start_time = 0.0
         self.elapsed_time = 0
@@ -434,31 +419,104 @@ class DictationApp:
         return int(getattr(self.transcriber, "total_tokens", 0))
 
     @property
+    def model_repo(self) -> str:
+        """Возвращает полный идентификатор модели распознавания."""
+        return self.launch_config.model
+
+    @model_repo.setter
+    def model_repo(self, value: str) -> None:
+        self.launch_config = self.launch_config.with_model(value)
+        self.model_name = self.launch_config.model.rsplit("/", maxsplit=1)[-1]
+        if self.launch_config.model not in self.model_options:
+            self.model_options.insert(0, self.launch_config.model)
+
+    @property
+    def languages(self) -> list[str] | None:
+        """Возвращает список доступных языков."""
+        return self.launch_config.language
+
+    @property
+    def max_time(self) -> float | None:
+        """Возвращает лимит записи."""
+        return self.launch_config.max_time
+
+    @max_time.setter
+    def max_time(self, value: float | None) -> None:
+        self.launch_config = self.launch_config.with_max_time(value)
+        if self.launch_config.max_time not in self.max_time_options:
+            self.max_time_options.insert(0, self.launch_config.max_time)
+
+    @property
+    def current_language(self) -> str | None:
+        """Возвращает текущий язык распознавания."""
+        return self.app_preferences.selected_language
+
+    @current_language.setter
+    def current_language(self, value: str | None) -> None:
+        self.app_preferences = self.app_preferences.with_selected_language(value)
+
+    @property
+    def llm_prompt_name(self) -> str:
+        """Возвращает имя активного LLM-промпта."""
+        return self.app_preferences.llm_prompt_name
+
+    @llm_prompt_name.setter
+    def llm_prompt_name(self, value: str) -> None:
+        self.app_preferences = self.app_preferences.with_llm_prompt_name(value)
+
+    @property
+    def performance_mode(self) -> str:
+        """Возвращает текущий режим производительности."""
+        return self.app_preferences.performance_mode
+
+    @performance_mode.setter
+    def performance_mode(self, value: str) -> None:
+        self.app_preferences = self.app_preferences.with_performance_mode(value)
+
+    @property
+    def show_recording_notification(self) -> bool:
+        """Возвращает флаг уведомления о старте записи."""
+        return self.app_preferences.show_recording_notification
+
+    @show_recording_notification.setter
+    def show_recording_notification(self, value: bool) -> None:
+        self.app_preferences = self.app_preferences.with_recording_notification(value)
+
+    @property
+    def show_recording_overlay(self) -> bool:
+        """Возвращает флаг показа overlay записи."""
+        return self.app_preferences.show_recording_overlay
+
+    @show_recording_overlay.setter
+    def show_recording_overlay(self, value: bool) -> None:
+        self.app_preferences = self.app_preferences.with_recording_overlay(value)
+
+    @property
     def primary_key_combination(self) -> str:
         """Возвращает основной хоткей во внутреннем формате."""
-        return self._primary_key_combination
+        return self.launch_config.key_combination or ""
 
     @primary_key_combination.setter
     def primary_key_combination(self, value: str) -> None:
-        self._primary_key_combination = value
+        self.launch_config = self.launch_config.with_hotkeys(self.launch_config.hotkeys.with_primary(value))
 
     @property
     def secondary_key_combination(self) -> str:
         """Возвращает дополнительный хоткей во внутреннем формате."""
-        return self._secondary_key_combination
+        return self.launch_config.secondary_key_combination or ""
 
     @secondary_key_combination.setter
     def secondary_key_combination(self, value: str) -> None:
-        self._secondary_key_combination = value
+        self.launch_config = self.launch_config.with_hotkeys(self.launch_config.hotkeys.with_secondary(value))
 
     @property
     def llm_key_combination(self) -> str:
         """Возвращает LLM-хоткей во внутреннем формате."""
-        return self._llm_key_combination
+        return self.launch_config.llm_key_combination or ""
 
     @llm_key_combination.setter
     def llm_key_combination(self, value: str) -> None:
-        self._llm_key_combination = value
+        self.launch_config = self.launch_config.with_hotkeys(self.launch_config.hotkeys.with_llm(value))
 
     @property
     def llm_downloading(self) -> bool:
@@ -494,9 +552,9 @@ class DictationApp:
             hotkey_status=self.hotkey_status,
             secondary_hotkey_status=self.secondary_hotkey_status,
             llm_hotkey_status=self.llm_hotkey_status,
-            primary_key_combination=self._primary_key_combination,
-            secondary_key_combination=self._secondary_key_combination,
-            llm_key_combination=self._llm_key_combination,
+            primary_key_combination=self.primary_key_combination,
+            secondary_key_combination=self.secondary_key_combination,
+            llm_key_combination=self.llm_key_combination,
             llm_prompt_name=self.llm_prompt_name,
             performance_mode=self.performance_mode,
             max_time=self.max_time,
@@ -555,8 +613,8 @@ class DictationApp:
 
     def _persist_hotkey_settings(self) -> None:
         """Сохраняет текущие хоткеи в NSUserDefaults."""
-        self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self._primary_key_combination)
-        self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self._secondary_key_combination)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self.launch_config.hotkeys.primary_store_value)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self.launch_config.hotkeys.secondary_store_value)
 
     def _active_key_combinations(self) -> list[str]:
         """Возвращает все включённые комбинации для основного listener-а."""
@@ -580,14 +638,10 @@ class DictationApp:
     def _update_hotkey_value(self, *, is_secondary: bool, new_combination: str) -> None:
         """Проверяет и сохраняет новую комбинацию клавиш."""
         if is_secondary:
-            if new_combination and new_combination == self._primary_key_combination:
-                raise ValueError("Дополнительный хоткей должен отличаться от основного.")
-            self._secondary_key_combination = new_combination
+            self.secondary_key_combination = new_combination
             return
 
-        if new_combination == self._secondary_key_combination:
-            raise ValueError("Основной хоткей должен отличаться от дополнительного.")
-        self._primary_key_combination = new_combination
+        self.primary_key_combination = new_combination
 
     def change_input_device(self, device_index: int | None) -> None:
         """Переключает активное устройство ввода по индексу."""
@@ -622,7 +676,7 @@ class DictationApp:
     def _unique_microphone_profile_name(self, base_name: str) -> str:
         """Нормализует и делает имя профиля уникальным."""
         normalized_name = " ".join(base_name.split()) or "Новый профиль"
-        existing_names = {profile["name"] for profile in self.microphone_profiles}
+        existing_names = {profile.name for profile in self.microphone_profiles}
         if normalized_name not in existing_names:
             return normalized_name
 
@@ -633,20 +687,20 @@ class DictationApp:
 
     def _current_microphone_profile(self, profile_name: str) -> MicrophoneProfile:
         """Собирает профиль из текущих runtime-настроек."""
-        return {
-            "name": profile_name,
-            "input_device_index": self._active_input_device_index(),
-            "input_device_name": "" if self.current_input_device is None else str(self.current_input_device.get("name") or ""),
-            "model_repo": self.model_repo,
-            "language": self.current_language,
-            "max_time": self.max_time,
-            "performance_mode": self.performance_mode,
-            "private_mode": bool(getattr(self.transcriber, "private_mode_enabled", False)),
-            "paste_cgevent": bool(getattr(self.transcriber, "paste_cgevent_enabled", True)),
-            "paste_ax": bool(getattr(self.transcriber, "paste_ax_enabled", False)),
-            "paste_clipboard": bool(getattr(self.transcriber, "paste_clipboard_enabled", False)),
-            "llm_clipboard": bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
-        }
+        return MicrophoneProfile.from_runtime(
+            profile_name,
+            input_device_index=self._active_input_device_index(),
+            input_device_name="" if self.current_input_device is None else str(self.current_input_device.get("name") or ""),
+            model_repo=self.model_repo,
+            language=self.current_language,
+            max_time=self.max_time,
+            performance_mode=self.performance_mode,
+            private_mode=bool(getattr(self.transcriber, "private_mode_enabled", False)),
+            paste_cgevent=bool(getattr(self.transcriber, "paste_cgevent_enabled", True)),
+            paste_ax=bool(getattr(self.transcriber, "paste_ax_enabled", False)),
+            paste_clipboard=bool(getattr(self.transcriber, "paste_clipboard_enabled", False)),
+            llm_clipboard=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
+        )
 
     def add_current_microphone_profile(self, profile_name: str) -> None:
         """Сохраняет текущий runtime как новый быстрый профиль."""

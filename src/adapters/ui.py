@@ -349,12 +349,12 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.app.llm_key_listener = value
 
     @property
-    def start_time(self) -> float:
+    def start_time(self) -> float | None:
         """Возвращает время старта текущей записи."""
         return self.app.start_time
 
     @start_time.setter
-    def start_time(self, value: float) -> None:
+    def start_time(self, value: float | None) -> None:
         self.app.start_time = value
 
     @property
@@ -536,7 +536,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self.microphone_profiles_menu.add(empty_item)
         else:
             for profile in self.microphone_profiles:
-                title = profile["name"]
+                title = profile.name
                 item = rumps.MenuItem(title, callback=self.apply_microphone_profile)
                 item.state = int(self.app.is_microphone_profile_active(profile))
                 self._microphone_profile_titles[title] = profile
@@ -552,7 +552,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             delete_menu.add(empty_item)
         else:
             for profile in self.microphone_profiles:
-                title = profile["name"]
+                title = profile.name
                 self._delete_microphone_profile_titles[title] = profile
                 delete_menu.add(rumps.MenuItem(title, callback=self.delete_microphone_profile))
         self.microphone_profiles_menu.add(delete_menu)

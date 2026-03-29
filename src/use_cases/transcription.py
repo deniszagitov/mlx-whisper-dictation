@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     from ..domain.ports import SettingsStoreProtocol
-    from ..domain.types import AudioDiagnostics, HistoryRecord
+    from ..domain.types import AudioDiagnostics, HistoryRecord, TranscriberPreferences
 
 from ..domain.constants import Config
 from ..domain.transcription import (
@@ -22,6 +22,7 @@ from ..domain.transcription import (
     looks_like_hallucination,
     normalize_history_record,
 )
+from ..domain.types import TranscriberPreferences
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,6 +65,9 @@ class _InMemorySettingsStore:
 
     def load_bool(self, key: str, fallback: bool) -> bool:
         return bool(self._values.get(key, fallback))
+
+    def contains_key(self, key: str) -> bool:
+        return key in self._values
 
     def save_bool(self, key: str, value: bool) -> None:
         self._values[key] = bool(value)
@@ -153,6 +157,7 @@ class TranscriptionUseCases:
         self,
         model_name: str,
         settings_store: SettingsStoreProtocol | None = None,
+        preferences: TranscriberPreferences | None = None,
         diagnostics_store: Any | None = None,
         transcription_runner: Callable[[npt.NDArray[np.float32], str, str | None], dict[str, Any]] | None = None,
         type_text_via_cgevent: Callable[[str], None] | None = None,
@@ -175,6 +180,7 @@ class TranscriptionUseCases:
         Args:
             model_name: Имя модели Hugging Face или локальный путь к модели.
             settings_store: Хранилище пользовательских настроек и флагов runtime.
+            preferences: Нормализованные настройки методов вставки и private mode.
             diagnostics_store: Необязательный adapter сохранения диагностических файлов.
             transcription_runner: Необязательный runtime-вызов Whisper.
             type_text_via_cgevent: Необязательный runtime-ввод через CGEvent.
@@ -216,18 +222,67 @@ class TranscriptionUseCases:
             warn_missing_input_monitoring_permission or _noop_permission_warning
         )
         self.model_name = model_name
-        self.paste_cgevent_enabled = self.settings_store.load_bool(Config.DEFAULTS_KEY_PASTE_CGEVENT, fallback=True)
-        self.paste_ax_enabled = self.settings_store.load_bool(Config.DEFAULTS_KEY_PASTE_AX, fallback=False)
-        self.paste_clipboard_enabled = self.settings_store.load_bool(Config.DEFAULTS_KEY_PASTE_CLIPBOARD, fallback=False)
-        self.llm_clipboard_enabled = self.settings_store.load_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True)
-        self.private_mode_enabled = self.settings_store.load_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, fallback=False)
+        self.preferences = preferences or TranscriberPreferences.from_store(self.settings_store)
         self._history_records: list[HistoryRecord] = []
         self.history: list[str] = []
         if not self.private_mode_enabled:
             self._reload_persisted_history()
         self.history_callback: Callable[[], None] | None = None
-        self.total_tokens = self.settings_store.load_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, fallback=0)
         self.token_usage_callback: Callable[[], None] | None = None
+
+    @property
+    def paste_cgevent_enabled(self) -> bool:
+        """Возвращает флаг метода вставки через CGEvent."""
+        return self.preferences.paste_cgevent_enabled
+
+    @paste_cgevent_enabled.setter
+    def paste_cgevent_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_paste_cgevent_enabled(enabled)
+
+    @property
+    def paste_ax_enabled(self) -> bool:
+        """Возвращает флаг метода вставки через Accessibility API."""
+        return self.preferences.paste_ax_enabled
+
+    @paste_ax_enabled.setter
+    def paste_ax_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_paste_ax_enabled(enabled)
+
+    @property
+    def paste_clipboard_enabled(self) -> bool:
+        """Возвращает флаг метода вставки через буфер обмена."""
+        return self.preferences.paste_clipboard_enabled
+
+    @paste_clipboard_enabled.setter
+    def paste_clipboard_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_paste_clipboard_enabled(enabled)
+
+    @property
+    def llm_clipboard_enabled(self) -> bool:
+        """Возвращает флаг использования буфера обмена для LLM."""
+        return self.preferences.llm_clipboard_enabled
+
+    @llm_clipboard_enabled.setter
+    def llm_clipboard_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_llm_clipboard_enabled(enabled)
+
+    @property
+    def private_mode_enabled(self) -> bool:
+        """Возвращает флаг private mode."""
+        return self.preferences.private_mode_enabled
+
+    @private_mode_enabled.setter
+    def private_mode_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_private_mode(enabled)
+
+    @property
+    def total_tokens(self) -> int:
+        """Возвращает общий счётчик токенов."""
+        return self.preferences.total_tokens
+
+    @total_tokens.setter
+    def total_tokens(self, token_count: object) -> None:
+        self.preferences = self.preferences.with_total_tokens(token_count)
 
     def set_private_mode(self, enabled: object) -> None:
         """Переключает private mode для истории текста.
@@ -239,7 +294,7 @@ class TranscriptionUseCases:
         Args:
             enabled: Нужно ли включить private mode.
         """
-        self.private_mode_enabled = bool(enabled)
+        self.private_mode_enabled = enabled
         self.settings_store.save_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, self.private_mode_enabled)
         if self.private_mode_enabled:
             self._history_records = []
@@ -317,7 +372,7 @@ class TranscriptionUseCases:
         if confirmed_tokens == 0:
             return
 
-        self.total_tokens += confirmed_tokens
+        self.total_tokens = self.total_tokens + confirmed_tokens
         self.settings_store.save_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, self.total_tokens)
         LOGGER.debug("🔢 Токены добавлены в счётчик: +%d, всего=%d", confirmed_tokens, self.total_tokens)
         self._notify_token_usage_changed()

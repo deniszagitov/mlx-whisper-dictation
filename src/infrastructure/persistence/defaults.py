@@ -25,6 +25,10 @@ class Defaults:
             return fallback
         return bool(defaults.boolForKey_(key))
 
+    def contains_key(self, key: str) -> bool:
+        """Проверяет наличие ключа в NSUserDefaults."""
+        return NSUserDefaults.standardUserDefaults().objectForKey_(key) is not None
+
     def save_bool(self, key: str, value: bool) -> None:
         """Сохраняет булево значение в NSUserDefaults."""
         NSUserDefaults.standardUserDefaults().setBool_forKey_(bool(value), key)
