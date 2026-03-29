@@ -65,6 +65,8 @@ from diagnostics import (
     setup_logging,
 )
 from hotkeys import (
+    _CARBON_AVAILABLE,
+    _KEYCODE_ESCAPE,
     MODIFIER_DISPLAY_ORDER,
     MODIFIER_FLAG_MASKS,
     MODIFIER_KEYCODES_MAP,
@@ -72,6 +74,7 @@ from hotkeys import (
     GlobalKeyListener,
     MultiHotkeyListener,
     _event_key_name_static,
+    _keycode_to_char,
     capture_hotkey_combination,
     format_hotkey_status,
     hotkey_name_matches,

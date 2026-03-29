@@ -74,6 +74,7 @@ class Recorder:
             transcriber: Экземпляр SpeechTranscriber для обработки записанного аудио.
         """
         self.recording = False
+        self.cancelled = False
         self.transcriber = transcriber
         self.llm_processor = None
         self.llm_system_prompt = ""
@@ -167,6 +168,15 @@ class Recorder:
         """Останавливает активную запись."""
         self.recording = False
 
+    def cancel(self):
+        """Отменяет запись без последующего распознавания.
+
+        Устанавливает флаг cancelled, чтобы _record_impl пропустил
+        этап транскрибирования и сразу вернул состояние в idle.
+        """
+        self.cancelled = True
+        self.recording = False
+
     def _begin_request(self):
         """Регистрирует новый запрос записи и возвращает его идентификатор."""
         with self._request_lock:
@@ -196,6 +206,7 @@ class Recorder:
             request_id: Идентификатор активного запроса записи для защиты от гонок.
         """
         self.recording = True
+        self.cancelled = False
         frames_per_buffer = self.frames_per_buffer
         audio_interface = pyaudio.PyAudio()
         stream = None
@@ -236,6 +247,12 @@ class Recorder:
 
         if not frames:
             LOGGER.warning("⚠️ Запись остановлена без захваченных аудиофреймов")
+            self._set_status_if_current(request_id, STATUS_IDLE)
+            return
+
+        if self.cancelled:
+            self.cancelled = False
+            LOGGER.info("❌ Запись отменена, аудио отброшено (фреймов=%s)", len(frames))
             self._set_status_if_current(request_id, STATUS_IDLE)
             return
 
