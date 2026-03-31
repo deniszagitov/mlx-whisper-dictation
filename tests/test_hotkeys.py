@@ -144,11 +144,6 @@ class TestFormatHotkeyStatus:
         assert "⌘" in result
         assert "⌥" in result
 
-    def test_double_cmd(self, app_module):
-        """Режим двойного нажатия должен показать соответствующий текст."""
-        result = app_module.format_hotkey_status(use_double_cmd=True)
-        assert "двойное нажатие" in result
-
     def test_space_key(self, app_module):
         """Клавиша space должна отображаться как Space."""
         result = app_module.format_hotkey_status("cmd_l+space")
@@ -251,34 +246,6 @@ class TestParseArgs:
         with pytest.raises(SystemExit):
             app_module.parse_args()
 
-    def test_secondary_hotkey_is_rejected_in_double_command_mode(self, app_module, monkeypatch):
-        """Режим двойной Command не должен принимать явно указанный второй хоткей."""
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "main.py",
-                "--k_double_cmd",
-                "--secondary_key_combination",
-                "ctrl+shift+space",
-            ],
-        )
-
-        with pytest.raises(SystemExit):
-            app_module.parse_args()
-
-    def test_double_cmd_silently_drops_default_secondary(self, app_module, monkeypatch):
-        """Режим двойной Command должен тихо сбросить дефолтный доп. хоткей."""
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["main.py", "--k_double_cmd"],
-        )
-
-        args = app_module.parse_args()
-
-        assert args.secondary_key_combination is None
-
     def test_default_secondary_hotkey(self, app_module, monkeypatch):
         """По умолчанию дополнительный хоткей должен быть ctrl+shift+alt+t."""
         monkeypatch.setattr(
@@ -344,6 +311,16 @@ class TestParseArgs:
         assert args.key_combination == "ctrl+alt+d"
         assert args.secondary_key_combination is None
         assert args.llm_key_combination == "ctrl+shift+l"
+
+
+class TestModifierOnlyCombination:
+    """Тесты классификации modifier-only комбинаций."""
+
+    def test_returns_true_for_modifier_only(self, app_module):
+        assert app_module.is_modifier_only_combination("cmd_l+alt") is True
+
+    def test_returns_false_for_regular_hotkey(self, app_module):
+        assert app_module.is_modifier_only_combination("ctrl+shift+space") is False
 
 
 class TestMultiHotkeyListener:
@@ -728,6 +705,108 @@ class TestCGEventTapCallback:
         result = listener._cgevent_tap_callback(None, Quartz.kCGEventKeyDown, sentinel, None)
 
         assert result is sentinel
+
+
+class TestHotkeyDispatcher:
+    """Тесты единого dispatcher-а для primary/secondary/LLM и Escape."""
+
+    class _FakeApp:
+        def __init__(self):
+            self.primary_key_combination = "cmd_l+alt"
+            self.secondary_key_combination = "ctrl+shift+space"
+            self.llm_key_combination = "ctrl+shift+l"
+            self.started = False
+            self.toggle_count = 0
+            self.toggle_llm_count = 0
+            self.escape_keycodes: list[int] = []
+
+        def toggle(self):
+            self.toggle_count += 1
+
+        def toggle_llm(self):
+            self.toggle_llm_count += 1
+
+        def handle_escape_keycode(self, keycode: int):
+            self.escape_keycodes.append(keycode)
+            if keycode == 53:
+                self.started = False
+
+    class _FakeEvent:
+        def __init__(self, key_code, characters="", modifier_flags=0):
+            self._key_code = key_code
+            self._characters = characters
+            self._modifier_flags = modifier_flags
+
+        def keyCode(self):
+            return self._key_code
+
+        def charactersIgnoringModifiers(self):
+            return self._characters
+
+        def modifierFlags(self):
+            return self._modifier_flags
+
+    def test_modifier_only_hotkey_triggers_toggle(self, app_module):
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        event = self._FakeEvent(58, modifier_flags=app_module.MODIFIER_FLAG_MASKS["alt_l"])
+
+        dispatcher.pressed_modifier_names = {"cmd_l"}
+
+        assert dispatcher._handle_flags_changed(event) is True
+        assert dispatcher.app.toggle_count == 1
+
+    def test_regular_hotkey_triggers_toggle_and_suppresses_keyup(self, app_module, monkeypatch):
+        import src.infrastructure.hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda _kc: None)
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher.pressed_modifier_names = {"ctrl_l", "shift_l"}
+
+        key_down = self._FakeEvent(49, " ")
+        key_up = self._FakeEvent(49, " ")
+
+        assert dispatcher._handle_key_down(key_down) is True
+        assert dispatcher.app.toggle_count == 1
+        assert dispatcher._handle_key_up(key_up) is True
+
+    def test_llm_hotkey_triggers_llm_callback(self, app_module, monkeypatch):
+        import src.infrastructure.hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda _kc: None)
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher.pressed_modifier_names = {"ctrl_l", "shift_l"}
+
+        event = self._FakeEvent(37, "l")
+
+        assert dispatcher._handle_key_down(event) is True
+        assert dispatcher.app.toggle_llm_count == 1
+
+    def test_escape_is_suppressed_only_while_recording(self, app_module):
+        fake_app = self._FakeApp()
+        fake_app.started = True
+        dispatcher = app_module.HotkeyDispatcher(fake_app)
+        escape_event = self._FakeEvent(53)
+
+        assert dispatcher._handle_key_down(escape_event) is True
+        assert fake_app.escape_keycodes == [53]
+        assert dispatcher._handle_key_up(escape_event) is True
+
+    def test_escape_passes_when_not_recording(self, app_module):
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        escape_event = self._FakeEvent(53)
+
+        assert dispatcher._handle_key_down(escape_event) is False
+        assert dispatcher.app.escape_keycodes == []
+
+    def test_update_hotkeys_replaces_binding_set(self, app_module):
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+
+        dispatcher.update_hotkeys("ctrl+alt+d", "", "ctrl+shift+space")
+
+        assert {binding.key_combination for binding in dispatcher._bindings} == {
+            "ctrl+shift+space",
+            "ctrl+alt+d",
+        }
 
 
 class TestModifierConstants:

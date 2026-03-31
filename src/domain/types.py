@@ -153,7 +153,6 @@ class HotkeyConfig:
     primary_key_combination: str | None
     secondary_key_combination: str | None
     llm_key_combination: str | None
-    use_double_command_hotkey: bool = False
 
     @classmethod
     def from_values(
@@ -162,37 +161,30 @@ class HotkeyConfig:
         primary_key_combination: object,
         secondary_key_combination: object,
         llm_key_combination: object,
-        use_double_command_hotkey: object = False,
-        secondary_hotkey_explicitly_set: bool = False,
     ) -> HotkeyConfig:
         """Создаёт конфиг хоткеев из сырых значений."""
-        use_double = _coerce_bool(use_double_command_hotkey, fallback=False)
-        primary = None if use_double else _coerce_optional_hotkey(primary_key_combination)
+        primary = _coerce_optional_hotkey(primary_key_combination)
         secondary = _coerce_optional_hotkey(secondary_key_combination)
         llm = _coerce_optional_hotkey(llm_key_combination)
 
-        if use_double:
-            if secondary_hotkey_explicitly_set and secondary is not None:
-                raise ValueError("Параметр --secondary_key_combination нельзя использовать вместе с --k_double_cmd.")
-            secondary = None
-        elif primary is None:
+        if primary is None:
             raise ValueError("Основной хоткей должен быть задан.")
 
         if primary is not None and secondary is not None and primary == secondary:
             raise ValueError("Дополнительный хоткей должен отличаться от основного.")
 
+        if llm is not None and llm in (primary, secondary):
+            raise ValueError("LLM-хоткей должен отличаться от основных хоткеев.")
+
         return cls(
             primary_key_combination=primary,
             secondary_key_combination=secondary,
             llm_key_combination=llm,
-            use_double_command_hotkey=use_double,
         )
 
     @property
     def active_key_combinations(self) -> tuple[str, ...]:
         """Возвращает все включённые комбинации основных хоткеев."""
-        if self.use_double_command_hotkey:
-            return ()
         return tuple(
             combination
             for combination in (self.primary_key_combination, self.secondary_key_combination)
@@ -202,7 +194,7 @@ class HotkeyConfig:
     @property
     def hotkey_status(self) -> str:
         """Возвращает display-строку основного хоткея."""
-        return format_hotkey_status(self.primary_key_combination, use_double_cmd=self.use_double_command_hotkey)
+        return format_hotkey_status(self.primary_key_combination)
 
     @property
     def secondary_hotkey_status(self) -> str:
@@ -239,7 +231,6 @@ class HotkeyConfig:
             primary_key_combination=value,
             secondary_key_combination=self.secondary_key_combination,
             llm_key_combination=self.llm_key_combination,
-            use_double_command_hotkey=self.use_double_command_hotkey,
         )
 
     def with_secondary(self, value: object) -> HotkeyConfig:
@@ -248,7 +239,6 @@ class HotkeyConfig:
             primary_key_combination=self.primary_key_combination,
             secondary_key_combination=value,
             llm_key_combination=self.llm_key_combination,
-            use_double_command_hotkey=self.use_double_command_hotkey,
         )
 
     def with_llm(self, value: object) -> HotkeyConfig:
@@ -257,7 +247,6 @@ class HotkeyConfig:
             primary_key_combination=self.primary_key_combination,
             secondary_key_combination=self.secondary_key_combination,
             llm_key_combination=value,
-            use_double_command_hotkey=self.use_double_command_hotkey,
         )
 
 
@@ -282,7 +271,6 @@ class LaunchConfig:
         key_combination: object,
         secondary_key_combination: object,
         llm_key_combination: object,
-        k_double_cmd: object,
         settings_store: SettingsStoreProtocol | None = None,
         cli_overrides: Collection[str] = (),
     ) -> LaunchConfig:
@@ -302,15 +290,13 @@ class LaunchConfig:
             if saved_max_time is not None:
                 max_time = saved_max_time
 
-        use_double = _coerce_bool(k_double_cmd, fallback=False)
-        if settings_store is not None and not use_double and "-k" not in cli_overrides and "--key_combination" not in cli_overrides:
+        if settings_store is not None and "-k" not in cli_overrides and "--key_combination" not in cli_overrides:
             saved_primary = settings_store.load_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, fallback=None)
             if saved_primary:
                 key_combination = saved_primary
 
         if (
             settings_store is not None
-            and not use_double
             and "--secondary_key_combination" not in cli_overrides
             and settings_store.contains_key(Config.DEFAULTS_KEY_SECONDARY_HOTKEY)
         ):
@@ -331,8 +317,6 @@ class LaunchConfig:
             primary_key_combination=key_combination,
             secondary_key_combination=secondary_key_combination,
             llm_key_combination=llm_key_combination,
-            use_double_command_hotkey=use_double,
-            secondary_hotkey_explicitly_set="--secondary_key_combination" in cli_overrides,
         )
 
         if normalized_model.endswith(".en") and normalized_languages is not None and any(lang != "en" for lang in normalized_languages):
@@ -367,11 +351,6 @@ class LaunchConfig:
     def llm_key_combination(self) -> str | None:
         """Возвращает LLM-хоткей."""
         return self.hotkeys.llm_key_combination
-
-    @property
-    def k_double_cmd(self) -> bool:
-        """Возвращает флаг режима двойной Command."""
-        return self.hotkeys.use_double_command_hotkey
 
     @property
     def max_time_store_value(self) -> str:
@@ -668,4 +647,3 @@ class AppSnapshot:
     total_tokens: int
     llm_download_title: str
     llm_download_interactive: bool
-    use_double_command_hotkey: bool

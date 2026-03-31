@@ -11,7 +11,6 @@ import sys
 from typing import Any, cast
 
 import Quartz  # noqa: F401
-from pynput import keyboard
 from src.adapters.hotkey_dialog import capture_hotkey_combination
 from src.adapters.overlay import RecordingOverlay
 from src.adapters.ui import StatusBarApp
@@ -27,18 +26,23 @@ from src.app import (  # noqa: F401
 )
 from src.domain.audio import microphone_menu_title  # noqa: F401
 from src.domain.constants import Config
-from src.domain.hotkeys import format_hotkey_status, normalize_key_combination, normalize_key_name  # noqa: F401
+from src.domain.hotkeys import (  # noqa: F401
+    MODIFIER_DISPLAY_ORDER,
+    format_hotkey_status,
+    hotkey_name_matches,
+    is_modifier_only_combination,
+    normalize_key_combination,
+    normalize_key_name,
+)
 from src.domain.types import AppPreferences, LaunchConfig, TranscriberPreferences
 from src.infrastructure.audio_runtime import Recorder, list_input_devices
 from src.infrastructure.hotkeys import (
-    MODIFIER_DISPLAY_ORDER,  # noqa: F401
     MODIFIER_FLAG_MASKS,  # noqa: F401
     MODIFIER_KEYCODES_MAP,  # noqa: F401
-    DoubleCommandKeyListener,
-    GlobalKeyListener,
-    MultiHotkeyListener,
+    GlobalKeyListener,  # noqa: F401
+    HotkeyDispatcher,
+    MultiHotkeyListener,  # noqa: F401
     _event_key_name_static,  # noqa: F401
-    hotkey_name_matches,  # noqa: F401
     parse_key_combination,  # noqa: F401
 )
 from src.infrastructure.llm_runtime import (
@@ -89,6 +93,11 @@ def _cli_option_was_provided(*option_names: str) -> bool:
     return any(option_name in argv for option_name in option_names)
 
 
+def _create_hotkey_dispatcher(app: Any) -> HotkeyDispatcher:
+    """Создаёт единый runtime-dispatcher горячих клавиш."""
+    return HotkeyDispatcher(app)
+
+
 def parse_args() -> LaunchConfig:
     """Разбирает аргументы командной строки.
 
@@ -130,15 +139,6 @@ def parse_args() -> LaunchConfig:
         help=(
             "Дополнительная комбинация клавиш для тех же действий запуска и остановки записи. "
             "По умолчанию: ctrl+shift+alt+t. Укажите пустую строку, чтобы отключить."
-        ),
-    )
-    parser.add_argument(
-        "--k_double_cmd",
-        action="store_true",
-        help=(
-            "Если флаг включен, приложение использует двойное нажатие правой Command "
-            "для старта записи и одиночное нажатие для остановки. "
-            "Параметр --key_combination при этом игнорируется."
         ),
     )
     parser.add_argument(
@@ -191,7 +191,6 @@ def parse_args() -> LaunchConfig:
             ("-m", "--model"),
             ("-k", "--key_combination"),
             ("--secondary_key_combination",),
-            ("--k_double_cmd",),
             ("-l", "--language"),
             ("-t", "--max_time"),
             ("--llm_key_combination",),
@@ -210,7 +209,6 @@ def parse_args() -> LaunchConfig:
             key_combination=args.key_combination,
             secondary_key_combination=args.secondary_key_combination,
             llm_key_combination=args.llm_key_combination,
-            k_double_cmd=args.k_double_cmd,
             settings_store=defaults,
             cli_overrides=cli_overrides,
         )
@@ -222,12 +220,9 @@ def parse_args() -> LaunchConfig:
 def _log_startup_configuration(args: LaunchConfig) -> None:
     """Пишет в лог итоговую конфигурацию запуска приложения."""
     LOGGER.info("Запуск с моделью: %s", args.model)
-    if args.k_double_cmd:
-        LOGGER.info("Хоткей: двойное нажатие правой Command для старта и одиночное для остановки")
-    else:
-        LOGGER.info("Основной хоткей: %s", args.key_combination)
-        if args.secondary_key_combination:
-            LOGGER.info("Дополнительный хоткей: %s", args.secondary_key_combination)
+    LOGGER.info("Основной хоткей: %s", args.key_combination)
+    if args.secondary_key_combination:
+        LOGGER.info("Дополнительный хоткей: %s", args.secondary_key_combination)
     if args.llm_key_combination:
         LOGGER.info("LLM-хоткей: %s", args.llm_key_combination)
 
@@ -301,11 +296,7 @@ def main() -> None:
     input_device_catalog = InputDeviceCatalogService(list_input_devices=list_input_devices)
     hotkey_capture_service = HotkeyCaptureService(capture_combination=capture_hotkey_combination)
     hotkey_listener_factory = HotkeyListenerFactoryService(
-        create_listener=lambda app, key_combination, callback: GlobalKeyListener(
-            app,
-            key_combination,
-            callback=callback,
-        ),
+        create_listener=_create_hotkey_dispatcher,
     )
     recording_overlay = RecordingOverlay()
 
@@ -325,27 +316,9 @@ def main() -> None:
         settings_store=defaults,
     )
     app = StatusBarApp(cast("Any", app_controller))
-    if args.k_double_cmd:
-        key_listener = DoubleCommandKeyListener(app_controller)
-        listener = keyboard.Listener(
-            on_press=key_listener.on_key_press,
-            on_release=key_listener.on_key_release,
-        )
-        listener.start()
-        app_controller.key_listener = listener
-    else:
-        key_listener = MultiHotkeyListener(app_controller, app_controller._active_key_combinations())  # type: ignore[assignment]
-        key_listener.start()  # type: ignore[attr-defined]
-        app_controller.key_listener = key_listener
-
-    if app_controller.llm_key_combination:
-        llm_listener = GlobalKeyListener(
-            app_controller,
-            app_controller.llm_key_combination,
-            callback=app_controller.toggle_llm,
-        )
-        llm_listener.start()
-        app_controller.llm_key_listener = llm_listener
+    key_listener = hotkey_listener_factory.create_listener(app_controller)
+    key_listener.start()
+    app_controller.key_listener = key_listener
 
     _log_startup_configuration(args)
     app.run()

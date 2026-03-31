@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import AppKit
 import rumps
 
 from ..domain.constants import Config
@@ -159,11 +158,6 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self._refresh_microphone_profiles_menu()
         self._refresh_history_menu()
         self.app.subscribe(self._apply_snapshot)
-
-        self._escape_monitor = AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            AppKit.NSEventMaskKeyDown,
-            self._handle_escape_key,
-        )
 
     @property
     def state(self) -> str:
@@ -338,15 +332,6 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     @key_listener.setter
     def key_listener(self, value: Any) -> None:
         self.app.key_listener = value
-
-    @property
-    def llm_key_listener(self) -> Any:
-        """Возвращает runtime-listener LLM-хоткея."""
-        return self.app.llm_key_listener
-
-    @llm_key_listener.setter
-    def llm_key_listener(self, value: Any) -> None:
-        self.app.llm_key_listener = value
 
     @property
     def start_time(self) -> float | None:
@@ -793,12 +778,6 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         if self.started:
             self.on_status_tick(None)
         else:
-            self._refresh_title_and_status()
-
-    def _handle_escape_key(self, event: Any) -> None:
-        """Отменяет запись по Escape."""
-        self.app.handle_escape_keycode(int(event.keyCode()))
-        if not self.started:
             self._refresh_title_and_status()
 
     def cancel_recording(self) -> None:

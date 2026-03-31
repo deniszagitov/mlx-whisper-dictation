@@ -168,7 +168,6 @@ def test_launch_config_merges_cli_and_saved_preferences():
         key_combination="cmd_l+alt",
         secondary_key_combination="ctrl+shift+alt+t",
         llm_key_combination="ctrl+shift+alt+l",
-        k_double_cmd=False,
         settings_store=settings_store,
         cli_overrides=set(),
     )
@@ -192,7 +191,6 @@ def test_launch_config_rejects_duplicate_hotkeys():
             key_combination="cmd_l+alt",
             secondary_key_combination="cmd_l+alt",
             llm_key_combination="ctrl+shift+alt+l",
-            k_double_cmd=False,
         )
     except ValueError as error:
         assert "Дополнительный хоткей" in str(error)
@@ -211,7 +209,6 @@ def test_launch_config_rejects_non_english_language_for_en_model():
             key_combination="cmd_l+alt",
             secondary_key_combination=None,
             llm_key_combination=None,
-            k_double_cmd=False,
         )
     except ValueError as error:
         assert ".en" in str(error)
@@ -225,7 +222,6 @@ def test_hotkey_config_serializes_empty_optional_hotkeys():
         primary_key_combination="cmd_l+alt",
         secondary_key_combination="",
         llm_key_combination=None,
-        use_double_command_hotkey=False,
     )
 
     assert hotkeys.secondary_key_combination is None

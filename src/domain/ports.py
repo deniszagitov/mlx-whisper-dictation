@@ -59,7 +59,6 @@ class StatusBarControllerProtocol(Protocol):
     total_tokens: int
     recording_overlay: RecordingOverlayProtocol
     key_listener: Any
-    llm_key_listener: Any
     start_time: float | None
     primary_key_combination: str
     secondary_key_combination: str
@@ -435,7 +434,7 @@ class InputDeviceCatalogPort(Protocol):
 
 
 class HotkeyRuntimePort(Protocol):
-    """Протокол runtime-слушателя хоткеев."""
+    """Протокол runtime-диспетчера горячих клавиш."""
 
     def start(self) -> None:
         """Запускает listener."""
@@ -445,8 +444,8 @@ class HotkeyRuntimePort(Protocol):
         """Останавливает listener."""
         ...
 
-    def update_key_combinations(self, key_combinations: list[str]) -> None:
-        """Обновляет набор активных комбинаций."""
+    def update_hotkeys(self, primary: str, secondary: str, llm: str) -> None:
+        """Обновляет активные хоткеи без пересоздания runtime-объекта."""
         ...
 
 

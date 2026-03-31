@@ -1,36 +1,27 @@
-"""Горячие клавиши и слушатели клавиатуры приложения Dictator.
+"""Горячие клавиши и единый keyboard dispatcher приложения Dictator."""
 
-Парсинг комбинаций клавиш, глобальные мониторы нажатий через AppKit
-и режим двойного нажатия Command.
-"""
+from __future__ import annotations
 
 import ctypes
 import logging
-import time
-from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import AppKit
 import Quartz
-from pynput import keyboard
 
-from ..domain.constants import Config
-from ..domain.ports import ToggleableApp
+from ..domain.hotkeys import (
+    MODIFIER_NAMES,
+    hotkey_name_matches,
+    is_modifier_only_combination,
+    normalize_key_combination,
+    normalize_key_name,
+)
+
+if TYPE_CHECKING:
+    from ..domain.ports import ToggleableApp
 
 LOGGER = logging.getLogger(__name__)
-
-KEY_NAME_ALIASES = {
-    "ctrl": "ctrl",
-    "control": "ctrl",
-    "alt": "alt",
-    "option": "alt",
-    "opt": "alt",
-    "shift": "shift",
-    "cmd": "cmd",
-    "command": "cmd",
-    "meta": "cmd",
-    "super": "cmd",
-}
 
 MODIFIER_KEYCODES_MAP = {
     54: "cmd_r",
@@ -63,17 +54,6 @@ NAMED_KEYCODES_MAP = {
     51: "backspace",
     _KEYCODE_ESCAPE: "esc",
 }
-
-MODIFIER_DISPLAY_ORDER = ["ctrl", "ctrl_l", "ctrl_r", "alt", "alt_l", "alt_r", "shift", "shift_l", "shift_r", "cmd", "cmd_l", "cmd_r"]
-
-# ---------------------------------------------------------------------------
-# Преобразование keycode → символ через Carbon UCKeyTranslate
-# ---------------------------------------------------------------------------
-# Используем TISCopyCurrentASCIICapableKeyboardInputSource + UCKeyTranslate,
-# чтобы определять символ клавиши по физическому положению (keycode),
-# а не по текущей раскладке.  Это позволяет хоткеям вроде
-# control+option+` срабатывать и в русской, и в английской раскладке.
-# ---------------------------------------------------------------------------
 
 try:
     _carbon_lib = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/Carbon.framework/Carbon")
@@ -109,16 +89,16 @@ try:
 
     _UCKeyTranslate = _carbon_lib.UCKeyTranslate
     _UCKeyTranslate.argtypes = [
-        ctypes.c_void_p,                  # keyLayoutPtr
-        ctypes.c_uint16,                  # virtualKeyCode
-        ctypes.c_uint16,                  # keyAction (kUCKeyActionDown = 0)
-        ctypes.c_uint32,                  # modifierKeyState
-        ctypes.c_uint32,                  # keyboardType
-        ctypes.c_uint32,                  # keyTranslateOptions
-        ctypes.POINTER(ctypes.c_uint32),  # deadKeyState
-        ctypes.c_ulong,                   # maxStringLength
-        ctypes.POINTER(ctypes.c_ulong),   # actualStringLength
-        ctypes.c_wchar_p,                 # unicodeString
+        ctypes.c_void_p,
+        ctypes.c_uint16,
+        ctypes.c_uint16,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+        ctypes.c_wchar_p,
     ]
     _UCKeyTranslate.restype = ctypes.c_int32
 
@@ -132,18 +112,7 @@ _UC_KEY_TRANSLATE_NO_DEAD_KEYS_BIT = 2
 
 
 def _keycode_to_char(keycode: int) -> str | None:
-    """Преобразует виртуальный keycode в символ через ASCII-совместимую раскладку.
-
-    Использует Carbon API TISCopyCurrentASCIICapableKeyboardInputSource
-    и UCKeyTranslate, чтобы получить символ, соответствующий физическому
-    положению клавиши, независимо от текущей активной раскладки.
-
-    Args:
-        keycode: Виртуальный keycode клавиши macOS.
-
-    Returns:
-        Символ в нижнем регистре или None при ошибке.
-    """
+    """Преобразует виртуальный keycode в символ через ASCII-совместимую раскладку."""
     if not _CARBON_AVAILABLE:
         return None
     try:
@@ -186,138 +155,18 @@ def _keycode_to_char(keycode: int) -> str | None:
     return None
 
 
-def normalize_key_name(raw_name: str) -> str:
-    """Нормализует имя клавиши к каноническому виду.
-
-    Поддерживает человекочитаемые алиасы (Ctrl, Control, Option, Command)
-    и приводит регистр к нижнему.
-
-    Args:
-        raw_name: Строковое имя клавиши, например `Ctrl`, `cmd_l` или `T`.
-
-    Returns:
-        Нормализованное имя клавиши.
-    """
-    lowered = raw_name.strip().lower()
-    alias = KEY_NAME_ALIASES.get(lowered)
-    return alias if alias is not None else lowered
+def parse_key(key_name: str) -> str:
+    """Возвращает нормализованное строковое имя клавиши."""
+    return normalize_key_name(key_name)
 
 
-def parse_key(key_name: str) -> keyboard.Key | keyboard.KeyCode:
-    """Преобразует строковое имя клавиши в объект pynput.
-
-    Args:
-        key_name: Имя клавиши, например `cmd_l`, `alt` или `space`.
-
-    Returns:
-        Объект клавиши или код символа, который понимает pynput.
-    """
-    return getattr(keyboard.Key, key_name, keyboard.KeyCode(char=key_name))
-
-
-def normalize_key_combination(key_combination: str) -> str:
-    """Нормализует строку комбинации клавиш к внутреннему формату.
-
-    Args:
-        key_combination: Строка вида `cmd_l+alt` или `Command+Option+space`.
-
-    Returns:
-        Нормализованная строка комбинации клавиш.
-
-    Raises:
-        ValueError: Если в комбинации меньше двух клавиш.
-    """
-    parts = [normalize_key_name(part) for part in key_combination.split("+") if part.strip()]
-    if len(parts) < Config.MIN_HOTKEY_PARTS:
-        raise ValueError("Комбинация клавиш должна содержать как минимум две клавиши.")
-    return "+".join(parts)
-
-
-def parse_key_combination(key_combination: str) -> tuple[keyboard.Key | keyboard.KeyCode, ...]:
-    """Разбирает строку с комбинацией клавиш.
-
-    Args:
-        key_combination: Строка вида `cmd_l+alt`, `ctrl+shift+alt+t`
-            или `Ctrl+Shift+Alt+T`.
-
-    Returns:
-        Кортеж объектов клавиш в том порядке, в котором они указаны.
-
-    Raises:
-        ValueError: Если в комбинации меньше двух клавиш.
-    """
-    parts = normalize_key_combination(key_combination).split("+")
-    return tuple(parse_key(part) for part in parts)
-
-
-def hotkey_name_matches(expected_name: str, actual_name: str) -> bool:
-    """Проверяет, считаются ли два строковых имени клавиш эквивалентными.
-
-    Args:
-        expected_name: Имя клавиши из конфигурации хоткея.
-        actual_name: Имя клавиши, полученное из системного события.
-
-    Returns:
-        True, если клавиши эквивалентны.
-    """
-    equivalent_names = {
-        "alt": {"alt", "alt_l", "alt_r"},
-        "alt_l": {"alt", "alt_l"},
-        "alt_r": {"alt", "alt_r"},
-        "shift": {"shift", "shift_l", "shift_r"},
-        "shift_l": {"shift", "shift_l"},
-        "shift_r": {"shift", "shift_r"},
-        "ctrl": {"ctrl", "ctrl_l", "ctrl_r"},
-        "ctrl_l": {"ctrl", "ctrl_l"},
-        "ctrl_r": {"ctrl", "ctrl_r"},
-        "cmd": {"cmd", "cmd_l", "cmd_r"},
-        "cmd_l": {"cmd", "cmd_l"},
-        "cmd_r": {"cmd", "cmd_r"},
-    }
-    return bool(equivalent_names.get(expected_name, {expected_name}) & equivalent_names.get(actual_name, {actual_name}))
-
-
-def format_hotkey_status(key_combination: str | None = None, *, use_double_cmd: bool = False) -> str:
-    """Преобразует настройку хоткея в строку для меню.
-
-    Args:
-        key_combination: Строка комбинации клавиш.
-        use_double_cmd: Флаг режима двойного нажатия правой Command.
-
-    Returns:
-        Человекочитаемая строка хоткея.
-    """
-    if use_double_cmd:
-        return "двойное нажатие правой ⌘"
-
-    display_names = {
-        "cmd": "⌘",
-        "cmd_l": "левая ⌘",
-        "cmd_r": "правая ⌘",
-        "alt": "⌥",
-        "alt_l": "левая ⌥",
-        "alt_r": "правая ⌥",
-        "shift": "⇧",
-        "shift_l": "левая ⇧",
-        "shift_r": "правая ⇧",
-        "ctrl": "⌃",
-        "ctrl_l": "левая ⌃",
-        "ctrl_r": "правая ⌃",
-        "space": "Space",
-    }
-    parts = [normalize_key_name(part) for part in (key_combination or "").split("+") if part.strip()]
-    return " + ".join(display_names[part] if part in display_names else part.upper() for part in parts)
+def parse_key_combination(key_combination: str) -> tuple[str, ...]:
+    """Разбирает строку с комбинацией клавиш в tuple имён."""
+    return tuple(normalize_key_combination(key_combination).split("+"))
 
 
 def _event_key_name_static(event: Any) -> str:
-    """Извлекает имя обычной клавиши из NSEvent.
-
-    Порядок определения:
-    1. NAMED_KEYCODES_MAP — именованные клавиши (enter, tab, space, esc, …).
-    2. _keycode_to_char() — символ по физическому keycode через Carbon API
-       (не зависит от текущей раскладки).
-    3. event.charactersIgnoringModifiers() — fallback, зависит от раскладки.
-    """
+    """Извлекает имя обычной клавиши из NSEvent."""
     key_code = int(event.keyCode())
     if key_code in NAMED_KEYCODES_MAP:
         return NAMED_KEYCODES_MAP[key_code]
@@ -328,47 +177,89 @@ def _event_key_name_static(event: Any) -> str:
     return characters[:1] if characters else ""
 
 
-class GlobalKeyListener:
-    """Обрабатывает глобальную комбинацию клавиш для запуска диктовки.
+@dataclass(slots=True)
+class _HotkeyBinding:
+    """Скомпилированное правило хоткея для dispatcher-а."""
 
-    Attributes:
-        app: Экземпляр StatusBarApp, которым управляет listener.
-        keys: Кортеж клавиш, которые образуют хоткей.
-        pressed_keys: Набор клавиш, зажатых в текущий момент.
-        triggered: Флаг, защищающий от повторного срабатывания при удержании.
-    """
+    name: str
+    key_combination: str
+    callback: Any
+    required_modifiers: tuple[str, ...]
+    required_key: str | None
+    modifier_only: bool
+    triggered: bool = False
+    suppress_key_up: bool = False
 
-    def __init__(self, app: ToggleableApp, key_combination: str, callback: Callable[[], None] | None = None) -> None:
-        """Создает listener для заданной комбинации клавиш.
+    @classmethod
+    def from_combination(cls, name: str, key_combination: str, callback: Any) -> _HotkeyBinding:
+        normalized = normalize_key_combination(key_combination)
+        parts = tuple(normalized.split("+"))
+        required_modifiers = tuple(part for part in parts if part in MODIFIER_NAMES)
+        required_key = next((part for part in parts if part not in MODIFIER_NAMES), None)
+        return cls(
+            name=name,
+            key_combination=normalized,
+            callback=callback,
+            required_modifiers=required_modifiers,
+            required_key=required_key,
+            modifier_only=is_modifier_only_combination(normalized),
+        )
 
-        Args:
-            app: Экземпляр приложения, у которого будет вызван toggle.
-            key_combination: Строка с комбинацией клавиш.
-            callback: Функция, вызываемая при срабатывании. По умолчанию app.toggle.
-        """
+
+class HotkeyDispatcher:
+    """Единая точка обработки primary/secondary/LLM хоткеев и Escape."""
+
+    def __init__(self, app: Any) -> None:
         self.app = app
-        self.callback = callback or app.toggle
-        self.key_combination = normalize_key_combination(key_combination)
-        self.key_names = self.key_combination.split("+")
-        self.modifier_names = {"alt", "alt_l", "alt_r", "shift", "shift_l", "shift_r", "ctrl", "ctrl_l", "ctrl_r", "cmd", "cmd_l", "cmd_r"}
-        self.required_modifiers = [name for name in self.key_names if name in self.modifier_names]
-        self.required_key = next((name for name in self.key_names if name not in self.modifier_names), None)
         self.pressed_modifier_names: set[str] = set()
-        self.triggered = False
-        self.flags_monitor: Any = None
-        self.key_down_monitor: Any = None
+        self._bindings: list[_HotkeyBinding] = []
         self._event_tap: Any = None
         self._tap_source: Any = None
         self._tap_run_loop: Any = None
+        self._escape_key_up_suppressed = False
+        self.update_hotkeys(
+            getattr(app, "primary_key_combination", ""),
+            getattr(app, "secondary_key_combination", ""),
+            getattr(app, "llm_key_combination", ""),
+        )
+
+    def start(self) -> None:
+        """Запускает единый CGEventTap без leaky-fallback режима."""
+        if self._event_tap is not None:
+            return
+
+        event_mask = (
+            Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged)
+            | Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
+            | Quartz.CGEventMaskBit(Quartz.kCGEventKeyUp)
+        )
+        tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap,
+            Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionDefault,
+            event_mask,
+            self._cgevent_tap_callback,
+            None,
+        )
+        if tap is None:
+            LOGGER.warning(
+                "⌨️ Не удалось создать единый CGEventTap. Глобальные хоткеи и Escape останутся отключены до выдачи Accessibility."
+            )
+            return
+
+        self._event_tap = tap
+        self._tap_source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+        self._tap_run_loop = Quartz.CFRunLoopGetCurrent()
+        Quartz.CFRunLoopAddSource(
+            self._tap_run_loop,
+            self._tap_source,
+            Quartz.kCFRunLoopCommonModes,
+        )
+        Quartz.CGEventTapEnable(tap, True)
+        LOGGER.info("⌨️ Единый CGEventTap создан — все хоткеи и Escape идут через один dispatcher")
 
     def stop(self) -> None:
-        """Удаляет глобальные мониторы событий клавиатуры и CGEventTap."""
-        if self.flags_monitor is not None:
-            AppKit.NSEvent.removeMonitor_(self.flags_monitor)
-            self.flags_monitor = None
-        if self.key_down_monitor is not None:
-            AppKit.NSEvent.removeMonitor_(self.key_down_monitor)
-            self.key_down_monitor = None
+        """Останавливает единый keyboard dispatcher."""
         if self._event_tap is not None:
             Quartz.CGEventTapEnable(self._event_tap, False)
             if self._tap_source is not None and self._tap_run_loop is not None:
@@ -377,166 +268,142 @@ class GlobalKeyListener:
                     self._tap_source,
                     Quartz.kCFRunLoopCommonModes,
                 )
-            self._event_tap = None
-            self._tap_source = None
-            self._tap_run_loop = None
+        self._event_tap = None
+        self._tap_source = None
+        self._tap_run_loop = None
+        self._reset_runtime_state()
 
-    def update_key_combination(self, key_combination: str) -> None:
-        """Обновляет комбинацию клавиш без пересоздания listener."""
-        self.key_combination = normalize_key_combination(key_combination)
-        self.key_names = self.key_combination.split("+")
-        self.required_modifiers = [name for name in self.key_names if name in self.modifier_names]
-        self.required_key = next((name for name in self.key_names if name not in self.modifier_names), None)
+    def update_hotkeys(self, primary: str, secondary: str, llm: str) -> None:
+        """Обновляет набор активных хоткеев без пересоздания dispatcher-а."""
+        self._bindings = []
+        if primary:
+            self._bindings.append(_HotkeyBinding.from_combination("primary", primary, self.app.toggle))
+        if secondary:
+            self._bindings.append(_HotkeyBinding.from_combination("secondary", secondary, self.app.toggle))
+        if llm:
+            self._bindings.append(_HotkeyBinding.from_combination("llm", llm, self.app.toggle_llm))
+        self._bindings.sort(
+            key=lambda binding: (
+                len(binding.required_modifiers),
+                sum(1 for modifier in binding.required_modifiers if modifier.endswith("_l") or modifier.endswith("_r")),
+                int(binding.required_key is not None),
+            ),
+            reverse=True,
+        )
+        self._reset_runtime_state()
+
+    def _reset_runtime_state(self) -> None:
         self.pressed_modifier_names.clear()
-        self.triggered = False
+        self._escape_key_up_suppressed = False
+        for binding in self._bindings:
+            binding.triggered = False
+            binding.suppress_key_up = False
 
-    def start(self) -> None:
-        """Запускает глобальный монитор событий клавиатуры через AppKit.
-
-        Для keyDown-событий пытается создать CGEventTap, который позволяет
-        подавлять символ хоткея (не пропускать его в активное приложение).
-        Если CGEventTap недоступен (нет разрешения Accessibility), используется
-        обычный NSEvent-монитор (наблюдение без подавления).
-        """
-        flags_mask = AppKit.NSEventMaskFlagsChanged
-        self.flags_monitor = AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            flags_mask,
-            self._handle_flags_changed,
-        )
-
-        # Пытаемся создать CGEventTap для подавления символа хоткея
-        tap = Quartz.CGEventTapCreate(
-            Quartz.kCGSessionEventTap,
-            Quartz.kCGHeadInsertEventTap,
-            Quartz.kCGEventTapOptionDefault,
-            Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown),
-            self._cgevent_tap_callback,
-            None,
-        )
-
-        if tap is not None:
-            self._event_tap = tap
-            self._tap_source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
-            self._tap_run_loop = Quartz.CFRunLoopGetCurrent()
-            Quartz.CFRunLoopAddSource(
-                self._tap_run_loop,
-                self._tap_source,
-                Quartz.kCFRunLoopCommonModes,
-            )
-            Quartz.CGEventTapEnable(tap, True)
-            LOGGER.info("⌨️ CGEventTap создан — символ хоткея будет подавлен")
-        else:
-            # Нет разрешения Accessibility — фоллбэк на NSEvent монитор
-            LOGGER.warning(
-                "⌨️ Не удалось создать CGEventTap (нет разрешения Accessibility?). "
-                "Символ хоткея может просочиться в активное приложение."
-            )
-            key_down_mask = AppKit.NSEventMaskKeyDown
-            self.key_down_monitor = AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-                key_down_mask,
-                self._handle_key_down_nsevent,
-            )
-
-    def _required_modifiers_are_pressed(self) -> bool:
-        """Проверяет, зажаты ли нужные modifier-клавиши."""
+    def _required_modifiers_are_pressed(self, required_modifiers: tuple[str, ...]) -> bool:
         return all(
-            any(hotkey_name_matches(expected_name, pressed_name) for pressed_name in self.pressed_modifier_names)
-            for expected_name in self.required_modifiers
+            any(
+                hotkey_name_matches(expected_name, pressed_name)
+                for pressed_name in self.pressed_modifier_names
+            )
+            for expected_name in required_modifiers
         )
 
     def _event_is_modifier_pressed(self, event: Any, modifier_name: str) -> bool:
-        """Определяет, находится ли modifier в нажатом состоянии для flagsChanged-события.
-
-        Args:
-            event: Системное NSEvent.
-            modifier_name: Имя modifier-клавиши.
-
-        Returns:
-            True, если соответствующий modifier сейчас зажат.
-        """
         modifier_flags = int(event.modifierFlags())
         mask = MODIFIER_FLAG_MASKS.get(modifier_name, 0)
         return bool(modifier_flags & mask)
 
-    def _handle_flags_changed(self, event: Any) -> None:
-        """Обрабатывает глобальные изменения modifier-клавиш.
-
-        Args:
-            event: Системное NSEvent.
-        """
+    def _handle_flags_changed(self, event: Any) -> bool:
         key_code = int(event.keyCode())
         modifier_name = MODIFIER_KEYCODES_MAP.get(key_code)
         if modifier_name is None:
-            return
+            return False
 
-        if self._event_is_modifier_pressed(event, modifier_name):
+        modifier_pressed = self._event_is_modifier_pressed(event, modifier_name)
+        if modifier_pressed:
             self.pressed_modifier_names.add(modifier_name)
         else:
             self.pressed_modifier_names.discard(modifier_name)
-            self.triggered = False
 
-        if self.required_key is None and self._required_modifiers_are_pressed() and not self.triggered:
-            LOGGER.info("⌨️ Сработал глобальный хоткей: %s", self.key_combination)
-            self.triggered = True
-            self.callback()
+        should_suppress = False
+        for binding in self._bindings:
+            required_pressed = self._required_modifiers_are_pressed(binding.required_modifiers)
+            if binding.modifier_only:
+                if required_pressed:
+                    if not binding.triggered:
+                        LOGGER.info("⌨️ Сработал глобальный хоткей: %s", binding.key_combination)
+                        binding.triggered = True
+                        binding.callback()
+                        should_suppress = True
+                else:
+                    if binding.triggered and any(
+                        hotkey_name_matches(expected_name, modifier_name)
+                        for expected_name in binding.required_modifiers
+                    ):
+                        should_suppress = True
+                    binding.triggered = False
+            elif not required_pressed:
+                binding.triggered = False
 
-    def _event_key_name(self, event: Any) -> str:
-        """Преобразует NSEvent в строковое имя клавиши."""
-        return _event_key_name_static(event)
+        return should_suppress
 
-    def _handle_key_down(self, event: Any) -> None:
-        """Обрабатывает глобальные события обычных клавиш.
-
-        Args:
-            event: Системное NSEvent.
-        """
-        self._check_key_down(event)
-
-    def _check_key_down(self, event: Any) -> bool:
-        """Проверяет, соответствует ли keyDown-событие хоткею.
-
-        Args:
-            event: Системное NSEvent.
-
-        Returns:
-            True, если хоткей сработал и событие нужно подавить.
-        """
-        if self.required_key is None:
-            if not self._required_modifiers_are_pressed():
-                self.triggered = False
-            return False
-
-        event_key_name = self._event_key_name(event)
-        if self._required_modifiers_are_pressed() and hotkey_name_matches(self.required_key, event_key_name) and not self.triggered:
-            LOGGER.info("⌨️ Сработал глобальный хоткей: %s", self.key_combination)
-            self.triggered = True
-            self.callback()
+    def _handle_key_down(self, event: Any) -> bool:
+        event_key_name = _event_key_name_static(event)
+        if event_key_name == "esc" and getattr(self.app, "started", False):
+            LOGGER.info("⌨️ Escape перехвачен dispatcher-ом — отменяю запись")
+            self._escape_key_up_suppressed = True
+            self.app.handle_escape_keycode(_KEYCODE_ESCAPE)
             return True
-        if event_key_name != self.required_key:
-            self.triggered = False
+
+        for binding in self._bindings:
+            if binding.required_key is None:
+                continue
+            if not self._required_modifiers_are_pressed(binding.required_modifiers):
+                binding.triggered = False
+                continue
+            if hotkey_name_matches(binding.required_key, event_key_name) and not binding.triggered:
+                LOGGER.info("⌨️ Сработал глобальный хоткей: %s", binding.key_combination)
+                binding.triggered = True
+                binding.suppress_key_up = True
+                binding.callback()
+                return True
+            if event_key_name != binding.required_key:
+                binding.triggered = False
         return False
 
-    def _handle_key_down_nsevent(self, event: Any) -> None:
-        """Обработчик keyDown для NSEvent-монитора (фоллбэк без подавления).
+    def _handle_key_up(self, event: Any) -> bool:
+        event_key_name = _event_key_name_static(event)
+        if event_key_name == "esc" and self._escape_key_up_suppressed:
+            self._escape_key_up_suppressed = False
+            return True
 
-        Args:
-            event: Системное NSEvent.
-        """
-        self._check_key_down(event)
+        for binding in self._bindings:
+            if binding.required_key is None:
+                continue
+            if binding.suppress_key_up and hotkey_name_matches(binding.required_key, event_key_name):
+                binding.suppress_key_up = False
+                binding.triggered = False
+                return True
+            if hotkey_name_matches(binding.required_key, event_key_name):
+                binding.triggered = False
+        return False
+
+    def _dispatch_nsevent(self, event: Any, event_type: int) -> bool:
+        if event_type == Quartz.kCGEventFlagsChanged:
+            return self._handle_flags_changed(event)
+        if event_type == Quartz.kCGEventKeyDown:
+            return self._handle_key_down(event)
+        if event_type == Quartz.kCGEventKeyUp:
+            return self._handle_key_up(event)
+        return False
+
+    def _ns_event_from_cgevent(self, cg_event: Any) -> Any | None:
+        try:
+            return AppKit.NSEvent.eventWithCGEvent_(cg_event)
+        except Exception:
+            return None
 
     def _cgevent_tap_callback(self, _proxy: Any, event_type: int, cg_event: Any, _refcon: Any) -> Any | None:
-        """Callback для CGEventTap — подавляет keyDown если это хоткей.
-
-        Args:
-            _proxy: CGEventTapProxy (не используется).
-            event_type: Тип CG-события.
-            cg_event: Объект CGEvent.
-            _refcon: Пользовательские данные (не используются).
-
-        Returns:
-            None если событие нужно подавить, иначе cg_event.
-        """
-        # Если tap был автоматически отключён из-за таймаута, включаем обратно
         if event_type == Quartz.kCGEventTapDisabledByTimeout:
             LOGGER.warning("⌨️ CGEventTap отключён по таймауту, включаем обратно")
             if self._event_tap is not None:
@@ -550,103 +417,140 @@ class GlobalKeyListener:
         if ns_event is None:
             return cg_event
 
-        if self._check_key_down(ns_event):
-            # Подавляем событие — символ хоткея не попадёт в активное приложение
+        if self._dispatch_nsevent(ns_event, event_type):
             return None
         return cg_event
 
+
+class GlobalKeyListener:
+    """Совместимый single-hotkey listener для unit-тестов."""
+
+    def __init__(self, app: ToggleableApp, key_combination: str, callback: Any | None = None) -> None:
+        self.app = app
+        self.callback = callback or app.toggle
+        self._binding = _HotkeyBinding.from_combination("compat", key_combination, self.callback)
+        self.key_combination = self._binding.key_combination
+        self.key_names = self.key_combination.split("+")
+        self.modifier_names = set(MODIFIER_NAMES)
+        self.required_modifiers = list(self._binding.required_modifiers)
+        self.required_key = self._binding.required_key
+        self.pressed_modifier_names: set[str] = set()
+        self.triggered = False
+        self._event_tap: Any = None
+
+    def start(self) -> None:
+        """Совместимый no-op запуск listener-а."""
+        return None
+
+    def stop(self) -> None:
+        """Совместимая no-op остановка listener-а."""
+        return None
+
+    def update_key_combination(self, key_combination: str) -> None:
+        """Обновляет одну тестовую комбинацию без системной регистрации."""
+        self._binding = _HotkeyBinding.from_combination("compat", key_combination, self.callback)
+        self.key_combination = self._binding.key_combination
+        self.key_names = self.key_combination.split("+")
+        self.required_modifiers = list(self._binding.required_modifiers)
+        self.required_key = self._binding.required_key
+        self.pressed_modifier_names.clear()
+        self.triggered = False
+
+    def _required_modifiers_are_pressed(self) -> bool:
+        return all(
+            any(hotkey_name_matches(expected_name, pressed_name) for pressed_name in self.pressed_modifier_names)
+            for expected_name in self.required_modifiers
+        )
+
+    def _event_is_modifier_pressed(self, event: Any, modifier_name: str) -> bool:
+        modifier_flags = int(event.modifierFlags())
+        mask = MODIFIER_FLAG_MASKS.get(modifier_name, 0)
+        return bool(modifier_flags & mask)
+
+    def _handle_flags_changed(self, event: Any) -> None:
+        key_code = int(event.keyCode())
+        modifier_name = MODIFIER_KEYCODES_MAP.get(key_code)
+        if modifier_name is None:
+            return
+        if self._event_is_modifier_pressed(event, modifier_name):
+            self.pressed_modifier_names.add(modifier_name)
+        else:
+            self.pressed_modifier_names.discard(modifier_name)
+            self.triggered = False
+        if self.required_key is None and self._required_modifiers_are_pressed() and not self.triggered:
+            self.triggered = True
+            self.callback()
+
+    def _event_key_name(self, event: Any) -> str:
+        return _event_key_name_static(event)
+
+    def _check_key_down(self, event: Any) -> bool:
+        if self.required_key is None:
+            if not self._required_modifiers_are_pressed():
+                self.triggered = False
+            return False
+        event_key_name = self._event_key_name(event)
+        if self._required_modifiers_are_pressed() and hotkey_name_matches(self.required_key, event_key_name) and not self.triggered:
+            self.triggered = True
+            self.callback()
+            return True
+        if event_key_name != self.required_key:
+            self.triggered = False
+        return False
+
     def _ns_event_from_cgevent(self, cg_event: Any) -> Any | None:
-        """Конвертирует CGEvent в NSEvent.
-
-        Args:
-            cg_event: Объект CGEvent.
-
-        Returns:
-            NSEvent или None при ошибке конвертации.
-        """
         try:
             return AppKit.NSEvent.eventWithCGEvent_(cg_event)
         except Exception:
             return None
 
+    def _cgevent_tap_callback(self, _proxy: Any, event_type: int, cg_event: Any, _refcon: Any) -> Any | None:
+        if event_type == Quartz.kCGEventTapDisabledByTimeout:
+            if self._event_tap is not None:
+                Quartz.CGEventTapEnable(self._event_tap, True)
+            return cg_event
+        if event_type == Quartz.kCGEventTapDisabledByUserInput:
+            return cg_event
+        ns_event = self._ns_event_from_cgevent(cg_event)
+        if ns_event is None:
+            return cg_event
+        if self._check_key_down(ns_event):
+            return None
+        return cg_event
+
 
 class MultiHotkeyListener:
-    """Управляет несколькими глобальными хоткеями одновременно."""
+    """Совместимый multi-listener для unit-тестов."""
 
     def __init__(self, app: ToggleableApp, key_combinations: list[str]) -> None:
-        """Создает набор listener-ов для списка комбинаций клавиш."""
         self.app = app
         self.key_combinations: list[str] = []
         self.listeners: list[GlobalKeyListener] = []
         self._build_listeners(key_combinations)
 
     def start(self) -> None:
-        """Запускает все глобальные listener-ы."""
+        """Совместимо запускает вложенные listener-ы."""
         for listener in self.listeners:
             listener.start()
 
     def stop(self) -> None:
-        """Останавливает все глобальные listener-ы."""
+        """Совместимо останавливает вложенные listener-ы."""
         for listener in self.listeners:
             listener.stop()
 
     def _build_listeners(self, key_combinations: list[str]) -> None:
-        """Нормализует комбинации и создаёт listener-ы без запуска."""
         normalized = []
         for key_combination in key_combinations:
             if not key_combination:
                 continue
             normalized.append(normalize_key_combination(key_combination))
-
         if not normalized:
             raise ValueError("Нужно указать хотя бы один хоткей.")
-
         self.key_combinations = normalized
         self.listeners = [GlobalKeyListener(self.app, key_combination) for key_combination in self.key_combinations]
 
     def update_key_combinations(self, key_combinations: list[str]) -> None:
-        """Пересоздает listener-ы для нового списка комбинаций и запускает их."""
+        """Пересобирает тестовый набор вложенных listener-ов."""
         self.stop()
         self._build_listeners(key_combinations)
         self.start()
-
-
-class DoubleCommandKeyListener:
-    """Обрабатывает режим управления через правую клавишу Command.
-
-    Attributes:
-        app: Экземпляр приложения, у которого будет вызван toggle.
-        key: Клавиша, используемая для переключения записи.
-        last_press_time: Время предыдущего нажатия для определения двойного клика.
-    """
-
-    def __init__(self, app: ToggleableApp) -> None:
-        """Создает listener для режима двойного нажатия Command.
-
-        Args:
-            app: Экземпляр приложения, у которого будет вызван toggle.
-        """
-        self.app = app
-        self.key = keyboard.Key.cmd_r
-        self.last_press_time = 0.0
-
-    def on_key_press(self, key: keyboard.Key | keyboard.KeyCode) -> None:
-        """Обрабатывает нажатие правой клавиши Command.
-
-        Args:
-            key: Объект клавиши из pynput.
-        """
-        is_listening = self.app.started
-        if key == self.key:
-            current_time = time.time()
-            if is_listening or current_time - self.last_press_time < Config.DOUBLE_COMMAND_PRESS_INTERVAL:
-                self.app.toggle()
-            self.last_press_time = current_time
-
-    def on_key_release(self, key: keyboard.Key | keyboard.KeyCode) -> None:
-        """Игнорирует отпускание клавиши в этом режиме.
-
-        Args:
-            key: Объект клавиши из pynput.
-        """
-        del key

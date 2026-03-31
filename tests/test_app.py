@@ -220,7 +220,6 @@ def make_controller(monkeypatch):
         key_combination="cmd_l+alt",
         secondary_key_combination=None,
         llm_key_combination=None,
-        k_double_cmd=False,
     )
     controller = app_module.DictationApp(
         recorder=cast("Any", recorder),
@@ -274,8 +273,8 @@ def test_change_secondary_hotkey_updates_listener_and_snapshot(monkeypatch):
     listener_calls = []
 
     class ListenerStub:
-        def update_key_combinations(self, combinations):
-            listener_calls.append(combinations)
+        def update_hotkeys(self, primary, secondary, llm):
+            listener_calls.append((primary, secondary, llm))
 
     controller.hotkey_management_use_cases.capture_hotkey_combination = lambda *args, **kwargs: "ctrl+shift+space"
     controller.key_listener = ListenerStub()
@@ -283,7 +282,7 @@ def test_change_secondary_hotkey_updates_listener_and_snapshot(monkeypatch):
     controller.change_secondary_hotkey()
 
     assert controller.snapshot().secondary_key_combination == "ctrl+shift+space"
-    assert listener_calls == [["cmd_l+alt", "ctrl+shift+space"]]
+    assert listener_calls == [("cmd_l+alt", "ctrl+shift+space", "")]
 
 
 def test_copy_history_text_uses_injected_clipboard_service(monkeypatch):
@@ -298,7 +297,6 @@ def test_copy_history_text_uses_injected_clipboard_service(monkeypatch):
         key_combination="cmd_l+alt",
         secondary_key_combination=None,
         llm_key_combination=None,
-        k_double_cmd=False,
     )
     controller = app_module.DictationApp(
         recorder=cast("Any", FakeRecorder()),

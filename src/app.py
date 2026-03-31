@@ -75,9 +75,9 @@ class HotkeyCaptureService:
 
 @dataclass(frozen=True, slots=True)
 class HotkeyListenerFactoryService:
-    """Concrete bundle для создания runtime-listener'ов хоткеев."""
+    """Concrete bundle для создания runtime-dispatcher'а хоткеев."""
 
-    create_listener: Callable[[Any, str, Callable[[], None]], Any]
+    create_listener: Callable[[Any], Any]
 
 
 class _NullRecordingOverlay:
@@ -126,8 +126,8 @@ def _empty_input_devices() -> list[AudioDeviceInfo]:
     return []
 
 
-def _create_null_hotkey_listener(_app: Any, _key_combination: str, _callback: Callable[[], None]) -> _NullHotkeyListener:
-    """Создаёт no-op listener горячих клавиш по умолчанию."""
+def _create_null_hotkey_listener(_app: Any) -> _NullHotkeyListener:
+    """Создаёт no-op dispatcher горячих клавиш по умолчанию."""
     return _NullHotkeyListener()
 
 
@@ -137,7 +137,7 @@ def _noop_capture_combination(_title: str, _message: str, _current_combination: 
 
 
 class _NullHotkeyListener:
-    """Null-object для runtime-listener'а горячих клавиш."""
+    """Null-object для runtime-dispatcher'а горячих клавиш."""
 
     def start(self) -> None:
         """Игнорирует запуск listener'а."""
@@ -147,7 +147,7 @@ class _NullHotkeyListener:
         """Игнорирует остановку listener'а."""
         return None
 
-    def update_key_combinations(self, _key_combinations: list[str]) -> None:
+    def update_hotkeys(self, _primary: str, _secondary: str, _llm: str) -> None:
         """Игнорирует обновление набора горячих клавиш."""
         return None
 
@@ -250,7 +250,6 @@ class DictationApp:
         self.hotkey_status = self.launch_config.hotkeys.hotkey_status
         self.secondary_hotkey_status = self.launch_config.hotkeys.secondary_hotkey_status
         self.llm_hotkey_status = self.launch_config.hotkeys.llm_hotkey_status
-        self.use_double_command_hotkey = self.launch_config.k_double_cmd
         self.clipboard_service = clipboard_service or ClipboardService(read_text=lambda: None, write_text=lambda _text: None)
         self.microphone_profiles_service = microphone_profiles_service or MicrophoneProfilesService(
             load_profiles=lambda: [],
@@ -314,7 +313,6 @@ class DictationApp:
         self.start_time = 0.0
         self.elapsed_time = 0
         self.key_listener: Any = None
-        self.llm_key_listener: Any = None
         self._llm_downloading = False
 
         llm_cached = self.llm_processor.is_model_cached() if self.llm_processor is not None else False
@@ -364,9 +362,6 @@ class DictationApp:
             settings_store=self.settings_store,
             system_integration_service=self.system_integration_service,
             capture_hotkey_combination=self.hotkey_capture_service.capture_combination,
-            create_hotkey_listener=self.hotkey_listener_factory.create_listener,
-            toggle_app=self,
-            toggle_llm_callback=self.toggle_llm,
             publish_snapshot=self._notify_subscribers,
         )
 
@@ -577,7 +572,6 @@ class DictationApp:
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
             llm_download_title=self._llm_download_title,
             llm_download_interactive=not self._llm_downloading and not self._is_llm_model_cached(),
-            use_double_command_hotkey=self.use_double_command_hotkey,
         )
 
     def _notify_subscribers(self) -> None:
@@ -622,7 +616,7 @@ class DictationApp:
 
     def _can_update_hotkeys_runtime(self) -> bool:
         """Проверяет, умеет ли текущий listener обновляться без перезапуска."""
-        return hasattr(self.key_listener, "update_key_combinations")
+        return hasattr(self.key_listener, "update_hotkeys")
 
     def _apply_hotkey_changes(self) -> bool:
         """Применяет новый набор основных хоткеев к текущему listener-у."""
@@ -631,7 +625,11 @@ class DictationApp:
         self._notify_subscribers()
         if self._can_update_hotkeys_runtime():
             listener = self.key_listener
-            listener.update_key_combinations(self._active_key_combinations())
+            listener.update_hotkeys(
+                self.primary_key_combination,
+                self.secondary_key_combination,
+                self.llm_key_combination,
+            )
             return True
         return False
 

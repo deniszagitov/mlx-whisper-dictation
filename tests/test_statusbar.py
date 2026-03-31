@@ -229,7 +229,6 @@ def make_launch_config(*, languages=None, max_time=30, secondary_key_combination
         key_combination="cmd_l+alt",
         secondary_key_combination=secondary_key_combination,
         llm_key_combination=None,
-        k_double_cmd=False,
     )
 
 
@@ -277,7 +276,6 @@ def make_snapshot(**overrides):
         total_tokens=123,
         llm_download_title="✅ LLM-модель загружена",
         llm_download_interactive=False,
-        use_double_command_hotkey=False,
     )
     return replace(base_snapshot, **overrides)
 
@@ -969,8 +967,8 @@ class TestStatusBarHotkeys:
         calls = []
 
         class ListenerStub:
-            def update_key_combinations(self, combinations):
-                calls.append(combinations)
+            def update_hotkeys(self, primary, secondary, llm):
+                calls.append((primary, secondary, llm))
 
         app.app.hotkey_management_use_cases.capture_hotkey_combination = lambda *args, **kwargs: "ctrl+shift+space"
         app.key_listener = ListenerStub()
@@ -979,14 +977,14 @@ class TestStatusBarHotkeys:
 
         assert app._secondary_key_combination == "ctrl+shift+space"
         assert "Space" in app.secondary_hotkey_item.title
-        assert calls == [["cmd_l+alt", "ctrl+shift+space"]]
+        assert calls == [("cmd_l+alt", "ctrl+shift+space", "")]
 
     def test_change_secondary_hotkey_persists_value(self, make_app, patched_app_module, monkeypatch):
         """Изменение дополнительного хоткея должно сохраняться."""
         saved_values = []
 
         class ListenerStub:
-            def update_key_combinations(self, _combinations):
+            def update_hotkeys(self, _primary, _secondary, _llm):
                 return None
 
         app, *_ = make_app(languages=["ru"])
@@ -1005,8 +1003,8 @@ class TestStatusBarHotkeys:
         calls = []
 
         class ListenerStub:
-            def update_key_combinations(self, combinations):
-                calls.append(combinations)
+            def update_hotkeys(self, primary, secondary, llm):
+                calls.append((primary, secondary, llm))
 
         app.app.hotkey_management_use_cases.capture_hotkey_combination = lambda *args, **kwargs: ""
         app.key_listener = ListenerStub()
@@ -1015,16 +1013,19 @@ class TestStatusBarHotkeys:
 
         assert app._secondary_key_combination == ""
         assert "не задан" in app.secondary_hotkey_item.title
-        assert calls == [["cmd_l+alt"]]
+        assert calls == [("cmd_l+alt", "", "")]
 
     def test_change_llm_hotkey_persists_value(self, make_app, patched_app_module, monkeypatch):
         """Изменение LLM-хоткея должно сохраняться."""
         saved_values = []
         app, *_ = make_app(languages=["ru"])
         app.app.hotkey_management_use_cases.capture_hotkey_combination = lambda *args, **kwargs: "ctrl+shift+l"
-        app.app.hotkey_management_use_cases.create_hotkey_listener = (
-            lambda *_args, **_kwargs: type("Listener", (), {"start": lambda self: None, "stop": lambda self: None})()
-        )
+
+        class ListenerStub:
+            def update_hotkeys(self, _primary, _secondary, _llm):
+                return None
+
+        app.key_listener = ListenerStub()
         monkeypatch.setattr(app.app.settings_store, "save_str", lambda key, value: saved_values.append((key, value)))
 
         app.change_llm_hotkey(None)
@@ -1091,11 +1092,7 @@ class TestCancelRecording:
         app, recorder, _ = make_app(languages=["ru"])
         app.start_app(None)
 
-        class FakeEvent:
-            def keyCode(self):
-                return 53  # _KEYCODE_ESCAPE
-
-        app._handle_escape_key(FakeEvent())
+        app.app.handle_escape_keycode(53)
 
         assert app.started is False
         assert recorder.cancelled is True
@@ -1104,11 +1101,7 @@ class TestCancelRecording:
         """Нажатие Escape не должно ничего делать, если запись не запущена."""
         app, recorder, _ = make_app(languages=["ru"])
 
-        class FakeEvent:
-            def keyCode(self):
-                return 53  # _KEYCODE_ESCAPE
-
-        app._handle_escape_key(FakeEvent())
+        app.app.handle_escape_keycode(53)
 
         assert app.state == Config.STATUS_IDLE
         assert recorder.cancelled is False
@@ -1118,11 +1111,7 @@ class TestCancelRecording:
         app, recorder, _ = make_app(languages=["ru"])
         app.start_app(None)
 
-        class FakeEvent:
-            def keyCode(self):
-                return 0  # not Escape
-
-        app._handle_escape_key(FakeEvent())
+        app.app.handle_escape_keycode(0)
 
         assert app.started is True
         assert recorder.cancelled is False

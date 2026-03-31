@@ -1,4 +1,4 @@
-"""Чистые правила нормализации и отображения горячих клавиш."""
+"""Чистые правила нормализации, сопоставления и отображения горячих клавиш."""
 
 from __future__ import annotations
 
@@ -32,6 +32,36 @@ MODIFIER_DISPLAY_ORDER = [
     "cmd_r",
 ]
 
+MODIFIER_NAMES = frozenset(MODIFIER_DISPLAY_ORDER)
+
+
+def hotkey_name_matches(expected_name: str, actual_name: str) -> bool:
+    """Проверяет, считаются ли два имени клавиш эквивалентными."""
+    equivalent_names = {
+        "alt": {"alt", "alt_l", "alt_r"},
+        "alt_l": {"alt", "alt_l"},
+        "alt_r": {"alt", "alt_r"},
+        "shift": {"shift", "shift_l", "shift_r"},
+        "shift_l": {"shift", "shift_l"},
+        "shift_r": {"shift", "shift_r"},
+        "ctrl": {"ctrl", "ctrl_l", "ctrl_r"},
+        "ctrl_l": {"ctrl", "ctrl_l"},
+        "ctrl_r": {"ctrl", "ctrl_r"},
+        "cmd": {"cmd", "cmd_l", "cmd_r"},
+        "cmd_l": {"cmd", "cmd_l"},
+        "cmd_r": {"cmd", "cmd_r"},
+    }
+    return bool(
+        equivalent_names.get(expected_name, {expected_name})
+        & equivalent_names.get(actual_name, {actual_name})
+    )
+
+
+def is_modifier_only_combination(key_combination: str | None) -> bool:
+    """Возвращает True, если комбинация состоит только из modifier-клавиш."""
+    parts = [normalize_key_name(part) for part in (key_combination or "").split("+") if part.strip()]
+    return bool(parts) and all(part in MODIFIER_NAMES for part in parts)
+
 
 def normalize_key_name(raw_name: str) -> str:
     """Нормализует имя клавиши к каноническому виду."""
@@ -48,11 +78,8 @@ def normalize_key_combination(key_combination: str) -> str:
     return "+".join(parts)
 
 
-def format_hotkey_status(key_combination: str | None = None, *, use_double_cmd: bool = False) -> str:
+def format_hotkey_status(key_combination: str | None = None) -> str:
     """Преобразует настройку хоткея в строку для меню."""
-    if use_double_cmd:
-        return "двойное нажатие правой ⌘"
-
     display_names = {
         "cmd": "⌘",
         "cmd_l": "левая ⌘",

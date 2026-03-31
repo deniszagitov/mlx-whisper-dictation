@@ -79,7 +79,6 @@ def test_launch_config_exposes_compatible_alias_properties() -> None:
         key_combination="Command+Option+Space",
         secondary_key_combination="Control+Shift+T",
         llm_key_combination="",
-        k_double_cmd=False,
     )
 
     assert launch_config.model == "mlx-community/whisper-turbo"
