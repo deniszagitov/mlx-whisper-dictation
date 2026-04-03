@@ -456,10 +456,27 @@ class TestStatusBarInit:
         app, *_ = make_app(languages=["ru"])
         assert "whisper-large-v3-turbo" in app.model_item.title
 
+    def test_recognition_menu_groups_model_language_and_limit(self, make_app):
+        """Основные настройки распознавания сгруппированы в одном подменю."""
+        app, *_ = make_app(languages=["ru", "en"])
+        assert app.recognition_menu.title == "🧠 Распознавание"
+        assert app.recognition_menu[app.model_item.title].title == app.model_item.title
+        assert app.recognition_menu[app.language_item.title].title == app.language_item.title
+        assert app.recognition_menu[app.max_time_item.title].title == app.max_time_item.title
+        assert app.recognition_menu[app.performance_menu.title].title == app.performance_menu.title
+
     def test_hotkey_in_menu(self, make_app):
         """Хоткей отображается в меню."""
         app, *_ = make_app(languages=["ru"])
         assert "⌘" in app.hotkey_item.title
+
+    def test_hotkeys_menu_groups_all_hotkeys(self, make_app):
+        """Все горячие клавиши собраны в отдельном подменю."""
+        app, *_ = make_app(languages=["ru"])
+        assert app.hotkeys_menu.title == "⌨️ Хоткеи"
+        assert app.hotkeys_menu[app.hotkey_item.title].title == app.hotkey_item.title
+        assert app.hotkeys_menu[app.secondary_hotkey_item.title].title == app.secondary_hotkey_item.title
+        assert app.hotkeys_menu[app.llm_hotkey_item.title].title == app.llm_hotkey_item.title
 
     def test_secondary_hotkey_in_menu_when_missing(self, make_app):
         """Если дополнительный хоткей не задан, это явно видно в меню."""
@@ -484,14 +501,24 @@ class TestStatusBarInit:
     def test_permission_items_present(self, make_app):
         """Статусы разрешений отображаются в меню."""
         app, *_ = make_app(languages=["ru"])
+        assert "🛂 Доступ:" in app.permissions_menu.title
         assert "Accessibility" in app.accessibility_item.title
         assert "Input Monitoring" in app.input_monitoring_item.title
         assert "Microphone" in app.microphone_item.title
 
     def test_token_usage_item_present(self, make_app):
-        """В меню отображается общий счётчик токенов."""
+        """Счётчик токенов остаётся отдельным пунктом верхнего уровня."""
         app, *_ = make_app(languages=["ru"])
         assert "Токены" in app.token_usage_item.title
+        assert app._menu_item(app.token_usage_item.title).title == app.token_usage_item.title
+
+    def test_llm_menu_groups_prompt_clipboard_and_download(self, make_app):
+        """В LLM-подменю остаются только профильные настройки и действия."""
+        app, *_ = make_app(languages=["ru"])
+        assert app.llm_menu.title == "🤖 LLM"
+        assert app.llm_menu[app.llm_prompt_menu.title].title == app.llm_prompt_menu.title
+        assert app.llm_menu[app.llm_clipboard_item.title].title == app.llm_clipboard_item.title
+        assert app.llm_menu[app.llm_download_item.title].title == app.llm_download_item.title
 
     def test_started_is_false(self, make_app):
         """Запись не запущена при инициализации."""
@@ -518,6 +545,19 @@ class TestStatusBarInit:
         app, *_ = make_app(languages=["ru"])
         assert app.show_recording_notification is True
         assert app.recording_notification_item.state == 1
+
+    def test_behavior_menu_groups_visual_and_input_preferences(self, make_app):
+        """В подменю поведения остались только групповые настройки отображения и ввода."""
+        app, *_ = make_app(languages=["ru"])
+        assert app.behavior_menu.title == "⚙️ Поведение и вид"
+        assert app.behavior_menu[app.recording_notification_item.title].title == app.recording_notification_item.title
+        assert app.behavior_menu[app.recording_indicator_menu.title].title == app.recording_indicator_menu.title
+        assert app.behavior_menu[app.paste_method_menu.title].title == app.paste_method_menu.title
+
+    def test_private_mode_item_stays_on_top_level(self, make_app):
+        """Приватный режим доступен отдельным пунктом верхнего уровня."""
+        app, *_ = make_app(languages=["ru"])
+        assert app._menu_item(app.private_mode_item.title).title == app.private_mode_item.title
 
     def test_recording_time_in_menu_bar_enabled_by_default(self, make_app):
         """По умолчанию время записи в menu bar включено."""

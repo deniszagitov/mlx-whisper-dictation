@@ -58,13 +58,25 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
         self.status_item = rumps.MenuItem(f"🔄 Статус: {self._state_label()}")
         self.model_item = rumps.MenuItem(f"🧠 Модель: {self.model_name}")
-        self.hotkey_item = rumps.MenuItem(f"⌨️ Основной хоткей: {self.hotkey_status}")
-        self.secondary_hotkey_item = rumps.MenuItem(f"⌨️ Доп. хоткей: {self.secondary_hotkey_status}")
-        self.change_hotkey_item = rumps.MenuItem("⌨️ Изменить основной хоткей…", callback=self.change_hotkey)
-        self.change_secondary_hotkey_item = rumps.MenuItem("⌨️ Изменить доп. хоткей…", callback=self.change_secondary_hotkey)
+        for model in self.model_options:
+            self.model_item.add(rumps.MenuItem(self._model_menu_title(model), callback=self.change_model))
 
-        self.llm_hotkey_item = rumps.MenuItem(f"🤖 LLM-хоткей: {self.llm_hotkey_status}")
-        self.change_llm_hotkey_item = rumps.MenuItem("🤖 Изменить LLM-хоткей…", callback=self.change_llm_hotkey)
+        self.language_item = rumps.MenuItem(f"🌍 Язык: {self._format_language()}")
+        if self.languages is not None and len(self.languages) > 1:
+            for lang in self.languages:
+                self.language_item.add(rumps.MenuItem(lang, callback=self.change_language))
+
+        self.max_time_item = rumps.MenuItem(f"⏱ Длительность записи: {Config.format_max_time_status(self.max_time)}")
+        for max_time_value in self.max_time_options:
+            self.max_time_item.add(rumps.MenuItem(self._max_time_menu_title(max_time_value), callback=self.change_max_time))
+
+        self.hotkey_item = rumps.MenuItem(f"⌨️ Основной хоткей: {self.hotkey_status}", callback=self.change_hotkey)
+        self.secondary_hotkey_item = rumps.MenuItem(
+            f"⌨️ Доп. хоткей: {self.secondary_hotkey_status}",
+            callback=self.change_secondary_hotkey,
+        )
+
+        self.llm_hotkey_item = rumps.MenuItem(f"🤖 LLM-хоткей: {self.llm_hotkey_status}", callback=self.change_llm_hotkey)
         self.llm_prompt_menu = rumps.MenuItem("🤖 Системный промпт LLM")
         for prompt_name in Config.LLM_PROMPT_PRESETS:
             item = rumps.MenuItem(prompt_name, callback=self._change_llm_prompt)
@@ -95,6 +107,17 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             item.state = int(performance_mode == self.performance_mode)
             self.performance_menu.add(item)
 
+        self.recognition_menu = rumps.MenuItem("🧠 Распознавание")
+        self.recognition_menu.add(self.model_item)
+        self.recognition_menu.add(self.language_item)
+        self.recognition_menu.add(self.max_time_item)
+        self.recognition_menu.add(self.performance_menu)
+
+        self.hotkeys_menu = rumps.MenuItem("⌨️ Хоткеи")
+        self.hotkeys_menu.add(self.hotkey_item)
+        self.hotkeys_menu.add(self.secondary_hotkey_item)
+        self.hotkeys_menu.add(self.llm_hotkey_item)
+
         self.paste_method_menu = rumps.MenuItem("📝 Метод ввода")
         self.private_mode_item = rumps.MenuItem("🕶 Приватный режим", callback=self.toggle_private_mode)
         self.paste_cgevent_item = rumps.MenuItem("Прямой ввод (CGEvent)", callback=self.toggle_paste_cgevent)
@@ -104,68 +127,53 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.paste_method_menu.add(self.paste_ax_item)
         self.paste_method_menu.add(self.paste_clipboard_item)
 
+        self.behavior_menu = rumps.MenuItem("⚙️ Поведение и вид")
+        self.behavior_menu.add(self.recording_notification_item)
+        self.behavior_menu.add(self.recording_indicator_menu)
+        self.behavior_menu.add(self.paste_method_menu)
+
         self.history_menu = rumps.MenuItem("📋 История текста")
         self.token_usage_item = rumps.MenuItem(self._token_usage_title())
         self.token_usage_item.set_callback(None)
 
-        self.language_item = rumps.MenuItem(f"🌍 Язык: {self._format_language()}")
-        self.input_device_item = rumps.MenuItem(f"🎙️ Микрофон: {self._format_input_device()}")
+        self.llm_menu = rumps.MenuItem("🤖 LLM")
+        self.llm_menu.add(self.llm_prompt_menu)
+        self.llm_menu.add(self.llm_clipboard_item)
+        self.llm_menu.add(self.llm_download_item)
+
         self.microphone_profiles_menu = rumps.MenuItem("🎚 Быстрые профили")
-        self.input_device_menu = rumps.MenuItem("🎙️ Выбрать микрофон")
-        self.max_time_item = rumps.MenuItem(f"⏱ Длительность записи: {Config.format_max_time_status(self.max_time)}")
+        self.input_device_menu = rumps.MenuItem(f"🎙️ Микрофон: {self._format_input_device()}")
+        self.input_device_item = self.input_device_menu
         self.accessibility_item = rumps.MenuItem(self._permission_title("Accessibility", self.permission_status["accessibility"]))
         self.input_monitoring_item = rumps.MenuItem(self._permission_title("Input Monitoring", self.permission_status["input_monitoring"]))
         self.microphone_item = rumps.MenuItem(self._permission_title("Microphone", self.permission_status["microphone"]))
         self.request_accessibility_item = rumps.MenuItem("🛂 Запросить Accessibility", callback=self.request_accessibility_access)
         self.request_input_monitoring_item = rumps.MenuItem("🛂 Запросить Input Monitoring", callback=self.request_input_monitoring_access)
 
+        self.permissions_menu = rumps.MenuItem(self._permissions_menu_title())
+        self.permissions_menu.add(self.accessibility_item)
+        self.permissions_menu.add(self.input_monitoring_item)
+        self.permissions_menu.add(self.microphone_item)
+        self.permissions_menu.add(None)
+        self.permissions_menu.add(self.request_accessibility_item)
+        self.permissions_menu.add(self.request_input_monitoring_item)
+
         menu: list[Any] = [
             "Начать запись",
             "Остановить запись",
             self.status_item,
-            self.model_item,
-            self.hotkey_item,
-            self.secondary_hotkey_item,
-            self.llm_hotkey_item,
-            self.change_hotkey_item,
-            self.change_secondary_hotkey_item,
-            self.change_llm_hotkey_item,
-            self.recording_notification_item,
-            self.recording_indicator_menu,
-            self.performance_menu,
-            self.private_mode_item,
-            self.paste_method_menu,
-            self.llm_prompt_menu,
-            self.llm_clipboard_item,
-            self.llm_download_item,
-            self.history_menu,
-            self.token_usage_item,
-            self.language_item,
-            self.input_device_item,
-            self.microphone_profiles_menu,
-            self.input_device_menu,
-            self.max_time_item,
-            "🧠 Выбрать модель",
-            "⏱ Выбрать лимит записи",
-            self.accessibility_item,
-            self.input_monitoring_item,
-            self.microphone_item,
-            self.request_accessibility_item,
-            self.request_input_monitoring_item,
             None,
+            self.recognition_menu,
+            self.hotkeys_menu,
+            self.private_mode_item,
+            self.behavior_menu,
+            self.llm_menu,
+            self.token_usage_item,
+            self.history_menu,
+            self.input_device_menu,
+            self.microphone_profiles_menu,
+            self.permissions_menu,
         ]
-
-        if self.languages is not None and len(self.languages) > 1:
-            menu.extend(rumps.MenuItem(lang, callback=self.change_language) for lang in self.languages)
-            menu.append(None)
-
-        menu.extend(rumps.MenuItem(self._model_menu_title(model), callback=self.change_model) for model in self.model_options)
-        menu.append(None)
-        menu.extend(
-            rumps.MenuItem(self._max_time_menu_title(max_time_value), callback=self.change_max_time)
-            for max_time_value in self.max_time_options
-        )
-        menu.append(None)
 
         self.menu = menu
         self.status_timer = rumps.Timer(self.on_status_tick, 1)
@@ -466,6 +474,15 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             status_label = Config.PERMISSION_UNKNOWN
         return f"{permission_name}: {status_label}"
 
+    def _permissions_menu_title(self) -> str:
+        """Возвращает короткий итог по состоянию системных разрешений."""
+        statuses = tuple(self.permission_status.values())
+        if any(status is False for status in statuses):
+            return "🛂 Доступ: нужно внимание"
+        if any(status is None for status in statuses):
+            return "🛂 Доступ: неизвестно"
+        return "🛂 Доступ: всё ок"
+
     def _format_total_tokens(self, token_count: int) -> str:
         """Форматирует число токенов для отображения в меню."""
         return f"{int(token_count):,}".replace(",", " ")
@@ -480,6 +497,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
     def _refresh_permission_items(self) -> None:
         """Обновляет пункты меню со статусами разрешений."""
+        self.permissions_menu.title = self._permissions_menu_title()
         self.accessibility_item.title = self._permission_title("Accessibility", self.permission_status["accessibility"])
         self.input_monitoring_item.title = self._permission_title("Input Monitoring", self.permission_status["input_monitoring"])
         self.microphone_item.title = self._permission_title("Microphone", self.permission_status["microphone"])
@@ -616,7 +634,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Применяет новый snapshot DictationApp к меню."""
         self.model_item.title = f"🧠 Модель: {snapshot.model_name}"
         self.language_item.title = f"🌍 Язык: {self._format_language()}"
-        self.input_device_item.title = f"🎙️ Микрофон: {self._format_input_device()}"
+        self.input_device_menu.title = f"🎙️ Микрофон: {self._format_input_device()}"
         self.max_time_item.title = f"⏱ Длительность записи: {Config.format_max_time_status(snapshot.max_time)}"
         self.performance_menu.title = f"⚡ Режим работы: {Config.performance_mode_label(snapshot.performance_mode)}"
         self.recording_notification_item.state = int(snapshot.show_recording_notification)
