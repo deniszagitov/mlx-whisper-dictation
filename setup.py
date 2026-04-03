@@ -70,7 +70,7 @@ APP = ["main.py"]
 ROOT = Path(__file__).parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
-_PY2APP_PACKAGES = ["mlx", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "src", "tqdm"]
+_PY2APP_PACKAGES = ["mlx", "mlx_audio", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "src", "tqdm"]
 
 if "py2app" in sys.argv:
     # py2app (через modulegraph) использует устаревший imp.find_module, который
@@ -121,7 +121,7 @@ setup_kwargs = {
     "distclass": Py2AppDistribution,
     "name": "Dictator",
     "version": "0.1.0",
-    "description": "Офлайн-приложение диктовки для macOS на базе mlx_whisper.",
+    "description": "Офлайн-приложение диктовки для macOS на базе локальных MLX ASR-моделей.",
     "long_description": README,
     "long_description_content_type": "text/markdown",
     "options": {"py2app": OPTIONS},

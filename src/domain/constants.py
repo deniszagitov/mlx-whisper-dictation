@@ -14,6 +14,7 @@ class Config:
         "mlx-community/whisper-large-v3-turbo",
         "mlx-community/whisper-large-v3-mlx",
         "mlx-community/whisper-turbo",
+        "mlx-community/Qwen3-ASR-1.7B-8bit",
     ]
     MAX_TIME_PRESETS: ClassVar[list[int | None]] = [15, 30, 45, 60, 90, None]
     MIN_HOTKEY_PARTS = 2

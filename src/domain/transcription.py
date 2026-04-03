@@ -72,9 +72,21 @@ def normalize_history_record(item: Any, now: float) -> HistoryRecord | None:
 
 
 def extract_transcription_token_count(result: object) -> int:
-    """Извлекает количество Whisper-токенов из сегментов результата."""
+    """Извлекает количество токенов из результата ASR backend-а."""
+    if not isinstance(result, dict):
+        return 0
+
+    explicit_total = result.get("total_tokens")
+    if isinstance(explicit_total, int):
+        return max(explicit_total, 0)
+
+    prompt_tokens = result.get("prompt_tokens")
+    generation_tokens = result.get("generation_tokens")
+    if isinstance(prompt_tokens, int) or isinstance(generation_tokens, int):
+        return max(int(prompt_tokens or 0), 0) + max(int(generation_tokens or 0), 0)
+
     token_count = 0
-    segments = result.get("segments", []) if isinstance(result, dict) else []
+    segments = result.get("segments", [])
     for segment in segments:
         if not isinstance(segment, dict):
             continue
@@ -84,4 +96,3 @@ def extract_transcription_token_count(result: object) -> int:
         elif isinstance(tokens, int):
             token_count += tokens
     return token_count
-

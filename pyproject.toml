@@ -1,7 +1,7 @@
 [project]
 name = "mlx-whisper-dictation"
 version = "0.1.0"
-description = "Офлайн-диктовка для macOS на базе MLX Whisper"
+description = "Офлайн-диктовка для macOS на базе локальных MLX ASR-моделей"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 authors = [{ name = "Denis Zagitov" }]
@@ -14,6 +14,7 @@ classifiers = [
 ]
 dependencies = [
 	"mlx-lm>=0.22.0",
+	"mlx-audio>=0.4.0",
 	"mlx-whisper",
 	"numpy>=2.0.0",
 	"pyaudio>=0.2.13",
@@ -127,6 +128,7 @@ module = [
     "HIServices.*",
     "objc.*",
     "rumps.*",
+    "mlx_audio.*",
     "mlx_whisper.*",
     "mlx_lm.*",
     "pyaudio.*",

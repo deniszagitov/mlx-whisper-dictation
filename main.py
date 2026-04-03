@@ -35,6 +35,7 @@ from src.domain.hotkeys import (  # noqa: F401
     normalize_key_name,
 )
 from src.domain.types import AppPreferences, LaunchConfig, TranscriberPreferences
+from src.infrastructure.asr_runtime import run_asr_transcription
 from src.infrastructure.audio_runtime import Recorder, list_input_devices
 from src.infrastructure.hotkeys import (
     MODIFIER_FLAG_MASKS,  # noqa: F401
@@ -80,7 +81,6 @@ from src.infrastructure.text_input import (
     send_cmd_v,
     type_text_via_cgevent,
 )
-from src.infrastructure.whisper_runtime import run_whisper_transcription
 from src.use_cases.transcription import TranscriptionUseCases as SpeechTranscriber
 
 defaults = Defaults()
@@ -252,7 +252,7 @@ def main() -> None:
         settings_store=defaults,
         preferences=transcriber_preferences,
         diagnostics_store=DiagnosticsStore(),
-        transcription_runner=run_whisper_transcription,
+        transcription_runner=run_asr_transcription,
         type_text_via_cgevent=lambda text: type_text_via_cgevent(text, frontmost_app_info=frontmost_application_info),
         insert_text_via_ax=insert_text_via_ax,
         send_cmd_v=lambda: send_cmd_v(frontmost_app_info=frontmost_application_info),

@@ -245,6 +245,25 @@ def test_transcribe_accumulates_tokens_from_segments(app_module, monkeypatch):
     assert transcriber.total_tokens == 5
 
 
+def test_transcribe_accumulates_tokens_from_qwen_total(app_module, monkeypatch):
+    """Qwen-токены из total_tokens должны попадать в общий счётчик."""
+    transcriber = make_transcriber(app_module)
+    transcriber.total_tokens = 2
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "Текст", "segments": [], "total_tokens": 7},
+    )
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", lambda *_args: None)
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert transcriber.total_tokens == 9
+
+
 def test_transcribe_to_text_returns_text(app_module, monkeypatch):
     """transcribe_to_text должен вернуть распознанный текст."""
     transcriber = make_transcriber(app_module)
@@ -307,6 +326,24 @@ def test_transcribe_to_text_accumulates_tokens(app_module, monkeypatch):
     transcriber.transcribe_to_text(make_audio(), "ru")
 
     assert transcriber.total_tokens == 15
+
+
+def test_transcribe_to_text_accumulates_qwen_total_tokens(app_module, monkeypatch):
+    """transcribe_to_text должен учитывать total_tokens от Qwen backend-а."""
+    transcriber = make_transcriber(app_module)
+    transcriber.total_tokens = 10
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "Текст", "segments": [], "total_tokens": 4},
+    )
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
+
+    transcriber.transcribe_to_text(make_audio(), "ru")
+
+    assert transcriber.total_tokens == 14
 
 
 def test_transcribe_to_text_filters_hallucination(app_module, monkeypatch):
