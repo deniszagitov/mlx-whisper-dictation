@@ -63,6 +63,7 @@ from src.infrastructure.permissions import (
     notify_user,
     permission_label,  # noqa: F401
     permission_preflight_status,  # noqa: F401
+    register_wake_observer,
     request_accessibility_permission,
     request_input_monitoring_permission,
     warn_missing_accessibility_permission,
@@ -319,6 +320,7 @@ def main() -> None:
     key_listener = hotkey_listener_factory.create_listener(app_controller)
     key_listener.start()
     app_controller.key_listener = key_listener
+    app_controller.wake_observer = register_wake_observer(app_controller.handle_system_wake)
 
     _log_startup_configuration(args)
     app.run()

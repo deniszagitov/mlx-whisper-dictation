@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, TypedDict
 
+from .audio import input_device_name_matches, normalize_input_device_name
 from .constants import Config
 from .hotkeys import format_hotkey_status, normalize_key_combination
 
@@ -380,6 +381,7 @@ class AppPreferences:
     performance_mode: str
     selected_language: str | None
     selected_input_device_index: int | None
+    selected_input_device_name: str | None
     show_recording_notification: bool
     show_recording_overlay: bool
 
@@ -403,6 +405,9 @@ class AppPreferences:
             ),
             selected_language=_coerce_optional_str(settings_store.load_str(Config.DEFAULTS_KEY_LANGUAGE, fallback=None)),
             selected_input_device_index=selected_input_device_index,
+            selected_input_device_name=_coerce_optional_str(
+                settings_store.load_str(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, fallback=None),
+            ),
             show_recording_notification=settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_NOTIFICATION, fallback=True),
             show_recording_overlay=settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_OVERLAY, fallback=True),
         )
@@ -424,7 +429,24 @@ class AppPreferences:
 
     def with_selected_input_device_index(self, device_index: object) -> AppPreferences:
         """Возвращает новый набор настроек с обновлённым микрофоном."""
-        return replace(self, selected_input_device_index=_coerce_optional_int(device_index))
+        normalized_index = _coerce_optional_int(device_index)
+        return replace(
+            self,
+            selected_input_device_index=normalized_index,
+            selected_input_device_name=None if normalized_index is None else self.selected_input_device_name,
+        )
+
+    def with_selected_input_device(self, device_index: object, device_name: object) -> AppPreferences:
+        """Возвращает новый набор настроек с обновлёнными индексом и именем микрофона."""
+        normalized_index = _coerce_optional_int(device_index)
+        normalized_name = normalize_input_device_name(device_name)
+        if normalized_index is None:
+            normalized_name = None
+        return replace(
+            self,
+            selected_input_device_index=normalized_index,
+            selected_input_device_name=normalized_name,
+        )
 
     def with_recording_notification(self, enabled: object) -> AppPreferences:
         """Возвращает новый набор настроек с обновлённым флагом уведомления."""
@@ -585,6 +607,7 @@ class MicrophoneProfile:
         self,
         *,
         input_device_index: int | None,
+        input_device_name: str | None,
         model_repo: str,
         language: str | None,
         max_time: int | float | None,
@@ -596,8 +619,12 @@ class MicrophoneProfile:
         llm_clipboard: bool,
     ) -> bool:
         """Сравнивает профиль с текущими runtime-настройками."""
+        device_matches = self.input_device_index == input_device_index
+        if not device_matches and self.input_device_name and input_device_name:
+            device_matches = input_device_name_matches(self.input_device_name, input_device_name)
+
         return (
-            self.input_device_index == input_device_index
+            device_matches
             and self.model_repo == model_repo
             and self.language == language
             and self.max_time == max_time

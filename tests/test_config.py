@@ -45,6 +45,10 @@ class FakeNSUserDefaults:
         """Эмулирует Objective-C API сохранения объекта по ключу."""
         self.saved_object = value
 
+    def removeObjectForKey_(self, key):
+        """Эмулирует Objective-C API удаления значения по ключу."""
+        self.object_values.pop(key, None)
+
 
 class FakeSettingsStore:
     """Фейковое key-value хранилище для конфигурационных объектов."""
@@ -91,7 +95,13 @@ class FakeSettingsStore:
     def load_input_device_index(self):
         return None
 
+    def load_input_device_name(self):
+        return None
+
     def save_input_device_index(self, _value):
+        return None
+
+    def save_input_device_name(self, _value):
         return None
 
     def remove_key(self, _key):
@@ -236,6 +246,7 @@ def test_app_preferences_reads_and_normalizes_store_values():
             Config.DEFAULTS_KEY_LLM_PROMPT: "Несуществующий промпт",
             Config.DEFAULTS_KEY_PERFORMANCE_MODE: "turbo",
             Config.DEFAULTS_KEY_LANGUAGE: "en",
+            Config.DEFAULTS_KEY_INPUT_DEVICE_NAME: "  USB Mic  ",
         },
         bool_values={
             Config.DEFAULTS_KEY_RECORDING_NOTIFICATION: False,
@@ -250,8 +261,36 @@ def test_app_preferences_reads_and_normalizes_store_values():
     assert preferences.performance_mode == Config.DEFAULT_PERFORMANCE_MODE
     assert preferences.selected_language == "en"
     assert preferences.selected_input_device_index == 7
+    assert preferences.selected_input_device_name == "USB Mic"
     assert preferences.show_recording_notification is False
     assert preferences.show_recording_overlay is True
+
+
+def test_defaults_save_input_device_name_removes_key_for_empty_value(monkeypatch):
+    """Пустое имя микрофона не должно сохраняться в NSUserDefaults."""
+    removed_keys: list[str] = []
+
+    class TrackingNSUserDefaults(FakeNSUserDefaults):
+        def removeObjectForKey_(self, key):
+            removed_keys.append(key)
+            super().removeObjectForKey_(key)
+
+    fake_defaults = TrackingNSUserDefaults()
+    install_defaults(monkeypatch, fake_defaults)
+    defaults = Defaults.__new__(Defaults)
+
+    defaults.save_input_device_name("   ")
+
+    assert removed_keys == [Config.DEFAULTS_KEY_INPUT_DEVICE_NAME]
+
+
+def test_defaults_load_input_device_name_normalizes_value(monkeypatch):
+    """Имя микрофона должно читаться из NSUserDefaults с trim-нормализацией."""
+    fake_defaults = FakeNSUserDefaults(object_values={Config.DEFAULTS_KEY_INPUT_DEVICE_NAME: "  Studio Mic  "})
+    install_defaults(monkeypatch, fake_defaults)
+    defaults = Defaults.__new__(Defaults)
+
+    assert defaults.load_input_device_name() == "Studio Mic"
 
 
 def test_transcriber_preferences_reads_typed_flags_and_token_count():

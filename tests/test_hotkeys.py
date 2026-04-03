@@ -808,6 +808,29 @@ class TestHotkeyDispatcher:
             "ctrl+alt+d",
         }
 
+    def test_on_system_wake_reenables_existing_tap(self, app_module, monkeypatch):
+        """После wake dispatcher должен включить существующий CGEventTap обратно."""
+        import Quartz as _quartz_mod  # noqa: N813
+
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher._event_tap = "fake_tap"
+        enabled_calls = []
+        monkeypatch.setattr(_quartz_mod, "CGEventTapEnable", lambda tap, enable: enabled_calls.append((tap, enable)))
+
+        dispatcher.on_system_wake()
+
+        assert enabled_calls == [("fake_tap", True)]
+
+    def test_on_system_wake_starts_tap_when_missing(self, app_module, monkeypatch):
+        """Если tap уже потерян, wake должен пересоздать dispatcher через start()."""
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        start_calls = []
+        monkeypatch.setattr(dispatcher, "start", lambda: start_calls.append(True))
+
+        dispatcher.on_system_wake()
+
+        assert start_calls == [True]
+
 
 class TestModifierConstants:
     """Тесты общих констант для клавиш-модификаторов."""

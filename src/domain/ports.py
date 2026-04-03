@@ -348,8 +348,16 @@ class SettingsStoreProtocol(Protocol):
         """Читает индекс микрофона."""
         ...
 
+    def load_input_device_name(self) -> str | None:
+        """Читает имя микрофона."""
+        ...
+
     def save_input_device_index(self, value: int | None) -> None:
         """Сохраняет индекс микрофона."""
+        ...
+
+    def save_input_device_name(self, value: str | None) -> None:
+        """Сохраняет имя микрофона."""
         ...
 
     def remove_key(self, key: str) -> None:

@@ -136,6 +136,7 @@ def make_runtime(*, overlay: FakeOverlay, notifications: list[tuple[str, str]]) 
         system_integration_service=SimpleNamespace(notify=notify),
         llm_downloading=False,
         llm_download_title="",
+        prepare_recording=lambda: True,
     )
 
 
@@ -261,6 +262,24 @@ def test_toggle_llm_processes_result_and_uses_clipboard_context() -> None:
     assert clipboard.writes == ["Hello, world!"]
     assert ("MLX Whisper Dictation", "Запись для LLM. Говорите.") in notifications
     assert ("MLX Whisper Dictation", "LLM-ответ скопирован в буфер обмена.") in notifications
+
+
+def test_toggle_llm_aborts_when_prepare_recording_fails() -> None:
+    """LLM-сценарий не должен стартовать, если preflight микрофона завершился неуспешно."""
+    notifications: list[tuple[str, str]] = []
+    overlay = FakeOverlay()
+    runtime = make_runtime(overlay=overlay, notifications=notifications)
+    runtime.prepare_recording = lambda: False
+
+    use_cases, recorder, _, _ = make_use_cases(runtime=runtime, llm_processor=FakeLlmProcessor())
+
+    use_cases.toggle_llm()
+
+    assert recorder.started is False
+    assert runtime.started is False
+    assert runtime.state == Config.STATUS_IDLE
+    assert overlay.show_calls == 0
+    assert notifications == []
 
 
 def test_toggle_llm_falls_back_to_clipboard_on_processing_error() -> None:

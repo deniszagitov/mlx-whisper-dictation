@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pyaudio
@@ -22,6 +22,10 @@ PERFORMANCE_MODE_NORMAL = "normal"
 PERFORMANCE_MODE_FAST = "fast"
 NORMAL_FRAMES_PER_BUFFER = 2048
 FAST_FRAMES_PER_BUFFER = 512
+DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_CHANNELS = 1
+RETRYABLE_AUDIO_ERROR_CODES = {-9998, -9996}
+PERMISSION_ERROR_CODES = {-9996}
 
 
 class Recorder:
@@ -34,6 +38,7 @@ class Recorder:
         self.status_callback: Callable[[str], None] | None = None
         self.permission_callback: Callable[[str, bool], None] | None = None
         self.error_callback: Callable[[str, str], None] | None = None
+        self.runtime_error_callback: Callable[[str, str], None] | None = None
         self.input_device_index: int | None = None
         self.input_device_name = "системный по умолчанию"
         self.performance_mode = PERFORMANCE_MODE_NORMAL
@@ -68,6 +73,15 @@ class Recorder:
         """Уведомляет внешний слой о runtime-ошибке записи."""
         if self.error_callback is not None:
             self.error_callback(title, message)
+
+    def set_runtime_error_callback(self, runtime_error_callback: Callable[[str, str], None]) -> None:
+        """Регистрирует callback для восстановления runtime-состояния после ошибки записи."""
+        self.runtime_error_callback = runtime_error_callback
+
+    def _notify_runtime_error(self, title: str, message: str) -> None:
+        """Уведомляет orchestration-слой о необходимости сбросить состояние записи."""
+        if self.runtime_error_callback is not None:
+            self.runtime_error_callback(title, message)
 
     def set_input_device(self, device_info: AudioDeviceInfo | None = None) -> None:
         """Сохраняет выбранное устройство ввода для последующей записи."""
@@ -118,6 +132,90 @@ class Recorder:
         if self._is_request_current(request_id):
             self._set_status(status)
 
+    def _audio_error_code(self, error: BaseException) -> int | None:
+        """Извлекает числовой код ошибки PortAudio/PyAudio, если он доступен."""
+        error_args = getattr(error, "args", ())
+        if not error_args:
+            return None
+        candidate = error_args[0]
+        if isinstance(candidate, int):
+            return candidate
+        if isinstance(candidate, str) and candidate.lstrip("-").isdigit():
+            return int(candidate)
+        return None
+
+    def _should_retry_with_default_device(self, error: BaseException) -> bool:
+        """Определяет, стоит ли повторить открытие потока через default input device."""
+        error_code = self._audio_error_code(error)
+        return self.input_device_index is not None and error_code in RETRYABLE_AUDIO_ERROR_CODES
+
+    def _can_open_stream(self, audio_interface: pyaudio.PyAudio, *, device_index: int | None) -> bool:
+        """Проверяет поддержку текущего аудиоформата до открытия stream."""
+        try:
+            return bool(
+                audio_interface.is_format_supported(
+                    DEFAULT_SAMPLE_RATE,
+                    input_device=device_index,
+                    input_channels=DEFAULT_CHANNELS,
+                    input_format=pyaudio.paInt16,
+                )
+            )
+        except ValueError as error:
+            LOGGER.warning(
+                "🎙️ Формат записи не поддерживается: input_device_index=%s, error=%s",
+                device_index,
+                error,
+            )
+            return False
+        except Exception:
+            LOGGER.warning(
+                "🎙️ Не удалось выполнить preflight формата записи: input_device_index=%s",
+                device_index,
+                exc_info=True,
+            )
+            return True
+
+    def _open_stream(self, audio_interface: pyaudio.PyAudio, *, frames_per_buffer: int) -> Any:
+        """Открывает поток записи, при необходимости повторяя попытку через default input."""
+        requested_device_index = self.input_device_index
+        open_kwargs = {
+            "format": pyaudio.paInt16,
+            "channels": DEFAULT_CHANNELS,
+            "rate": DEFAULT_SAMPLE_RATE,
+            "frames_per_buffer": frames_per_buffer,
+            "input": True,
+            "input_device_index": requested_device_index,
+        }
+
+        LOGGER.info(
+            "🎙️ Открываю поток записи: input_device_index=%s, input_device_name=%s",
+            requested_device_index,
+            self.input_device_name,
+        )
+
+        if not self._can_open_stream(audio_interface, device_index=requested_device_index):
+            raise OSError(-9998, "Invalid number of channels")
+
+        try:
+            return audio_interface.open(**open_kwargs)
+        except OSError as error:
+            if not self._should_retry_with_default_device(error):
+                raise
+
+            LOGGER.warning(
+                "🎙️ Поток не открылся для выбранного микрофона, повторяю через системный default: index=%s, name=%s, error=%s",
+                requested_device_index,
+                self.input_device_name,
+                error,
+            )
+            open_kwargs["input_device_index"] = None
+            if not self._can_open_stream(audio_interface, device_index=None):
+                raise
+            stream = audio_interface.open(**open_kwargs)
+            self.input_device_index = None
+            self.input_device_name = "системный по умолчанию"
+            return stream
+
     def _record_impl(self, language: str | None, request_id: int, on_audio_ready: Callable[..., None] | None = None) -> None:
         """Выполняет запись, конвертацию аудио и запуск распознавания."""
         self.recording = True
@@ -128,37 +226,33 @@ class Recorder:
         frames = []
 
         try:
-            LOGGER.info(
-                "🎙️ Открываю поток записи: input_device_index=%s, input_device_name=%s",
-                self.input_device_index,
-                self.input_device_name,
-            )
-            stream = audio_interface.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=16000,
-                frames_per_buffer=frames_per_buffer,
-                input=True,
-                input_device_index=self.input_device_index,
-            )
+            stream = self._open_stream(audio_interface, frames_per_buffer=frames_per_buffer)
             self._set_permission_status("microphone", True)
 
             while self.recording:
                 data = stream.read(frames_per_buffer, exception_on_overflow=False)
                 frames.append(data)
-        except Exception:
-            self._set_permission_status("microphone", False)
+        except Exception as error:
+            self.recording = False
+            self.cancelled = False
+            if self._audio_error_code(error) in PERMISSION_ERROR_CODES:
+                self._set_permission_status("microphone", False)
             LOGGER.exception("❌ Ошибка записи")
-            self._notify_error(
-                "MLX Whisper Dictation",
-                "Ошибка записи с микрофона. Смотрите stderr.log.",
-            )
+            message = "Ошибка записи с микрофона. Смотрите stderr.log."
+            if self._audio_error_code(error) in RETRYABLE_AUDIO_ERROR_CODES:
+                message = (
+                    "После сна macOS аудиоустройство стало недоступно или сменило конфигурацию. "
+                    "Список микрофонов обновлён, попробуйте начать запись ещё раз."
+                )
+            self._notify_error("MLX Whisper Dictation", message)
+            self._notify_runtime_error("MLX Whisper Dictation", message)
             return
         finally:
             if stream is not None:
                 stream.stop_stream()
                 stream.close()
             audio_interface.terminate()
+            self.recording = False
 
         if not frames:
             LOGGER.warning("⚠️ Запись остановлена без захваченных аудиофреймов")

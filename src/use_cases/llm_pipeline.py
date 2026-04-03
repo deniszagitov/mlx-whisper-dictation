@@ -57,6 +57,9 @@ class LlmPipelineUseCases:
             self.download_llm_model()
             return
 
+        if not self.runtime.prepare_recording():
+            return
+
         LOGGER.info("🤖 Запуск LLM-пайплайна, промпт=%r", self.runtime.llm_prompt_name)
         self.runtime.state = Config.STATUS_RECORDING
         if self.runtime.show_recording_notification:

@@ -96,9 +96,29 @@ class Defaults:
         index = int(defaults.integerForKey_(Config.DEFAULTS_KEY_INPUT_DEVICE_INDEX))
         return None if index < 0 else index
 
+    def load_input_device_name(self) -> str | None:
+        """Читает имя сохранённого микрофона из NSUserDefaults."""
+        defaults = NSUserDefaults.standardUserDefaults()
+        value = defaults.objectForKey_(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME)
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
     def save_input_device_index(self, value: int | None) -> None:
         """Сохраняет индекс выбранного микрофона в NSUserDefaults."""
         self.save_int(Config.DEFAULTS_KEY_INPUT_DEVICE_INDEX, -1 if value is None else value)
+
+    def save_input_device_name(self, value: str | None) -> None:
+        """Сохраняет имя выбранного микрофона в NSUserDefaults."""
+        if value is None:
+            self.remove_key(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME)
+            return
+        normalized = str(value).strip()
+        if not normalized:
+            self.remove_key(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME)
+            return
+        self.save_str(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, normalized)
 
     def remove_key(self, key: str) -> None:
         """Удаляет ключ из NSUserDefaults."""

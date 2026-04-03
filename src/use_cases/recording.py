@@ -38,6 +38,9 @@ class RecordingUseCases:
 
     def start_recording(self) -> None:
         """Запускает обычный сценарий записи и распознавания."""
+        if not self.runtime.prepare_recording():
+            return
+
         LOGGER.info("🎙️ Запись началась")
         self.runtime.state = Config.STATUS_RECORDING
         if self.runtime.show_recording_notification:

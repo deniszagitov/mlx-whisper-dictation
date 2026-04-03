@@ -11,7 +11,14 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .domain.audio import microphone_menu_title as format_microphone_menu_title
+from .domain.audio import (
+    input_device_name_matches,
+    normalize_input_device_name,
+    resolve_input_device,
+)
+from .domain.audio import (
+    microphone_menu_title as format_microphone_menu_title,
+)
 from .domain.constants import Config
 from .domain.types import AppPreferences, AppSnapshot, LaunchConfig, MicrophoneProfile
 from .use_cases.hotkey_management import HotkeyManagementUseCases
@@ -213,9 +220,28 @@ class _InMemorySettingsStore:
         value = self._values.get(Config.DEFAULTS_KEY_INPUT_DEVICE_INDEX)
         return value if isinstance(value, int) else None
 
+    def load_input_device_name(self) -> str | None:
+        """Читает имя микрофона."""
+        value = self._values.get(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME)
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
     def save_input_device_index(self, value: int | None) -> None:
         """Сохраняет индекс микрофона."""
         self._values[Config.DEFAULTS_KEY_INPUT_DEVICE_INDEX] = value
+
+    def save_input_device_name(self, value: str | None) -> None:
+        """Сохраняет имя микрофона."""
+        if value is None:
+            self._values.pop(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, None)
+            return
+        normalized = str(value).strip()
+        if not normalized:
+            self._values.pop(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, None)
+            return
+        self._values[Config.DEFAULTS_KEY_INPUT_DEVICE_NAME] = normalized
 
     def remove_key(self, key: str) -> None:
         """Удаляет ключ из хранилища."""
@@ -279,23 +305,13 @@ class DictationApp:
             self.max_time_options.insert(0, self.launch_config.max_time)
 
         self.model_name = self.launch_config.model.rsplit("/", maxsplit=1)[-1]
-        self.input_devices = self.input_device_catalog.list_input_devices()
+        self.input_devices: list[AudioDeviceInfo] = []
         initial_language = self.languages[0] if self.languages is not None else None
         if self.languages is not None and self.app_preferences.selected_language in self.languages:
             initial_language = self.app_preferences.selected_language
         self.current_language = initial_language
-
-        self.current_input_device = next((device for device in self.input_devices if device["is_default"]), None)
-        saved_input_device_index = self.app_preferences.selected_input_device_index
-        if saved_input_device_index is not None:
-            saved_input_device = next(
-                (device for device in self.input_devices if device["index"] == saved_input_device_index),
-                None,
-            )
-            if saved_input_device is not None:
-                self.current_input_device = saved_input_device
-        if self.current_input_device is None and self.input_devices:
-            self.current_input_device = self.input_devices[0]
+        self.current_input_device: AudioDeviceInfo | None = None
+        self.refresh_input_devices(publish_snapshot=False)
 
         self.state = Config.STATUS_IDLE
         self.permission_status = {
@@ -313,7 +329,10 @@ class DictationApp:
         self.start_time = 0.0
         self.elapsed_time = 0
         self.key_listener: Any = None
+        self.wake_observer: Any = None
         self._llm_downloading = False
+        self._preferred_input_device_unavailable = False
+        self._preferred_input_device_notified = False
 
         llm_cached = self.llm_processor.is_model_cached() if self.llm_processor is not None else False
         self._llm_download_title = "✅ LLM-модель загружена" if llm_cached else "📥 Скачать LLM-модель…"
@@ -365,11 +384,12 @@ class DictationApp:
             publish_snapshot=self._notify_subscribers,
         )
 
-        self.recorder.set_input_device(self.current_input_device)
         if hasattr(self.recorder, "set_performance_mode"):
             self.recorder.set_performance_mode(self.performance_mode)
         if hasattr(self.recorder, "set_error_callback"):
             self.recorder.set_error_callback(self.system_integration_service.notify)
+        if hasattr(self.recorder, "set_runtime_error_callback"):
+            self.recorder.set_runtime_error_callback(self.handle_recording_runtime_error)
         if self.llm_processor is not None:
             self.llm_processor.set_performance_mode(self.performance_mode)
         self.recorder.set_status_callback(self.set_state)
@@ -377,6 +397,197 @@ class DictationApp:
         self.transcriber.history_callback = self._notify_subscribers
         self.transcriber.token_usage_callback = self._notify_subscribers
         self._refresh_hotkey_statuses()
+
+    def _save_input_device_name_preference(self, device_name: str | None) -> None:
+        """Сохраняет предпочитаемое имя микрофона в настройках."""
+        normalized_name = normalize_input_device_name(device_name)
+        if normalized_name is None:
+            self.settings_store.remove_key(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME)
+            return
+        self.settings_store.save_str(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, normalized_name)
+
+    def _persist_selected_input_device_preference(self, device: AudioDeviceInfo | None) -> None:
+        """Сохраняет пользовательское предпочтение по микрофону."""
+        preferred_index = None if device is None else int(device["index"])
+        preferred_name = None if device is None else str(device.get("name") or "")
+        self.app_preferences = self.app_preferences.with_selected_input_device(preferred_index, preferred_name)
+        self.settings_store.save_input_device_index(preferred_index)
+        self._save_input_device_name_preference(preferred_name)
+
+    def _same_input_device(self, left: AudioDeviceInfo | None, right: AudioDeviceInfo | None) -> bool:
+        """Сравнивает устройства по индексу и имени, учитывая переиндексацию после sleep."""
+        if left is right:
+            return True
+        if left is None or right is None:
+            return False
+        if input_device_name_matches(left.get("name"), right.get("name")):
+            return True
+        return int(left["index"]) == int(right["index"])
+
+    def _select_runtime_input_device(self, device: AudioDeviceInfo | None) -> None:
+        """Применяет текущее активное устройство ввода без смены пользовательского предпочтения."""
+        self.current_input_device = device
+        self.recorder.set_input_device(device)
+
+    def _resolve_input_device(
+        self,
+        *,
+        preferred_index: int | None = None,
+        preferred_name: str | None = None,
+        fallback_to_default: bool = True,
+        fallback_to_first: bool = True,
+    ) -> tuple[AudioDeviceInfo | None, str]:
+        """Подбирает устройство на основании текущего каталога и заданных предпочтений."""
+        return resolve_input_device(
+            self.input_devices,
+            preferred_index=preferred_index,
+            preferred_name=preferred_name,
+            fallback_to_default=fallback_to_default,
+            fallback_to_first=fallback_to_first,
+        )
+
+    def refresh_input_devices(self, *, publish_snapshot: bool = True, notify: bool = False) -> bool:
+        """Обновляет каталог микрофонов и восстанавливает лучший доступный input device."""
+        previous_device = self.current_input_device
+        try:
+            devices = list(self.input_device_catalog.list_input_devices())
+        except Exception:
+            LOGGER.exception("❌ Не удалось обновить список устройств ввода")
+            devices = list(self.input_devices)
+
+        preferred_index = self.app_preferences.selected_input_device_index
+        preferred_name = self.app_preferences.selected_input_device_name
+        if preferred_index is None and preferred_name is None and previous_device is not None:
+            preferred_index = int(previous_device["index"])
+            preferred_name = str(previous_device.get("name") or "")
+
+        self.input_devices = devices
+        resolved_device, resolution = self._resolve_input_device(
+            preferred_index=preferred_index,
+            preferred_name=preferred_name,
+        )
+        self._select_runtime_input_device(resolved_device)
+
+        has_saved_preference = (
+            self.app_preferences.selected_input_device_index is not None
+            or self.app_preferences.selected_input_device_name is not None
+        )
+        self._preferred_input_device_unavailable = bool(
+            has_saved_preference and resolution in {"default", "first", "none"}
+        )
+        if not self._preferred_input_device_unavailable:
+            self._preferred_input_device_notified = False
+
+        if (
+            resolved_device is not None
+            and has_saved_preference
+            and resolution in {"exact", "index", "name"}
+            and (
+                self.app_preferences.selected_input_device_index != int(resolved_device["index"])
+                or not input_device_name_matches(
+                    self.app_preferences.selected_input_device_name,
+                    resolved_device.get("name"),
+                )
+            )
+        ):
+            self._persist_selected_input_device_preference(resolved_device)
+
+        device_changed = not self._same_input_device(previous_device, resolved_device)
+        LOGGER.info(
+            "🎙️ Обновлен список микрофонов: count=%s, resolution=%s, preferred_index=%s, preferred_name=%s, active_index=%s, active_name=%s",
+            len(devices),
+            resolution,
+            self.app_preferences.selected_input_device_index,
+            self.app_preferences.selected_input_device_name,
+            None if resolved_device is None else resolved_device["index"],
+            None if resolved_device is None else resolved_device.get("name"),
+        )
+
+        if notify:
+            if resolved_device is None:
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    "После пробуждения не найден ни один доступный микрофон. Проверьте подключение устройства и доступ к Microphone.",
+                )
+            elif (
+                device_changed
+                and has_saved_preference
+                and resolution in {"default", "first"}
+            ):
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    f"Выбранный микрофон временно недоступен. Переключаюсь на: {resolved_device['name']}",
+                )
+                self._preferred_input_device_notified = True
+
+        if publish_snapshot and hasattr(self, "_subscribers"):
+            self._notify_subscribers()
+        return device_changed
+
+    def prepare_recording(self) -> bool:
+        """Проверяет и обновляет аудиоустройства перед стартом новой записи."""
+        self.refresh_input_devices(publish_snapshot=False, notify=True)
+        if (
+            self.current_input_device is not None
+            and self._preferred_input_device_unavailable
+            and not self._preferred_input_device_notified
+        ):
+            self.system_integration_service.notify(
+                "MLX Whisper Dictation",
+                f"Выбранный микрофон временно недоступен. Переключаюсь на: {self.current_input_device['name']}",
+            )
+            self._preferred_input_device_notified = True
+        if self.current_input_device is not None:
+            return True
+
+        LOGGER.error("🎙️ Невозможно начать запись: нет доступного микрофона")
+        self.started = False
+        self.state = Config.STATUS_IDLE
+        self.recording_overlay.hide()
+        self.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            "Не найден доступный микрофон. Проверьте устройство, разрешение Microphone и при необходимости переподключите аудио-интерфейс.",
+        )
+        self._notify_subscribers()
+        return False
+
+    def handle_recording_runtime_error(self, _title: str, _message: str) -> None:
+        """Сбрасывает runtime-состояние после ошибки открытия или чтения микрофона."""
+        LOGGER.warning("🎙️ Сбрасываю состояние приложения после ошибки записи")
+        self.started = False
+        self.state = Config.STATUS_IDLE
+        self.recording_overlay.hide()
+        self.refresh_input_devices(publish_snapshot=False)
+        self._notify_subscribers()
+
+    def handle_system_wake(self) -> None:
+        """Восстанавливает аудио и хоткеи после выхода macOS из sleep."""
+        LOGGER.info("💤 macOS вышла из сна, обновляю аудио- и hotkey-runtime")
+        if self.started:
+            LOGGER.warning("🎙️ Активная запись прервана после sleep/wake, отменяю текущую сессию")
+            self.recorder.cancel()
+            self.started = False
+            self.state = Config.STATUS_IDLE
+            self.recording_overlay.hide()
+
+        self.permission_status["accessibility"] = self.system_integration_service.get_accessibility_status()
+        self.permission_status["input_monitoring"] = self.system_integration_service.get_input_monitoring_status()
+        self.refresh_input_devices(publish_snapshot=False, notify=True)
+
+        listener = self.key_listener
+        if hasattr(listener, "on_system_wake"):
+            try:
+                listener.on_system_wake()
+            except Exception:
+                LOGGER.exception("⌨️ Не удалось восстановить hotkey-listener после wake")
+        elif hasattr(listener, "stop") and hasattr(listener, "start"):
+            try:
+                listener.stop()
+                listener.start()
+            except Exception:
+                LOGGER.exception("⌨️ Не удалось перезапустить hotkey-listener после wake")
+
+        self._notify_subscribers()
 
     @property
     def paste_cgevent_enabled(self) -> bool:

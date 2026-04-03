@@ -267,3 +267,105 @@ class TestRecorderCancel:
 
         assert recorder.cancelled is False
         assert recorder.recording is False
+
+
+class TestRecorderRecovery:
+    """Тесты восстановления Recorder после ошибок sleep/wake и смены устройства."""
+
+    def test_record_impl_retries_with_default_input_on_invalid_channel_count(self, app_module, monkeypatch):
+        """При -9998 для выбранного микрофона Recorder должен повторить open() через default device."""
+        open_calls: list[object] = []
+        status_updates: list[object] = []
+
+        class FakeStream:
+            def __init__(self, recorder):
+                self._recorder = recorder
+
+            def read(self, _frames_per_buffer, exception_on_overflow=False):
+                self._recorder.recording = False
+                return (b"\x00\x00") * 4
+
+            def stop_stream(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakePyAudio:
+            def is_format_supported(self, *args, **kwargs):
+                return True
+
+            def open(self, **kwargs):
+                open_calls.append(kwargs.get("input_device_index"))
+                if kwargs.get("input_device_index") == 7:
+                    raise OSError(-9998, "Invalid number of channels")
+                return FakeStream(recorder)
+
+            def terminate(self):
+                return None
+
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
+
+        recorder = app_module.Recorder()
+        recorder.set_status_callback(status_updates.append)
+        recorder.set_input_device({"index": 7, "name": "USB Mic"})
+
+        recorder._record_impl(language="ru", request_id=recorder._begin_request(), on_audio_ready=lambda *_args: None)
+
+        assert open_calls == [7, None]
+        assert recorder.input_device_index is None
+        assert recorder.input_device_name == "системный по умолчанию"
+        assert status_updates[-2:] == [app_module.Config.STATUS_TRANSCRIBING, app_module.Config.STATUS_IDLE]
+
+    def test_record_impl_notifies_runtime_error_without_marking_permission_denied_for_retryable_error(self, app_module, monkeypatch):
+        """Retryable audio error после sleep не должен маскироваться под отказ Microphone-разрешения."""
+        permission_updates: list[tuple[str, bool]] = []
+        ui_errors: list[tuple[str, str]] = []
+        runtime_errors: list[tuple[str, str]] = []
+
+        class FakePyAudio:
+            def is_format_supported(self, *args, **kwargs):
+                return True
+
+            def open(self, **kwargs):
+                raise OSError(-9998, "Invalid number of channels")
+
+            def terminate(self):
+                return None
+
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
+
+        recorder = app_module.Recorder()
+        recorder.set_permission_callback(lambda name, status: permission_updates.append((name, status)))
+        recorder.set_error_callback(lambda title, message: ui_errors.append((title, message)))
+        recorder.set_runtime_error_callback(lambda title, message: runtime_errors.append((title, message)))
+        recorder.set_input_device({"index": 7, "name": "USB Mic"})
+
+        recorder._record_impl(language="ru", request_id=recorder._begin_request(), on_audio_ready=None)
+
+        assert permission_updates == []
+        assert runtime_errors == ui_errors
+        assert "После сна macOS" in ui_errors[0][1]
+
+    def test_record_impl_marks_permission_denied_for_regular_open_error(self, app_module, monkeypatch):
+        """Нерetryable ошибка открытия потока по-прежнему должна помечать Microphone как недоступный."""
+        permission_updates: list[tuple[str, bool]] = []
+
+        class FakePyAudio:
+            def is_format_supported(self, *args, **kwargs):
+                return True
+
+            def open(self, **kwargs):
+                raise OSError(-9996, "Invalid input device")
+
+            def terminate(self):
+                return None
+
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
+
+        recorder = app_module.Recorder()
+        recorder.set_permission_callback(lambda name, status: permission_updates.append((name, status)))
+
+        recorder._record_impl(language="ru", request_id=recorder._begin_request(), on_audio_ready=None)
+
+        assert permission_updates == [("microphone", False)]

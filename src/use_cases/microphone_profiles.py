@@ -38,6 +38,7 @@ class MicrophoneProfilesUseCases:
         """Проверяет, соответствует ли профиль текущим runtime-настройкам."""
         return profile.matches_runtime(
             input_device_index=self._active_input_device_index(),
+            input_device_name=self._active_input_device_name(),
             model_repo=self.runtime.model_repo,
             language=self.runtime.current_language,
             max_time=self.runtime.max_time,
@@ -84,9 +85,12 @@ class MicrophoneProfilesUseCases:
         if profile is None:
             return
 
-        selected_device = next(
-            (device for device in self.runtime.input_devices if device["index"] == profile.input_device_index),
-            None,
+        self.runtime.refresh_input_devices(publish_snapshot=False)
+        selected_device, resolution = self.runtime._resolve_input_device(
+            preferred_index=profile.input_device_index,
+            preferred_name=profile.input_device_name,
+            fallback_to_default=False,
+            fallback_to_first=False,
         )
         if selected_device is None:
             self.runtime.system_integration_service.notify(
@@ -95,10 +99,15 @@ class MicrophoneProfilesUseCases:
             )
             return
 
-        self.runtime.current_input_device = selected_device
-        self.runtime.app_preferences = self.runtime.app_preferences.with_selected_input_device_index(selected_device["index"])
-        self.recorder.set_input_device(selected_device)
-        self.settings_store.save_input_device_index(selected_device["index"])
+        self.runtime._select_runtime_input_device(selected_device)
+        self.runtime._persist_selected_input_device_preference(selected_device)
+        LOGGER.info(
+            "🎚 Подобран микрофон для профиля: profile=%s, resolution=%s, index=%s, name=%s",
+            profile.name,
+            resolution,
+            selected_device["index"],
+            selected_device["name"],
+        )
 
         self.runtime.model_repo = profile.model_repo
         self.transcriber.model_name = self.runtime.model_repo
@@ -156,6 +165,13 @@ class MicrophoneProfilesUseCases:
         if self.runtime.current_input_device is None:
             return None
         return int(self.runtime.current_input_device["index"])
+
+    def _active_input_device_name(self) -> str | None:
+        """Возвращает имя текущего микрофона."""
+        if self.runtime.current_input_device is None:
+            return None
+        name = str(self.runtime.current_input_device.get("name") or "").strip()
+        return name or None
 
     def _unique_microphone_profile_name(self, base_name: str) -> str:
         """Нормализует и делает имя профиля уникальным."""

@@ -44,3 +44,50 @@ class TestPermissionPreflightStatus:
         """is_accessibility_trusted должен вернуть True или False."""
         result = app_module.is_accessibility_trusted()
         assert isinstance(result, bool)
+
+
+class TestWakeObserver:
+    """Тесты регистрации observer пробуждения macOS."""
+
+    def test_register_wake_observer_subscribes_notification_center(self, app_module, monkeypatch):
+        """register_wake_observer должен подписаться на NSWorkspaceDidWakeNotification."""
+        import src.infrastructure.permissions as permissions_module
+
+        added_calls = []
+
+        def shared_workspace():
+            return FakeWorkspace()
+
+        class FakeCenter:
+            def addObserver_selector_name_object_(self, observer, selector, name, obj):
+                added_calls.append((observer, selector, name, obj))
+
+        class FakeWorkspace:
+            def notificationCenter(self):
+                return FakeCenter()
+
+        monkeypatch.setattr(permissions_module.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            permissions_module.AppKit,
+            "NSWorkspace",
+            type("WorkspaceStub", (), {"sharedWorkspace": staticmethod(shared_workspace)}),
+        )
+        monkeypatch.setattr(permissions_module.AppKit, "NSWorkspaceDidWakeNotification", "wake")
+
+        observer = permissions_module.register_wake_observer(lambda: None)
+
+        assert observer is not None
+        assert len(added_calls) == 1
+        assert added_calls[0][1] == b"handleWake:"
+        assert added_calls[0][2] == "wake"
+
+    def test_workspace_observer_calls_python_callback(self, app_module):
+        """Objective-C observer должен пробрасывать wake в Python callback."""
+        import src.infrastructure.permissions as permissions_module
+
+        calls = []
+        observer = permissions_module._WorkspaceWakeObserver.observerWithCallback_(lambda: calls.append(True))
+
+        observer.handleWake_(None)
+
+        assert calls == [True]

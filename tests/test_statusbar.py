@@ -28,6 +28,7 @@ class FakeRecorder:
         self.last_on_audio_ready = None
         self.input_device: Any = None
         self.performance_mode: object = None
+        self.runtime_error_callback = None
 
     def set_status_callback(self, callback):
         """Сохраняет callback статуса."""
@@ -44,6 +45,10 @@ class FakeRecorder:
     def set_performance_mode(self, performance_mode):
         """Сохраняет выбранный режим производительности."""
         self.performance_mode = performance_mode
+
+    def set_runtime_error_callback(self, callback):
+        """Сохраняет callback сброса runtime после ошибки записи."""
+        self.runtime_error_callback = callback
 
     def start(self, language=None, on_audio_ready=None):
         """Имитирует начало записи."""
@@ -100,6 +105,10 @@ class FakeSettingsStore:
         """Не выбирает сохранённый микрофон."""
         return None
 
+    def load_input_device_name(self):
+        """Не выбирает сохранённый микрофон по имени."""
+        return None
+
     def save_str(self, _key, _value):
         """Игнорирует сохранение строковых настроек."""
         return None
@@ -114,6 +123,10 @@ class FakeSettingsStore:
 
     def save_input_device_index(self, _value):
         """Игнорирует сохранение индекса микрофона."""
+        return None
+
+    def save_input_device_name(self, _value):
+        """Игнорирует сохранение имени микрофона."""
         return None
 
     def remove_key(self, _key):

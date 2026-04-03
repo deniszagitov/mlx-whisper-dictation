@@ -60,6 +60,7 @@ class Config:
     DEFAULTS_KEY_MODEL = "selected_model"
     DEFAULTS_KEY_LANGUAGE = "selected_language"
     DEFAULTS_KEY_INPUT_DEVICE_INDEX = "input_device_index"
+    DEFAULTS_KEY_INPUT_DEVICE_NAME = "input_device_name"
     DEFAULTS_KEY_MAX_TIME = "max_recording_seconds"
     DEFAULTS_KEY_PRIMARY_HOTKEY = "primary_hotkey"
     DEFAULTS_KEY_SECONDARY_HOTKEY = "secondary_hotkey"
@@ -136,4 +137,3 @@ class Config:
         if performance_mode in Config.PERFORMANCE_MODE_LABELS:
             return str(performance_mode)
         return Config.DEFAULT_PERFORMANCE_MODE
-

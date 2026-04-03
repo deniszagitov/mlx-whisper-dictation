@@ -7,6 +7,8 @@
 import ctypes
 import logging
 import platform
+from collections.abc import Callable
+from typing import Any, cast
 
 import AppKit
 import objc
@@ -17,6 +19,29 @@ from Foundation import NSURL, NSDictionary
 from ..domain.constants import Config
 
 LOGGER = logging.getLogger(__name__)
+
+
+class _WorkspaceWakeObserver(AppKit.NSObject):  # type: ignore[misc]
+    """Observer NSWorkspaceDidWakeNotification для Python-callback."""
+
+    callback = objc.ivar()
+
+    @classmethod
+    def observerWithCallback_(cls, callback: Callable[[], None]) -> Any:  # noqa: N802
+        """Создаёт observer и удерживает Python-callback."""
+        observer = cast("Any", cls.alloc().init())
+        observer.callback = callback
+        return observer
+
+    def handleWake_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает событие wake во внешний callback."""
+        callback = cast("Callable[[], None] | None", getattr(self, "callback", None))
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            LOGGER.exception("❌ Ошибка в обработчике пробуждения системы")
 
 
 def notify_user(title: str, message: str) -> None:
@@ -43,6 +68,33 @@ def open_system_settings(url: str) -> bool:
     except Exception:
         LOGGER.exception("❌ Не удалось открыть System Settings: %s", url)
         return False
+
+
+def register_wake_observer(on_wake_callback: Callable[[], None]) -> Any:
+    """Регистрирует observer события пробуждения macOS из sleep."""
+    if platform.system() != "Darwin":
+        return None
+
+    try:
+        workspace = AppKit.NSWorkspace.sharedWorkspace()
+        notification_center = workspace.notificationCenter()
+        notification_name = getattr(AppKit, "NSWorkspaceDidWakeNotification", None)
+        if notification_center is None or notification_name is None:
+            LOGGER.warning("⚠️ NSWorkspaceDidWakeNotification недоступно")
+            return None
+
+        observer = _WorkspaceWakeObserver.observerWithCallback_(on_wake_callback)
+        notification_center.addObserver_selector_name_object_(
+            observer,
+            b"handleWake:",
+            notification_name,
+            None,
+        )
+    except Exception:
+        LOGGER.exception("❌ Не удалось зарегистрировать observer пробуждения системы")
+        return None
+    LOGGER.info("💤 Зарегистрирован observer пробуждения системы")
+    return observer
 
 
 def frontmost_application_info() -> dict[str, str | int] | None:

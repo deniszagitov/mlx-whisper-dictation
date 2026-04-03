@@ -33,24 +33,23 @@ class SettingsUseCases:
 
     def change_input_device(self, device_index: int | None) -> None:
         """Переключает активное устройство ввода по индексу."""
+        self.runtime.refresh_input_devices(publish_snapshot=False)
         selected_device = None
         if device_index is not None:
             selected_device = next((device for device in self.runtime.input_devices if device["index"] == device_index), None)
             if selected_device is None or selected_device == self.runtime.current_input_device:
                 return
 
-        self.runtime.current_input_device = selected_device
-        self.runtime.app_preferences = self.runtime.app_preferences.with_selected_input_device_index(
-            None if selected_device is None else selected_device["index"],
-        )
-        self.recorder.set_input_device(selected_device)
-        self.settings_store.save_input_device_index(None if selected_device is None else selected_device["index"])
+        self.runtime._select_runtime_input_device(selected_device)
+        self.runtime._persist_selected_input_device_preference(selected_device)
         if selected_device is not None:
             LOGGER.info(
                 "🎙️ Выбран микрофон: index=%s, name=%s",
                 selected_device["index"],
                 selected_device["name"],
             )
+        else:
+            LOGGER.info("🎙️ Сброшен выбор микрофона: использую системный по умолчанию")
         self.publish_snapshot()
 
     def change_language(self, language: str | None) -> None:

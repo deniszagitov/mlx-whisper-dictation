@@ -103,8 +103,25 @@ class _InMemorySettingsStore:
         value = self._values.get(Config.DEFAULTS_KEY_INPUT_DEVICE_INDEX)
         return value if isinstance(value, int) else None
 
+    def load_input_device_name(self) -> str | None:
+        value = self._values.get(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME)
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
     def save_input_device_index(self, value: int | None) -> None:
         self._values[Config.DEFAULTS_KEY_INPUT_DEVICE_INDEX] = value
+
+    def save_input_device_name(self, value: str | None) -> None:
+        if value is None:
+            self._values.pop(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, None)
+            return
+        normalized = str(value).strip()
+        if not normalized:
+            self._values.pop(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, None)
+            return
+        self._values[Config.DEFAULTS_KEY_INPUT_DEVICE_NAME] = normalized
 
     def remove_key(self, key: str) -> None:
         self._values.pop(key, None)

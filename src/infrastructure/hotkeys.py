@@ -273,6 +273,21 @@ class HotkeyDispatcher:
         self._tap_run_loop = None
         self._reset_runtime_state()
 
+    def on_system_wake(self) -> None:
+        """Восстанавливает CGEventTap после выхода системы из sleep."""
+        LOGGER.info("⌨️ Восстанавливаю CGEventTap после wake")
+        self._reset_runtime_state()
+        if self._event_tap is None:
+            self.start()
+            return
+
+        try:
+            Quartz.CGEventTapEnable(self._event_tap, True)
+        except Exception:
+            LOGGER.exception("⌨️ Не удалось включить старый CGEventTap, пересоздаю dispatcher")
+            self.stop()
+            self.start()
+
     def update_hotkeys(self, primary: str, secondary: str, llm: str) -> None:
         """Обновляет набор активных хоткеев без пересоздания dispatcher-а."""
         self._bindings = []
@@ -553,4 +568,9 @@ class MultiHotkeyListener:
         """Пересобирает тестовый набор вложенных listener-ов."""
         self.stop()
         self._build_listeners(key_combinations)
+        self.start()
+
+    def on_system_wake(self) -> None:
+        """Перезапускает тестовые listener-ы после выхода системы из sleep."""
+        self.stop()
         self.start()
