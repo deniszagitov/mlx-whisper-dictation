@@ -426,6 +426,9 @@ class HotkeyDispatcher:
             return cg_event
 
         if event_type == Quartz.kCGEventTapDisabledByUserInput:
+            LOGGER.warning("⌨️ CGEventTap отключён системой, включаем обратно")
+            if self._event_tap is not None:
+                Quartz.CGEventTapEnable(self._event_tap, True)
             return cg_event
 
         ns_event = self._ns_event_from_cgevent(cg_event)
@@ -525,6 +528,8 @@ class GlobalKeyListener:
                 Quartz.CGEventTapEnable(self._event_tap, True)
             return cg_event
         if event_type == Quartz.kCGEventTapDisabledByUserInput:
+            if self._event_tap is not None:
+                Quartz.CGEventTapEnable(self._event_tap, True)
             return cg_event
         ns_event = self._ns_event_from_cgevent(cg_event)
         if ns_event is None:

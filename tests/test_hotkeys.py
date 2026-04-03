@@ -693,6 +693,22 @@ class TestCGEventTapCallback:
         assert result is sentinel
         assert enabled_calls == [("fake_tap", True)]
 
+    def test_reenables_tap_on_user_input_disable(self, app_module, monkeypatch):
+        """При kCGEventTapDisabledByUserInput callback должен вернуть tap в рабочее состояние."""
+        import Quartz as _quartz_mod  # noqa: N813
+
+        fake_app = self._make_fake_app()
+        listener = app_module.GlobalKeyListener(fake_app, "ctrl+alt+t")
+        listener._event_tap = "fake_tap"
+
+        enabled_calls = []
+        monkeypatch.setattr(_quartz_mod, "CGEventTapEnable", lambda tap, enable: enabled_calls.append((tap, enable)))
+
+        sentinel = object()
+        result = listener._cgevent_tap_callback(None, _quartz_mod.kCGEventTapDisabledByUserInput, sentinel, None)
+        assert result is sentinel
+        assert enabled_calls == [("fake_tap", True)]
+
     def test_returns_cgevent_when_ns_event_conversion_fails(self, app_module):
         """Если конвертация CGEvent → NSEvent не удалась, возвращаем cg_event."""
         fake_app = self._make_fake_app()
@@ -830,6 +846,21 @@ class TestHotkeyDispatcher:
         dispatcher.on_system_wake()
 
         assert start_calls == [True]
+
+    def test_callback_reenables_tap_on_user_input_disable(self, app_module, monkeypatch):
+        """Dispatcher должен поднимать CGEventTap после системного disable без ожидания wake."""
+        import Quartz as _quartz_mod  # noqa: N813
+
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher._event_tap = "fake_tap"
+        enabled_calls = []
+        monkeypatch.setattr(_quartz_mod, "CGEventTapEnable", lambda tap, enable: enabled_calls.append((tap, enable)))
+
+        sentinel = object()
+        result = dispatcher._cgevent_tap_callback(None, _quartz_mod.kCGEventTapDisabledByUserInput, sentinel, None)
+
+        assert result is sentinel
+        assert enabled_calls == [("fake_tap", True)]
 
 
 class TestModifierConstants:
