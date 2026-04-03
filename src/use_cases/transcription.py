@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 
 from ..domain.constants import Config
 from ..domain.transcription import (
+    CapitalizeFirstLetterRule,
+    RemoveTrailingPeriodForSingleSentenceRule,
+    TranscriptionPostprocessingRule,
+    TranscriptionPostprocessor,
     build_audio_diagnostics,
     extract_transcription_token_count,
     looks_like_hallucination,
@@ -273,6 +277,24 @@ class TranscriptionUseCases:
     @paste_clipboard_enabled.setter
     def paste_clipboard_enabled(self, enabled: object) -> None:
         self.preferences = self.preferences.with_paste_clipboard_enabled(enabled)
+
+    @property
+    def capitalize_first_letter_enabled(self) -> bool:
+        """Возвращает флаг правила заглавной буквы после распознавания."""
+        return self.preferences.capitalize_first_letter_enabled
+
+    @capitalize_first_letter_enabled.setter
+    def capitalize_first_letter_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_capitalize_first_letter_enabled(enabled)
+
+    @property
+    def remove_trailing_period_for_single_sentence_enabled(self) -> bool:
+        """Возвращает флаг удаления точки в конце одного предложения."""
+        return self.preferences.remove_trailing_period_for_single_sentence_enabled
+
+    @remove_trailing_period_for_single_sentence_enabled.setter
+    def remove_trailing_period_for_single_sentence_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_remove_trailing_period_for_single_sentence_enabled(enabled)
 
     @property
     def llm_clipboard_enabled(self) -> bool:
@@ -554,6 +576,21 @@ class TranscriptionUseCases:
             raise RuntimeError("Whisper runtime не настроен")
         return self._transcription_runner(audio_data, self.model_name, language)
 
+    def _build_text_postprocessor(self) -> TranscriptionPostprocessor:
+        """Собирает цепочку включённых правил постобработки распознанного текста."""
+        rules: list[TranscriptionPostprocessingRule] = []
+        if self.capitalize_first_letter_enabled:
+            rules.append(CapitalizeFirstLetterRule())
+        if self.remove_trailing_period_for_single_sentence_enabled:
+            rules.append(RemoveTrailingPeriodForSingleSentenceRule())
+        return TranscriptionPostprocessor(rules=tuple(rules))
+
+    def _postprocess_transcribed_text(self, text: str) -> str:
+        """Применяет постобработку к непустому результату распознавания."""
+        if not text:
+            return text
+        return self._build_text_postprocessor().apply(text)
+
     def transcribe(self, audio_data: npt.NDArray[np.float32], language: str | None = None) -> None:
         """Распознает аудио и вставляет результат в активное приложение.
 
@@ -617,6 +654,7 @@ class TranscriptionUseCases:
                 text = str(result.get("text", "")).strip()
                 LOGGER.info("🧠 Повторный проход завершен, длина текста=%s, текст=%r", len(text), text[:120])
 
+        text = self._postprocess_transcribed_text(text)
         self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, result=result, text=text)
         self.add_token_usage(extract_transcription_token_count(result))
 
@@ -738,6 +776,7 @@ class TranscriptionUseCases:
             return None
 
         text = str(result.get("text", "")).strip()
+        text = self._postprocess_transcribed_text(text)
         LOGGER.info("🧠 Транскрипция завершена: длина=%d, текст=%r", len(text), text[:120])
         self.add_token_usage(extract_transcription_token_count(result))
 

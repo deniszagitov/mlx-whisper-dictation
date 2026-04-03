@@ -65,6 +65,8 @@ class FakeTranscriber:
         self.paste_cgevent_enabled = True
         self.paste_ax_enabled = False
         self.paste_clipboard_enabled = False
+        self.capitalize_first_letter_enabled = True
+        self.remove_trailing_period_for_single_sentence_enabled = True
         self.llm_clipboard_enabled = True
         self.private_mode_enabled = False
         self.history: list[str] = []
@@ -420,6 +422,8 @@ def test_snapshot_reflects_initial_runtime_state(monkeypatch):
     assert snapshot.model_name == "whisper-large-v3-turbo"
     assert snapshot.current_language == "ru"
     assert snapshot.show_recording_time_in_menu_bar is True
+    assert snapshot.capitalize_first_letter_enabled is True
+    assert snapshot.remove_trailing_period_for_single_sentence_enabled is True
     assert snapshot.current_input_device["index"] == 0
     assert recorder.input_device["index"] == 0
 

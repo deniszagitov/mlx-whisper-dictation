@@ -476,6 +476,8 @@ class TranscriberPreferences:
     paste_cgevent_enabled: bool
     paste_ax_enabled: bool
     paste_clipboard_enabled: bool
+    capitalize_first_letter_enabled: bool
+    remove_trailing_period_for_single_sentence_enabled: bool
     llm_clipboard_enabled: bool
     private_mode_enabled: bool
     total_tokens: int
@@ -487,6 +489,14 @@ class TranscriberPreferences:
             paste_cgevent_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_PASTE_CGEVENT, fallback=True),
             paste_ax_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_PASTE_AX, fallback=False),
             paste_clipboard_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_PASTE_CLIPBOARD, fallback=False),
+            capitalize_first_letter_enabled=settings_store.load_bool(
+                Config.DEFAULTS_KEY_CAPITALIZE_FIRST_LETTER,
+                fallback=True,
+            ),
+            remove_trailing_period_for_single_sentence_enabled=settings_store.load_bool(
+                Config.DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE,
+                fallback=True,
+            ),
             llm_clipboard_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True),
             private_mode_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, fallback=False),
             total_tokens=max(settings_store.load_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, fallback=0), 0),
@@ -507,6 +517,23 @@ class TranscriberPreferences:
     def with_paste_clipboard_enabled(self, enabled: object) -> TranscriberPreferences:
         """Возвращает новый набор настроек с обновлённым clipboard-режимом."""
         return replace(self, paste_clipboard_enabled=_coerce_bool(enabled, fallback=self.paste_clipboard_enabled))
+
+    def with_capitalize_first_letter_enabled(self, enabled: object) -> TranscriberPreferences:
+        """Возвращает новый набор настроек с обновлённым правилом заглавной буквы."""
+        return replace(
+            self,
+            capitalize_first_letter_enabled=_coerce_bool(enabled, fallback=self.capitalize_first_letter_enabled),
+        )
+
+    def with_remove_trailing_period_for_single_sentence_enabled(self, enabled: object) -> TranscriberPreferences:
+        """Возвращает новый набор настроек с обновлённым правилом удаления точки."""
+        return replace(
+            self,
+            remove_trailing_period_for_single_sentence_enabled=_coerce_bool(
+                enabled,
+                fallback=self.remove_trailing_period_for_single_sentence_enabled,
+            ),
+        )
 
     def with_llm_clipboard_enabled(self, enabled: object) -> TranscriberPreferences:
         """Возвращает новый набор настроек с обновлённым LLM clipboard."""
@@ -533,6 +560,8 @@ class MicrophoneProfile:
     paste_cgevent: bool
     paste_ax: bool
     paste_clipboard: bool
+    capitalize_first_letter: bool
+    remove_trailing_period_for_single_sentence: bool
     llm_clipboard: bool
 
     @classmethod
@@ -558,6 +587,11 @@ class MicrophoneProfile:
             paste_cgevent=_coerce_bool(raw_profile.get("paste_cgevent", True), fallback=True),
             paste_ax=_coerce_bool(raw_profile.get("paste_ax", False), fallback=False),
             paste_clipboard=_coerce_bool(raw_profile.get("paste_clipboard", False), fallback=False),
+            capitalize_first_letter=_coerce_bool(raw_profile.get("capitalize_first_letter", True), fallback=True),
+            remove_trailing_period_for_single_sentence=_coerce_bool(
+                raw_profile.get("remove_trailing_period_for_single_sentence", True),
+                fallback=True,
+            ),
             llm_clipboard=_coerce_bool(raw_profile.get("llm_clipboard", True), fallback=True),
         )
 
@@ -576,6 +610,8 @@ class MicrophoneProfile:
         paste_cgevent: object,
         paste_ax: object,
         paste_clipboard: object,
+        capitalize_first_letter: object,
+        remove_trailing_period_for_single_sentence: object,
         llm_clipboard: object,
     ) -> MicrophoneProfile:
         """Создаёт профиль из текущего runtime-состояния приложения."""
@@ -591,6 +627,8 @@ class MicrophoneProfile:
             "paste_cgevent": paste_cgevent,
             "paste_ax": paste_ax,
             "paste_clipboard": paste_clipboard,
+            "capitalize_first_letter": capitalize_first_letter,
+            "remove_trailing_period_for_single_sentence": remove_trailing_period_for_single_sentence,
             "llm_clipboard": llm_clipboard,
         }
         profile = cls.from_payload(payload)
@@ -612,6 +650,8 @@ class MicrophoneProfile:
             "paste_cgevent": self.paste_cgevent,
             "paste_ax": self.paste_ax,
             "paste_clipboard": self.paste_clipboard,
+            "capitalize_first_letter": self.capitalize_first_letter,
+            "remove_trailing_period_for_single_sentence": self.remove_trailing_period_for_single_sentence,
             "llm_clipboard": self.llm_clipboard,
         }
 
@@ -628,6 +668,8 @@ class MicrophoneProfile:
         paste_cgevent: bool,
         paste_ax: bool,
         paste_clipboard: bool,
+        capitalize_first_letter: bool,
+        remove_trailing_period_for_single_sentence: bool,
         llm_clipboard: bool,
     ) -> bool:
         """Сравнивает профиль с текущими runtime-настройками."""
@@ -645,6 +687,8 @@ class MicrophoneProfile:
             and self.paste_cgevent == paste_cgevent
             and self.paste_ax == paste_ax
             and self.paste_clipboard == paste_clipboard
+            and self.capitalize_first_letter == capitalize_first_letter
+            and self.remove_trailing_period_for_single_sentence == remove_trailing_period_for_single_sentence
             and self.llm_clipboard == llm_clipboard
         )
 
@@ -682,6 +726,8 @@ class AppSnapshot:
     paste_cgevent_enabled: bool
     paste_ax_enabled: bool
     paste_clipboard_enabled: bool
+    capitalize_first_letter_enabled: bool
+    remove_trailing_period_for_single_sentence_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int

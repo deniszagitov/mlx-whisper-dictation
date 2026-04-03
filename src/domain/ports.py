@@ -55,6 +55,8 @@ class StatusBarControllerProtocol(Protocol):
     paste_cgevent_enabled: bool
     paste_ax_enabled: bool
     paste_clipboard_enabled: bool
+    capitalize_first_letter_enabled: bool
+    remove_trailing_period_for_single_sentence_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int
@@ -179,6 +181,14 @@ class StatusBarControllerProtocol(Protocol):
 
     def toggle_llm_clipboard(self) -> None:
         """Переключает использование буфера обмена для LLM."""
+        ...
+
+    def toggle_capitalize_first_letter(self) -> None:
+        """Переключает правило заглавной буквы после распознавания."""
+        ...
+
+    def toggle_remove_trailing_period_for_single_sentence(self) -> None:
+        """Переключает удаление точки в конце одного предложения."""
         ...
 
     def copy_history_text(self, text: str) -> None:

@@ -52,6 +52,8 @@ def test_load_microphone_profiles_normalizes_and_limits_profiles(monkeypatch):
             "paste_cgevent": False,
             "paste_ax": True,
             "paste_clipboard": True,
+            "capitalize_first_letter": False,
+            "remove_trailing_period_for_single_sentence": False,
             "llm_clipboard": False,
         },
         {"name": "", "input_device_index": 1},
@@ -83,6 +85,8 @@ def test_load_microphone_profiles_normalizes_and_limits_profiles(monkeypatch):
     assert profiles[0].paste_cgevent is False
     assert profiles[0].paste_ax is True
     assert profiles[0].paste_clipboard is True
+    assert profiles[0].capitalize_first_letter is False
+    assert profiles[0].remove_trailing_period_for_single_sentence is False
     assert profiles[0].llm_clipboard is False
 
 
@@ -110,6 +114,8 @@ def test_save_microphone_profiles_writes_normalized_json(monkeypatch):
                 paste_cgevent=True,
                 paste_ax=False,
                 paste_clipboard=True,
+                capitalize_first_letter=False,
+                remove_trailing_period_for_single_sentence=True,
                 llm_clipboard=True,
             ),
         ]
@@ -133,6 +139,8 @@ def test_save_microphone_profiles_writes_normalized_json(monkeypatch):
             "paste_cgevent": True,
             "paste_ax": False,
             "paste_clipboard": True,
+            "capitalize_first_letter": False,
+            "remove_trailing_period_for_single_sentence": True,
             "llm_clipboard": True,
         }
     ]

@@ -265,6 +265,30 @@ def test_toggle_llm_processes_result_and_uses_clipboard_context() -> None:
     assert ("MLX Whisper Dictation", "LLM-ответ скопирован в буфер обмена.") in notifications
 
 
+def test_toggle_llm_uses_postprocessed_whisper_text() -> None:
+    """LLM должен получать уже постобработанный текст из transcribe_to_text."""
+    notifications: list[tuple[str, str]] = []
+    overlay = FakeOverlay()
+    runtime = make_runtime(overlay=overlay, notifications=notifications)
+    recorder = FakeRecorder()
+    transcriber = FakeTranscriber("Привет")
+    llm_processor = FakeLlmProcessor(response="Готово")
+
+    use_cases, recorder, _transcriber, _clipboard = make_use_cases(
+        runtime=runtime,
+        recorder=recorder,
+        transcriber=transcriber,
+        llm_processor=llm_processor,
+    )
+
+    use_cases.toggle_llm()
+    assert recorder.on_audio_ready is not None
+    recorder.on_audio_ready(object(), "ru", lambda *_args: None, lambda: True)
+
+    assert llm_processor.process_calls
+    assert llm_processor.process_calls[0][0] == "Привет"
+
+
 def test_toggle_llm_aborts_when_prepare_recording_fails() -> None:
     """LLM-сценарий не должен стартовать, если preflight микрофона завершился неуспешно."""
     notifications: list[tuple[str, str]] = []

@@ -43,6 +43,10 @@ class Config:
     DEFAULTS_KEY_PASTE_CGEVENT = "paste_method_cgevent"
     DEFAULTS_KEY_PASTE_AX = "paste_method_ax"
     DEFAULTS_KEY_PASTE_CLIPBOARD = "paste_method_clipboard"
+    DEFAULTS_KEY_CAPITALIZE_FIRST_LETTER = "capitalize_first_letter_enabled"
+    DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE = (
+        "remove_trailing_period_for_single_sentence_enabled"
+    )
     DEFAULTS_KEY_HISTORY = "transcription_history"
     DEFAULTS_KEY_PRIVATE_MODE = "private_mode"
     DEFAULTS_KEY_TOTAL_TOKENS = "total_token_usage"

@@ -380,3 +380,80 @@ def test_transcribe_clipboard_not_touched_when_disabled(app_module, monkeypatch)
     transcriber.transcribe(make_audio(), "ru")
 
     assert clipboard_calls == []
+
+
+def test_transcribe_applies_postprocessing_rules_in_order(app_module, monkeypatch):
+    """После ASR текст должен пройти через включённую цепочку постобработки."""
+    transcriber = make_transcriber(app_module)
+    inserted: list[str] = []
+    history_added: list[str] = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "привет."})
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", inserted.append)
+    monkeypatch.setattr(transcriber, "add_to_history", history_added.append)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert inserted == ["Привет"]
+    assert history_added == ["Привет"]
+
+
+def test_transcribe_can_disable_capitalization_rule(app_module, monkeypatch):
+    """Правило заглавной буквы должно отключаться отдельно."""
+    transcriber = make_transcriber(app_module)
+    transcriber.capitalize_first_letter_enabled = False
+    inserted: list[str] = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "привет."})
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", inserted.append)
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert inserted == ["привет"]
+
+
+def test_transcribe_can_disable_trailing_period_rule(app_module, monkeypatch):
+    """Правило удаления точки должно отключаться отдельно."""
+    transcriber = make_transcriber(app_module)
+    transcriber.remove_trailing_period_for_single_sentence_enabled = False
+    inserted: list[str] = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "привет."})
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", inserted.append)
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert inserted == ["Привет."]
+
+
+def test_transcribe_keeps_final_period_for_multiple_sentences(app_module, monkeypatch):
+    """Финальная точка не должна убираться, если предложений больше одного."""
+    transcriber = make_transcriber(app_module)
+    inserted: list[str] = []
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "привет. как дела."})
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", inserted.append)
+    monkeypatch.setattr(transcriber, "add_to_history", lambda *_args: None)
+
+    transcriber.transcribe(make_audio(), "ru")
+
+    assert inserted == ["Привет. как дела."]
+
+
+def test_transcribe_to_text_applies_postprocessing_rules(app_module, monkeypatch):
+    """transcribe_to_text тоже должен возвращать уже постобработанный текст."""
+    transcriber = make_transcriber(app_module)
+
+    monkeypatch.setattr(
+        transcriber,
+        "_run_transcription",
+        lambda *_args: {"text": "привет.", "segments": [{"tokens": [1]}]},
+    )
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
+
+    result = transcriber.transcribe_to_text(make_audio(), "ru")
+
+    assert result == "Привет"

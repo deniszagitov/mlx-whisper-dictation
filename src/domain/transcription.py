@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .constants import Config
@@ -16,6 +18,74 @@ if TYPE_CHECKING:
 def looks_like_hallucination(text: str) -> bool:
     """Проверяет, похож ли результат на типичную галлюцинацию Whisper."""
     return text.strip().lower() in Config.KNOWN_HALLUCINATIONS
+
+
+class TranscriptionPostprocessingRule:
+    """Протокол поведения отдельного правила постобработки транскрипции."""
+
+    def apply(self, text: str) -> str:
+        """Возвращает текст после применения одного правила."""
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalizeFirstLetterRule(TranscriptionPostprocessingRule):
+    """Делает первый буквенный символ текста заглавным."""
+
+    def apply(self, text: str) -> str:
+        """Возвращает текст с первой заглавной буквой без изменения остальной строки."""
+        for index, character in enumerate(text):
+            if character.isalpha():
+                return text[:index] + character.upper() + text[index + 1 :]
+        return text
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveTrailingPeriodForSingleSentenceRule(TranscriptionPostprocessingRule):
+    """Убирает точку в конце, если текст выглядит как одно предложение."""
+
+    _closing_symbols: tuple[str, ...] = ('"', "'", ")", "]", "}", "»")
+    _sentence_boundary_re = re.compile(r"(?<!\.)\.(?!\.)")
+
+    def apply(self, text: str) -> str:
+        """Удаляет завершающую точку только у текста, похожего на одно предложение."""
+        stripped_text = text.rstrip()
+        if not stripped_text:
+            return text
+
+        trimmed_suffix_length = 0
+        while stripped_text and stripped_text[-1] in self._closing_symbols:
+            stripped_text = stripped_text[:-1]
+            trimmed_suffix_length += 1
+
+        if not stripped_text.endswith("."):
+            return text
+
+        if stripped_text.endswith(".."):
+            return text
+
+        sentence_period_count = len(self._sentence_boundary_re.findall(stripped_text))
+        if sentence_period_count != 1:
+            return text
+
+        base_text = stripped_text[:-1]
+        closing_suffix = text[len(text.rstrip()) - trimmed_suffix_length : len(text.rstrip())]
+        trailing_whitespace = text[len(text.rstrip()) :]
+        return base_text + closing_suffix + trailing_whitespace
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptionPostprocessor:
+    """Применяет включённую цепочку правил постобработки к распознанному тексту."""
+
+    rules: tuple[TranscriptionPostprocessingRule, ...]
+
+    def apply(self, text: str) -> str:
+        """Прогоняет текст через все настроенные правила по порядку."""
+        processed_text = text
+        for rule in self.rules:
+            processed_text = rule.apply(processed_text)
+        return processed_text
 
 
 def build_audio_diagnostics(

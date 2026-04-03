@@ -606,6 +606,16 @@ class DictationApp:
         return bool(getattr(self.transcriber, "paste_clipboard_enabled", False))
 
     @property
+    def capitalize_first_letter_enabled(self) -> bool:
+        """Возвращает флаг правила заглавной буквы после распознавания."""
+        return bool(getattr(self.transcriber, "capitalize_first_letter_enabled", True))
+
+    @property
+    def remove_trailing_period_for_single_sentence_enabled(self) -> bool:
+        """Возвращает флаг удаления точки в конце одного предложения."""
+        return bool(getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True))
+
+    @property
     def llm_clipboard_enabled(self) -> bool:
         """Возвращает флаг использования буфера обмена для LLM."""
         return bool(getattr(self.transcriber, "llm_clipboard_enabled", True))
@@ -789,6 +799,10 @@ class DictationApp:
             paste_cgevent_enabled=bool(getattr(self.transcriber, "paste_cgevent_enabled", True)),
             paste_ax_enabled=bool(getattr(self.transcriber, "paste_ax_enabled", False)),
             paste_clipboard_enabled=bool(getattr(self.transcriber, "paste_clipboard_enabled", False)),
+            capitalize_first_letter_enabled=bool(getattr(self.transcriber, "capitalize_first_letter_enabled", True)),
+            remove_trailing_period_for_single_sentence_enabled=bool(
+                getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True)
+            ),
             llm_clipboard_enabled=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
             history=list(getattr(self.transcriber, "history", [])),
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
@@ -919,6 +933,10 @@ class DictationApp:
             paste_cgevent=bool(getattr(self.transcriber, "paste_cgevent_enabled", True)),
             paste_ax=bool(getattr(self.transcriber, "paste_ax_enabled", False)),
             paste_clipboard=bool(getattr(self.transcriber, "paste_clipboard_enabled", False)),
+            capitalize_first_letter=bool(getattr(self.transcriber, "capitalize_first_letter_enabled", True)),
+            remove_trailing_period_for_single_sentence=bool(
+                getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True)
+            ),
             llm_clipboard=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
         )
 
@@ -989,6 +1007,14 @@ class DictationApp:
     def toggle_llm_clipboard(self) -> None:
         """Переключает использование буфера обмена для LLM."""
         self.settings_use_cases.toggle_llm_clipboard()
+
+    def toggle_capitalize_first_letter(self) -> None:
+        """Переключает правило заглавной буквы после распознавания."""
+        self.settings_use_cases.toggle_capitalize_first_letter()
+
+    def toggle_remove_trailing_period_for_single_sentence(self) -> None:
+        """Переключает удаление точки в конце одного предложения."""
+        self.settings_use_cases.toggle_remove_trailing_period_for_single_sentence()
 
     def prune_expired_history(self) -> None:
         """Удаляет просроченную историю, если transcriber поддерживает это."""

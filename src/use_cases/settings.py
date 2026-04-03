@@ -189,6 +189,42 @@ class SettingsUseCases:
         )
         self.publish_snapshot()
 
+    def toggle_capitalize_first_letter(self) -> None:
+        """Переключает правило заглавной буквы после распознавания."""
+        self.transcriber.capitalize_first_letter_enabled = not getattr(
+            self.transcriber,
+            "capitalize_first_letter_enabled",
+            True,
+        )
+        self.settings_store.save_bool(
+            Config.DEFAULTS_KEY_CAPITALIZE_FIRST_LETTER,
+            self.transcriber.capitalize_first_letter_enabled,
+        )
+        LOGGER.info(
+            "✨ Первая буква с заглавной: %s",
+            "включено" if self.transcriber.capitalize_first_letter_enabled else "выключено",
+        )
+        self.publish_snapshot()
+
+    def toggle_remove_trailing_period_for_single_sentence(self) -> None:
+        """Переключает удаление точки в конце одного предложения."""
+        self.transcriber.remove_trailing_period_for_single_sentence_enabled = not getattr(
+            self.transcriber,
+            "remove_trailing_period_for_single_sentence_enabled",
+            True,
+        )
+        self.settings_store.save_bool(
+            Config.DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE,
+            self.transcriber.remove_trailing_period_for_single_sentence_enabled,
+        )
+        LOGGER.info(
+            "✨ Удаление точки в конце одного предложения: %s",
+            "включено"
+            if self.transcriber.remove_trailing_period_for_single_sentence_enabled
+            else "выключено",
+        )
+        self.publish_snapshot()
+
     def change_llm_prompt(self, prompt_name: str) -> None:
         """Переключает текущий пресет системного промпта LLM."""
         if prompt_name not in Config.LLM_PROMPT_PRESETS:

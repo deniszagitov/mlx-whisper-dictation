@@ -302,6 +302,8 @@ def test_transcriber_preferences_reads_typed_flags_and_token_count():
             Config.DEFAULTS_KEY_PASTE_CGEVENT: False,
             Config.DEFAULTS_KEY_PASTE_AX: True,
             Config.DEFAULTS_KEY_PASTE_CLIPBOARD: True,
+            Config.DEFAULTS_KEY_CAPITALIZE_FIRST_LETTER: False,
+            Config.DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE: False,
             Config.DEFAULTS_KEY_LLM_CLIPBOARD: False,
             Config.DEFAULTS_KEY_PRIVATE_MODE: True,
         },
@@ -313,6 +315,8 @@ def test_transcriber_preferences_reads_typed_flags_and_token_count():
     assert preferences.paste_cgevent_enabled is False
     assert preferences.paste_ax_enabled is True
     assert preferences.paste_clipboard_enabled is True
+    assert preferences.capitalize_first_letter_enabled is False
+    assert preferences.remove_trailing_period_for_single_sentence_enabled is False
     assert preferences.llm_clipboard_enabled is False
     assert preferences.private_mode_enabled is True
     assert preferences.total_tokens == 123

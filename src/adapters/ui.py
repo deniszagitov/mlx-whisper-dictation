@@ -107,6 +107,18 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             item.state = int(performance_mode == self.performance_mode)
             self.performance_menu.add(item)
 
+        self.postprocessing_menu = rumps.MenuItem("✨ Постобработка текста")
+        self.capitalize_first_letter_item = rumps.MenuItem(
+            "Первая буква с заглавной",
+            callback=self.toggle_capitalize_first_letter,
+        )
+        self.remove_trailing_period_for_single_sentence_item = rumps.MenuItem(
+            "Убирать точку в конце одного предложения",
+            callback=self.toggle_remove_trailing_period_for_single_sentence,
+        )
+        self.postprocessing_menu.add(self.capitalize_first_letter_item)
+        self.postprocessing_menu.add(self.remove_trailing_period_for_single_sentence_item)
+
         self.recognition_menu = rumps.MenuItem("🧠 Распознавание")
         self.recognition_menu.add(self.model_item)
         self.recognition_menu.add(self.language_item)
@@ -164,6 +176,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self.status_item,
             None,
             self.recognition_menu,
+            self.postprocessing_menu,
             self.hotkeys_menu,
             self.private_mode_item,
             self.behavior_menu,
@@ -342,6 +355,16 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def llm_clipboard_enabled(self) -> bool:
         """Возвращает флаг использования буфера обмена для LLM."""
         return self.app.llm_clipboard_enabled
+
+    @property
+    def capitalize_first_letter_enabled(self) -> bool:
+        """Возвращает флаг правила заглавной буквы."""
+        return self.app.capitalize_first_letter_enabled
+
+    @property
+    def remove_trailing_period_for_single_sentence_enabled(self) -> bool:
+        """Возвращает флаг удаления точки в конце одного предложения."""
+        return self.app.remove_trailing_period_for_single_sentence_enabled
 
     @property
     def history(self) -> list[str]:
@@ -645,6 +668,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.paste_cgevent_item.state = int(snapshot.paste_cgevent_enabled)
         self.paste_ax_item.state = int(snapshot.paste_ax_enabled)
         self.paste_clipboard_item.state = int(snapshot.paste_clipboard_enabled)
+        self.capitalize_first_letter_item.state = int(snapshot.capitalize_first_letter_enabled)
+        self.remove_trailing_period_for_single_sentence_item.state = int(
+            snapshot.remove_trailing_period_for_single_sentence_enabled
+        )
         self.llm_download_item.title = snapshot.llm_download_title
         self.llm_download_item.set_callback(self._download_llm_model if snapshot.llm_download_interactive else None)
 
@@ -785,6 +812,14 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def toggle_llm_clipboard(self, _sender: rumps.MenuItem) -> None:
         """Переключает использование буфера обмена для LLM."""
         self.app.toggle_llm_clipboard()
+
+    def toggle_capitalize_first_letter(self, _sender: rumps.MenuItem) -> None:
+        """Переключает правило заглавной буквы после распознавания."""
+        self.app.toggle_capitalize_first_letter()
+
+    def toggle_remove_trailing_period_for_single_sentence(self, _sender: rumps.MenuItem) -> None:
+        """Переключает удаление точки в конце одного предложения."""
+        self.app.toggle_remove_trailing_period_for_single_sentence()
 
     def _copy_history_item(self, sender: rumps.MenuItem) -> None:
         """Копирует выбранный элемент истории в буфер обмена."""
