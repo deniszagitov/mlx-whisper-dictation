@@ -281,6 +281,7 @@ def make_snapshot(**overrides):
         microphone_profiles=[],
         show_recording_notification=True,
         show_recording_overlay=True,
+        show_recording_time_in_menu_bar=True,
         private_mode_enabled=False,
         paste_cgevent_enabled=True,
         paste_ax_enabled=False,
@@ -331,6 +332,7 @@ class FakeDictationController:
         self.microphone_profiles = list(snapshot.microphone_profiles)
         self.show_recording_notification = snapshot.show_recording_notification
         self.show_recording_overlay = snapshot.show_recording_overlay
+        self.show_recording_time_in_menu_bar = snapshot.show_recording_time_in_menu_bar
         self.private_mode_enabled = snapshot.private_mode_enabled
         self.paste_cgevent_enabled = snapshot.paste_cgevent_enabled
         self.paste_ax_enabled = snapshot.paste_ax_enabled
@@ -373,6 +375,10 @@ class FakeDictationController:
     def toggle_recording_overlay(self):
         """Запоминает команду переключения overlay."""
         self.calls.append(("toggle_recording_overlay", None))
+
+    def toggle_recording_time_in_menu_bar(self):
+        """Запоминает команду переключения таймера в menu bar."""
+        self.calls.append(("toggle_recording_time_in_menu_bar", None))
 
     def start_recording(self):
         """Имитирует старт записи и публикует recording snapshot."""
@@ -513,6 +519,12 @@ class TestStatusBarInit:
         assert app.show_recording_notification is True
         assert app.recording_notification_item.state == 1
 
+    def test_recording_time_in_menu_bar_enabled_by_default(self, make_app):
+        """По умолчанию время записи в menu bar включено."""
+        app, *_ = make_app(languages=["ru"])
+        assert app.show_recording_time_in_menu_bar is True
+        assert app.recording_time_in_menu_bar_item.state == 1
+
     def test_llm_clipboard_enabled_by_default(self, make_app):
         """Буфер обмена для LLM включён по умолчанию."""
         app, _recorder, transcriber = make_app(languages=["ru"])
@@ -624,6 +636,16 @@ class TestStatusBarDisplay:
         app.start_app(None)
         app.on_status_tick(None)
         assert "🔴" in app.title
+
+    def test_recording_title_can_hide_timer_in_menu_bar(self, make_app):
+        """При выключенном таймере в menu bar во время записи показывается только индикатор."""
+        app, *_ = make_app(languages=["ru"])
+        app.show_recording_time_in_menu_bar = False
+
+        app.start_app(None)
+        app.on_status_tick(None)
+
+        assert app.title == "🔴"
 
     def test_transcribing_title_shows_brain(self, make_app, patched_app_module):
         """Во время распознавания отображается мозг."""
@@ -1164,7 +1186,7 @@ class TestRecordingOverlayIntegration:
         assert isinstance(app.recording_overlay, overlay.RecordingOverlay)
 
     def test_overlay_enabled_by_default(self, make_app):
-        """По умолчанию индикатор записи у курсора включён."""
+        """По умолчанию индикатор у курсора и время включены."""
         app, *_ = make_app(languages=["ru"])
         assert app.show_recording_overlay is True
         assert app.recording_overlay_item.state == 1
@@ -1172,7 +1194,14 @@ class TestRecordingOverlayIntegration:
     def test_overlay_menu_item_exists(self, make_app):
         """В меню есть пункт для переключения индикатора записи."""
         app, *_ = make_app(languages=["ru"])
-        assert "🎯 Индикатор записи у курсора" in app.recording_overlay_item.title
+        assert "🎯 Индикатор у курсора и время" in app.recording_overlay_item.title
+
+    def test_recording_indicator_submenu_exists(self, make_app):
+        """Настройки индикации записи сгруппированы в отдельное подменю."""
+        app, *_ = make_app(languages=["ru"])
+        assert app.recording_indicator_menu.title == "🔴 Индикация записи"
+        assert app.recording_indicator_menu["🎯 Индикатор у курсора и время"].title == "🎯 Индикатор у курсора и время"
+        assert app.recording_indicator_menu["⏱ Отображать время записи в меню"].title == "⏱ Отображать время записи в меню"
 
     def test_toggle_recording_overlay_off(self, make_app, monkeypatch):
         """toggle_recording_overlay выключает индикатор."""
@@ -1198,6 +1227,31 @@ class TestRecordingOverlayIntegration:
 
         assert app.show_recording_overlay is True
         assert app.recording_overlay_item.state == 1
+
+    def test_toggle_recording_time_in_menu_bar_off(self, make_app, monkeypatch):
+        """toggle_recording_time_in_menu_bar выключает таймер в menu bar."""
+        saved = {}
+        app, *_ = make_app(languages=["ru"])
+        monkeypatch.setattr(app.app.settings_store, "save_bool", lambda k, v: saved.update({k: v}))
+
+        app.toggle_recording_time_in_menu_bar(app.recording_time_in_menu_bar_item)
+
+        assert app.show_recording_time_in_menu_bar is False
+        assert app.recording_time_in_menu_bar_item.state == 0
+        assert saved.get(Config.DEFAULTS_KEY_RECORDING_TIME_IN_MENU_BAR) is False
+
+    def test_toggle_recording_time_in_menu_bar_on(self, make_app, monkeypatch):
+        """toggle_recording_time_in_menu_bar включает таймер в menu bar обратно."""
+        saved = {}
+        app, *_ = make_app(languages=["ru"])
+        monkeypatch.setattr(app.app.settings_store, "save_bool", lambda k, v: saved.update({k: v}))
+        app.show_recording_time_in_menu_bar = False
+
+        app.toggle_recording_time_in_menu_bar(app.recording_time_in_menu_bar_item)
+
+        assert app.show_recording_time_in_menu_bar is True
+        assert app.recording_time_in_menu_bar_item.state == 1
+        assert saved.get(Config.DEFAULTS_KEY_RECORDING_TIME_IN_MENU_BAR) is True
 
     def test_start_app_shows_overlay_when_enabled(self, make_app, monkeypatch):
         """start_app вызывает overlay.show(), когда индикатор включён."""
@@ -1284,6 +1338,7 @@ class TestStatusBarWithFakeController:
                 model_name="small",
                 total_tokens=789,
                 show_recording_overlay=False,
+                show_recording_time_in_menu_bar=False,
             )
         )
 
@@ -1291,6 +1346,7 @@ class TestStatusBarWithFakeController:
         assert "small" in app.model_item.title
         assert "789" in app.token_usage_item.title
         assert app.recording_overlay_item.state == 0
+        assert app.recording_time_in_menu_bar_item.state == 0
 
     def test_subscription_updates_snapshot_immediately_on_main_thread(self, monkeypatch):
         """На главном потоке snapshot применяется сразу, без отложенного dispatch."""
@@ -1345,12 +1401,14 @@ class TestStatusBarWithFakeController:
 
         app.change_language(ui_module.rumps.MenuItem("en"))
         app.toggle_recording_overlay(app.recording_overlay_item)
+        app.toggle_recording_time_in_menu_bar(app.recording_time_in_menu_bar_item)
         app.start_app(None)
         app.stop_app(None)
 
         assert controller.calls == [
             ("change_language", "en"),
             ("toggle_recording_overlay", None),
+            ("toggle_recording_time_in_menu_bar", None),
             ("start_recording", None),
             ("stop_recording", None),
         ]

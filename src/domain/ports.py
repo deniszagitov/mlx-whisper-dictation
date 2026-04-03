@@ -50,6 +50,7 @@ class StatusBarControllerProtocol(Protocol):
     microphone_profiles: list[MicrophoneProfile]
     show_recording_notification: bool
     show_recording_overlay: bool
+    show_recording_time_in_menu_bar: bool
     private_mode_enabled: bool
     paste_cgevent_enabled: bool
     paste_ax_enabled: bool
@@ -150,6 +151,10 @@ class StatusBarControllerProtocol(Protocol):
 
     def toggle_recording_overlay(self) -> None:
         """Переключает overlay записи."""
+        ...
+
+    def toggle_recording_time_in_menu_bar(self) -> None:
+        """Переключает таймер записи в menu bar."""
         ...
 
     def change_performance_mode(self, performance_mode: object) -> None:

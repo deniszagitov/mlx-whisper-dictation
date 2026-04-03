@@ -96,4 +96,5 @@ def test_app_snapshot_type_annotations_stay_available() -> None:
         "hotkey_status",
         "microphone_profiles",
         "show_recording_overlay",
+        "show_recording_time_in_menu_bar",
     }

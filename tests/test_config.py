@@ -251,6 +251,7 @@ def test_app_preferences_reads_and_normalizes_store_values():
         bool_values={
             Config.DEFAULTS_KEY_RECORDING_NOTIFICATION: False,
             Config.DEFAULTS_KEY_RECORDING_OVERLAY: True,
+            Config.DEFAULTS_KEY_RECORDING_TIME_IN_MENU_BAR: False,
         },
         int_values={Config.DEFAULTS_KEY_INPUT_DEVICE_INDEX: 7},
     )
@@ -264,6 +265,7 @@ def test_app_preferences_reads_and_normalizes_store_values():
     assert preferences.selected_input_device_name == "USB Mic"
     assert preferences.show_recording_notification is False
     assert preferences.show_recording_overlay is True
+    assert preferences.show_recording_time_in_menu_bar is False
 
 
 def test_defaults_save_input_device_name_removes_key_for_empty_value(monkeypatch):

@@ -384,6 +384,7 @@ class AppPreferences:
     selected_input_device_name: str | None
     show_recording_notification: bool
     show_recording_overlay: bool
+    show_recording_time_in_menu_bar: bool
 
     @classmethod
     def from_store(cls, settings_store: SettingsStoreProtocol) -> AppPreferences:
@@ -410,6 +411,10 @@ class AppPreferences:
             ),
             show_recording_notification=settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_NOTIFICATION, fallback=True),
             show_recording_overlay=settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_OVERLAY, fallback=True),
+            show_recording_time_in_menu_bar=settings_store.load_bool(
+                Config.DEFAULTS_KEY_RECORDING_TIME_IN_MENU_BAR,
+                fallback=True,
+            ),
         )
 
     def with_llm_prompt_name(self, prompt_name: object) -> AppPreferences:
@@ -455,6 +460,13 @@ class AppPreferences:
     def with_recording_overlay(self, enabled: object) -> AppPreferences:
         """Возвращает новый набор настроек с обновлённым флагом overlay."""
         return replace(self, show_recording_overlay=_coerce_bool(enabled, fallback=self.show_recording_overlay))
+
+    def with_recording_time_in_menu_bar(self, enabled: object) -> AppPreferences:
+        """Возвращает новый набор настроек с обновлённым флагом таймера в menu bar."""
+        return replace(
+            self,
+            show_recording_time_in_menu_bar=_coerce_bool(enabled, fallback=self.show_recording_time_in_menu_bar),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -665,6 +677,7 @@ class AppSnapshot:
     microphone_profiles: list[MicrophoneProfile]
     show_recording_notification: bool
     show_recording_overlay: bool
+    show_recording_time_in_menu_bar: bool
     private_mode_enabled: bool
     paste_cgevent_enabled: bool
     paste_ax_enabled: bool

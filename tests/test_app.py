@@ -419,6 +419,7 @@ def test_snapshot_reflects_initial_runtime_state(monkeypatch):
     assert snapshot.started is False
     assert snapshot.model_name == "whisper-large-v3-turbo"
     assert snapshot.current_language == "ru"
+    assert snapshot.show_recording_time_in_menu_bar is True
     assert snapshot.current_input_device["index"] == 0
     assert recorder.input_device["index"] == 0
 

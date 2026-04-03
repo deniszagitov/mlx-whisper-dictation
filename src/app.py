@@ -325,6 +325,7 @@ class DictationApp:
         self.performance_mode = self.app_preferences.performance_mode
         self.show_recording_notification = self.app_preferences.show_recording_notification
         self.show_recording_overlay = self.app_preferences.show_recording_overlay
+        self.show_recording_time_in_menu_bar = self.app_preferences.show_recording_time_in_menu_bar
         self.started = False
         self.start_time = 0.0
         self.elapsed_time = 0
@@ -698,6 +699,15 @@ class DictationApp:
         self.app_preferences = self.app_preferences.with_recording_overlay(value)
 
     @property
+    def show_recording_time_in_menu_bar(self) -> bool:
+        """Возвращает флаг показа таймера записи в строке меню."""
+        return self.app_preferences.show_recording_time_in_menu_bar
+
+    @show_recording_time_in_menu_bar.setter
+    def show_recording_time_in_menu_bar(self, value: bool) -> None:
+        self.app_preferences = self.app_preferences.with_recording_time_in_menu_bar(value)
+
+    @property
     def primary_key_combination(self) -> str:
         """Возвращает основной хоткей во внутреннем формате."""
         return self.launch_config.key_combination or ""
@@ -774,6 +784,7 @@ class DictationApp:
             microphone_profiles=list(self.microphone_profiles),
             show_recording_notification=self.show_recording_notification,
             show_recording_overlay=self.show_recording_overlay,
+            show_recording_time_in_menu_bar=self.show_recording_time_in_menu_bar,
             private_mode_enabled=bool(getattr(self.transcriber, "private_mode_enabled", False)),
             paste_cgevent_enabled=bool(getattr(self.transcriber, "paste_cgevent_enabled", True)),
             paste_ax_enabled=bool(getattr(self.transcriber, "paste_ax_enabled", False)),
@@ -950,6 +961,10 @@ class DictationApp:
     def toggle_recording_overlay(self) -> None:
         """Переключает всплывающий индикатор у курсора."""
         self.settings_use_cases.toggle_recording_overlay()
+
+    def toggle_recording_time_in_menu_bar(self) -> None:
+        """Переключает отображение времени записи в menu bar."""
+        self.settings_use_cases.toggle_recording_time_in_menu_bar()
 
     def change_performance_mode(self, performance_mode: object) -> None:
         """Меняет баланс между задержкой и ресурсами."""

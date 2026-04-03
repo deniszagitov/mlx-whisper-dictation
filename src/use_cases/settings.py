@@ -106,8 +106,21 @@ class SettingsUseCases:
         self.runtime.show_recording_overlay = not self.runtime.show_recording_overlay
         self.settings_store.save_bool(Config.DEFAULTS_KEY_RECORDING_OVERLAY, self.runtime.show_recording_overlay)
         LOGGER.info(
-            "🎯 Индикатор записи у курсора: %s",
+            "🎯 Индикатор у курсора и время: %s",
             "включён" if self.runtime.show_recording_overlay else "выключен",
+        )
+        self.publish_snapshot()
+
+    def toggle_recording_time_in_menu_bar(self) -> None:
+        """Переключает отображение времени записи в menu bar."""
+        self.runtime.show_recording_time_in_menu_bar = not self.runtime.show_recording_time_in_menu_bar
+        self.settings_store.save_bool(
+            Config.DEFAULTS_KEY_RECORDING_TIME_IN_MENU_BAR,
+            self.runtime.show_recording_time_in_menu_bar,
+        )
+        LOGGER.info(
+            "⏱ Таймер записи в menu bar: %s",
+            "включён" if self.runtime.show_recording_time_in_menu_bar else "выключен",
         )
         self.publish_snapshot()
 

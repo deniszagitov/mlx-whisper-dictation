@@ -45,6 +45,7 @@ class Config:
     DEFAULTS_KEY_HISTORY = "transcription_history"
     DEFAULTS_KEY_PRIVATE_MODE = "private_mode"
     DEFAULTS_KEY_TOTAL_TOKENS = "total_token_usage"
+    DEFAULTS_KEY_RECORDING_TIME_IN_MENU_BAR = "recording_time_in_menu_bar"
     MAX_HISTORY_SIZE = 20
     HISTORY_DISPLAY_LENGTH = 100
     CGEVENT_UNICODE_CHUNK_SIZE = 20

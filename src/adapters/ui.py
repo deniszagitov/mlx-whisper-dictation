@@ -77,10 +77,17 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             "🔔 Уведомление о старте записи",
             callback=self.toggle_recording_notification,
         )
+        self.recording_indicator_menu = rumps.MenuItem("🔴 Индикация записи")
         self.recording_overlay_item = rumps.MenuItem(
-            "🎯 Индикатор записи у курсора",
+            "🎯 Индикатор у курсора и время",
             callback=self.toggle_recording_overlay,
         )
+        self.recording_time_in_menu_bar_item = rumps.MenuItem(
+            "⏱ Отображать время записи в меню",
+            callback=self.toggle_recording_time_in_menu_bar,
+        )
+        self.recording_indicator_menu.add(self.recording_overlay_item)
+        self.recording_indicator_menu.add(self.recording_time_in_menu_bar_item)
 
         self.performance_menu = rumps.MenuItem(f"⚡ Режим работы: {Config.performance_mode_label(self.performance_mode)}")
         for performance_mode, title in Config.PERFORMANCE_MODE_LABELS.items():
@@ -124,7 +131,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self.change_secondary_hotkey_item,
             self.change_llm_hotkey_item,
             self.recording_notification_item,
-            self.recording_overlay_item,
+            self.recording_indicator_menu,
             self.performance_menu,
             self.private_mode_item,
             self.paste_method_menu,
@@ -293,6 +300,15 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     @show_recording_overlay.setter
     def show_recording_overlay(self, value: bool) -> None:
         self.app.show_recording_overlay = value
+
+    @property
+    def show_recording_time_in_menu_bar(self) -> bool:
+        """Возвращает флаг отображения времени записи в menu bar."""
+        return self.app.show_recording_time_in_menu_bar
+
+    @show_recording_time_in_menu_bar.setter
+    def show_recording_time_in_menu_bar(self, value: bool) -> None:
+        self.app.show_recording_time_in_menu_bar = value
 
     @property
     def private_mode_enabled(self) -> bool:
@@ -605,6 +621,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.performance_menu.title = f"⚡ Режим работы: {Config.performance_mode_label(snapshot.performance_mode)}"
         self.recording_notification_item.state = int(snapshot.show_recording_notification)
         self.recording_overlay_item.state = int(snapshot.show_recording_overlay)
+        self.recording_time_in_menu_bar_item.state = int(snapshot.show_recording_time_in_menu_bar)
         self.private_mode_item.state = int(snapshot.private_mode_enabled)
         self.llm_clipboard_item.state = int(snapshot.llm_clipboard_enabled)
         self.paste_cgevent_item.state = int(snapshot.paste_cgevent_enabled)
@@ -718,6 +735,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Переключает индикатор записи у курсора."""
         self.app.toggle_recording_overlay()
 
+    def toggle_recording_time_in_menu_bar(self, _sender: rumps.MenuItem) -> None:
+        """Переключает показ времени записи в строке меню."""
+        self.app.toggle_recording_time_in_menu_bar()
+
     def change_performance_mode(self, sender: rumps.MenuItem) -> None:
         """Переключает режим производительности."""
         selected_mode = next(
@@ -774,8 +795,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self._refresh_title_and_status()
             return
 
-        minutes, seconds = divmod(self.elapsed_time, 60)
-        self.title = f"{minutes:02d}:{seconds:02d} 🔴"
+        if self.show_recording_time_in_menu_bar:
+            minutes, seconds = divmod(self.elapsed_time, 60)
+            self.title = f"{minutes:02d}:{seconds:02d} 🔴"
+        else:
+            self.title = "🔴"
         self.status_item.title = f"🔄 Статус: {self._state_label()}"
 
     def toggle(self) -> None:

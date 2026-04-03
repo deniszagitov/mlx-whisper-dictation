@@ -132,6 +132,7 @@ def make_runtime(*, overlay: FakeOverlay, notifications: list[tuple[str, str]]) 
         start_time=0.0,
         elapsed_time=0,
         show_recording_overlay=True,
+        show_recording_time_in_menu_bar=True,
         recording_overlay=overlay,
         system_integration_service=SimpleNamespace(notify=notify),
         llm_downloading=False,
