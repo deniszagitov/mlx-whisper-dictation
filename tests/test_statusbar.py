@@ -5,6 +5,7 @@
 """
 
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, cast
 
@@ -1290,6 +1291,52 @@ class TestStatusBarWithFakeController:
         assert "small" in app.model_item.title
         assert "789" in app.token_usage_item.title
         assert app.recording_overlay_item.state == 0
+
+    def test_subscription_updates_snapshot_immediately_on_main_thread(self, monkeypatch):
+        """На главном потоке snapshot применяется сразу, без отложенного dispatch."""
+        controller = FakeDictationController(make_snapshot())
+        helper_calls: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+
+        def apply_now(callback: Callable[..., None], *args: object) -> None:
+            helper_calls.append((callback, args))
+            callback(*args)
+
+        monkeypatch.setattr(ui_module, "_call_on_main_thread", apply_now)
+
+        app = ui_module.StatusBarApp(cast("Any", controller))
+        controller.emit(make_snapshot(state=Config.STATUS_TRANSCRIBING, model_name="tiny"))
+
+        assert app.title == "🧠"
+        assert "tiny" in app.model_item.title
+        assert len(helper_calls) == 2
+
+    def test_subscription_schedules_snapshot_on_main_thread_when_callback_is_background(self, monkeypatch):
+        """Фоновый callback не должен менять menu bar напрямую и обязан перейти на главный поток."""
+        controller = FakeDictationController(make_snapshot())
+        scheduled_callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+
+        def defer(callback: Callable[..., None], *args: object) -> None:
+            scheduled_callbacks.append((callback, args))
+
+        monkeypatch.setattr(ui_module, "_call_on_main_thread", defer)
+
+        app = ui_module.StatusBarApp(cast("Any", controller))
+        assert len(scheduled_callbacks) == 1
+
+        init_callback, init_args = scheduled_callbacks.pop(0)
+        init_callback(*init_args)
+        assert app.title == "⏯"
+
+        controller.emit(make_snapshot(state=Config.STATUS_TRANSCRIBING, model_name="threaded"))
+
+        assert app.title == "⏯"
+        assert len(scheduled_callbacks) == 1
+
+        callback, args = scheduled_callbacks.pop(0)
+        callback(*args)
+
+        assert app.title == "🧠"
+        assert "threaded" in app.model_item.title
 
     def test_ui_commands_delegate_to_fake_controller(self):
         """UI должен вызывать команды контроллера, а не runtime-модули напрямую."""

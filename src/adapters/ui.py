@@ -9,7 +9,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import AppKit
 import rumps
+from PyObjCTools.AppHelper import callAfter  # type: ignore[import-untyped]
 
 from ..domain.constants import Config
 
@@ -18,6 +20,14 @@ if TYPE_CHECKING:
     from ..domain.types import AppSnapshot, MicrophoneProfile
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _call_on_main_thread(callback: Any, *args: Any) -> None:
+    """Гарантирует, что обновление menu bar выполняется на главном потоке AppKit."""
+    if AppKit.NSThread.isMainThread():
+        callback(*args)
+        return
+    callAfter(callback, *args)
 
 
 def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
@@ -157,7 +167,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self._refresh_input_device_menu()
         self._refresh_microphone_profiles_menu()
         self._refresh_history_menu()
-        self.app.subscribe(self._apply_snapshot)
+        self.app.subscribe(self._apply_snapshot_on_main_thread)
 
     @property
     def state(self) -> str:
@@ -620,6 +630,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
         if not snapshot.started:
             self._refresh_title_and_status()
+
+    def _apply_snapshot_on_main_thread(self, snapshot: AppSnapshot) -> None:
+        """Переводит применение snapshot на главный поток, если callback пришёл из background thread."""
+        _call_on_main_thread(self._apply_snapshot, snapshot)
 
     def set_state(self, state: str) -> None:
         """Делегирует изменение состояния в DictationApp."""
