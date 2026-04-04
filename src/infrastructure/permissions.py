@@ -44,6 +44,32 @@ class _WorkspaceWakeObserver(AppKit.NSObject):  # type: ignore[misc]
             LOGGER.exception("❌ Ошибка в обработчике пробуждения системы")
 
 
+class _WorkspaceApplicationObserver(AppKit.NSObject):  # type: ignore[misc]
+    """Observer NSWorkspaceDidActivateApplicationNotification для Python-callback."""
+
+    callback = objc.ivar()
+
+    @classmethod
+    def observerWithCallback_(cls, callback: Callable[[dict[str, str | int] | None], None]) -> Any:  # noqa: N802
+        """Создаёт observer и удерживает Python-callback."""
+        observer = cast("Any", cls.alloc().init())
+        observer.callback = callback
+        return observer
+
+    def handleApplicationActivate_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает смену активного приложения во внешний callback."""
+        callback = cast(
+            "Callable[[dict[str, str | int] | None], None] | None",
+            getattr(self, "callback", None),
+        )
+        if callback is None:
+            return
+        try:
+            callback(frontmost_application_info())
+        except Exception:
+            LOGGER.exception("❌ Ошибка в обработчике смены активного приложения")
+
+
 def notify_user(title: str, message: str) -> None:
     """Показывает системное уведомление macOS.
 
@@ -94,6 +120,35 @@ def register_wake_observer(on_wake_callback: Callable[[], None]) -> Any:
         LOGGER.exception("❌ Не удалось зарегистрировать observer пробуждения системы")
         return None
     LOGGER.info("💤 Зарегистрирован observer пробуждения системы")
+    return observer
+
+
+def register_application_activation_observer(
+    on_activate_callback: Callable[[dict[str, str | int] | None], None],
+) -> Any:
+    """Регистрирует observer смены активного приложения macOS."""
+    if platform.system() != "Darwin":
+        return None
+
+    try:
+        workspace = AppKit.NSWorkspace.sharedWorkspace()
+        notification_center = workspace.notificationCenter()
+        notification_name = getattr(AppKit, "NSWorkspaceDidActivateApplicationNotification", None)
+        if notification_center is None or notification_name is None:
+            LOGGER.warning("⚠️ NSWorkspaceDidActivateApplicationNotification недоступно")
+            return None
+
+        observer = _WorkspaceApplicationObserver.observerWithCallback_(on_activate_callback)
+        notification_center.addObserver_selector_name_object_(
+            observer,
+            b"handleApplicationActivate:",
+            notification_name,
+            None,
+        )
+    except Exception:
+        LOGGER.exception("❌ Не удалось зарегистрировать observer смены активного приложения")
+        return None
+    LOGGER.info("🪟 Зарегистрирован observer смены активного приложения")
     return observer
 
 

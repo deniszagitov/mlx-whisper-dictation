@@ -47,6 +47,9 @@ class Config:
     DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE = (
         "remove_trailing_period_for_single_sentence_enabled"
     )
+    DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION = (
+        "restore_trailing_period_on_next_dictation_enabled"
+    )
     DEFAULTS_KEY_HISTORY = "transcription_history"
     DEFAULTS_KEY_PRIVATE_MODE = "private_mode"
     DEFAULTS_KEY_TOTAL_TOKENS = "total_token_usage"

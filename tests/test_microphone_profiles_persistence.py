@@ -54,6 +54,7 @@ def test_load_microphone_profiles_normalizes_and_limits_profiles(monkeypatch):
             "paste_clipboard": True,
             "capitalize_first_letter": False,
             "remove_trailing_period_for_single_sentence": False,
+            "restore_trailing_period_on_next_dictation": False,
             "llm_clipboard": False,
         },
         {"name": "", "input_device_index": 1},
@@ -87,6 +88,7 @@ def test_load_microphone_profiles_normalizes_and_limits_profiles(monkeypatch):
     assert profiles[0].paste_clipboard is True
     assert profiles[0].capitalize_first_letter is False
     assert profiles[0].remove_trailing_period_for_single_sentence is False
+    assert profiles[0].restore_trailing_period_on_next_dictation is False
     assert profiles[0].llm_clipboard is False
 
 
@@ -116,6 +118,7 @@ def test_save_microphone_profiles_writes_normalized_json(monkeypatch):
                 paste_clipboard=True,
                 capitalize_first_letter=False,
                 remove_trailing_period_for_single_sentence=True,
+                restore_trailing_period_on_next_dictation=False,
                 llm_clipboard=True,
             ),
         ]
@@ -141,6 +144,7 @@ def test_save_microphone_profiles_writes_normalized_json(monkeypatch):
             "paste_clipboard": True,
             "capitalize_first_letter": False,
             "remove_trailing_period_for_single_sentence": True,
+            "restore_trailing_period_on_next_dictation": False,
             "llm_clipboard": True,
         }
     ]

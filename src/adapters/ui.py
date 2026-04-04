@@ -116,8 +116,16 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             "Убирать точку в конце одного предложения",
             callback=self.toggle_remove_trailing_period_for_single_sentence,
         )
+        self.restore_trailing_period_on_next_dictation_item = rumps.MenuItem(
+            (
+                "После снятой точки связывать следующие диктовки "
+                "в цепочку предложений"
+            ),
+            callback=self.toggle_restore_trailing_period_on_next_dictation,
+        )
         self.postprocessing_menu.add(self.capitalize_first_letter_item)
         self.postprocessing_menu.add(self.remove_trailing_period_for_single_sentence_item)
+        self.postprocessing_menu.add(self.restore_trailing_period_on_next_dictation_item)
 
         self.recognition_menu = rumps.MenuItem("🧠 Распознавание")
         self.recognition_menu.add(self.model_item)
@@ -365,6 +373,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def remove_trailing_period_for_single_sentence_enabled(self) -> bool:
         """Возвращает флаг удаления точки в конце одного предложения."""
         return self.app.remove_trailing_period_for_single_sentence_enabled
+
+    @property
+    def restore_trailing_period_on_next_dictation_enabled(self) -> bool:
+        """Возвращает флаг автоточки перед следующей диктовкой."""
+        return self.app.restore_trailing_period_on_next_dictation_enabled
 
     @property
     def history(self) -> list[str]:
@@ -672,6 +685,9 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.remove_trailing_period_for_single_sentence_item.state = int(
             snapshot.remove_trailing_period_for_single_sentence_enabled
         )
+        self.restore_trailing_period_on_next_dictation_item.state = int(
+            snapshot.restore_trailing_period_on_next_dictation_enabled
+        )
         self.llm_download_item.title = snapshot.llm_download_title
         self.llm_download_item.set_callback(self._download_llm_model if snapshot.llm_download_interactive else None)
 
@@ -820,6 +836,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def toggle_remove_trailing_period_for_single_sentence(self, _sender: rumps.MenuItem) -> None:
         """Переключает удаление точки в конце одного предложения."""
         self.app.toggle_remove_trailing_period_for_single_sentence()
+
+    def toggle_restore_trailing_period_on_next_dictation(self, _sender: rumps.MenuItem) -> None:
+        """Переключает автоточку перед следующей диктовкой."""
+        self.app.toggle_restore_trailing_period_on_next_dictation()
 
     def _copy_history_item(self, sender: rumps.MenuItem) -> None:
         """Копирует выбранный элемент истории в буфер обмена."""

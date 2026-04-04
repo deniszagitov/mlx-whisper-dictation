@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import AppKit
 import Quartz
 
+from ..domain.constants import Config
 from ..domain.hotkeys import (
     MODIFIER_NAMES,
     hotkey_name_matches,
@@ -384,6 +385,11 @@ class HotkeyDispatcher:
                 return True
             if event_key_name != binding.required_key:
                 binding.triggered = False
+
+        if getattr(self.app, "state", None) != Config.STATUS_TRANSCRIBING:
+            transcriber = getattr(self.app, "transcriber", None)
+            if transcriber is not None and hasattr(transcriber, "handle_keyboard_activity"):
+                transcriber.handle_keyboard_activity()
         return False
 
     def _handle_key_up(self, event: Any) -> bool:

@@ -51,6 +51,9 @@ class MicrophoneProfilesUseCases:
             remove_trailing_period_for_single_sentence=bool(
                 getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True)
             ),
+            restore_trailing_period_on_next_dictation=bool(
+                getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False)
+            ),
             llm_clipboard=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
         )
 
@@ -141,6 +144,9 @@ class MicrophoneProfilesUseCases:
         self.transcriber.remove_trailing_period_for_single_sentence_enabled = (
             profile.remove_trailing_period_for_single_sentence
         )
+        self.transcriber.restore_trailing_period_on_next_dictation_enabled = (
+            profile.restore_trailing_period_on_next_dictation
+        )
         self.transcriber.llm_clipboard_enabled = profile.llm_clipboard
         self.settings_store.save_bool(Config.DEFAULTS_KEY_PASTE_CGEVENT, self.transcriber.paste_cgevent_enabled)
         self.settings_store.save_bool(Config.DEFAULTS_KEY_PASTE_AX, self.transcriber.paste_ax_enabled)
@@ -152,6 +158,10 @@ class MicrophoneProfilesUseCases:
         self.settings_store.save_bool(
             Config.DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE,
             self.transcriber.remove_trailing_period_for_single_sentence_enabled,
+        )
+        self.settings_store.save_bool(
+            Config.DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION,
+            self.transcriber.restore_trailing_period_on_next_dictation_enabled,
         )
         self.settings_store.save_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, self.transcriber.llm_clipboard_enabled)
 
@@ -220,6 +230,9 @@ class MicrophoneProfilesUseCases:
             capitalize_first_letter=bool(getattr(self.transcriber, "capitalize_first_letter_enabled", True)),
             remove_trailing_period_for_single_sentence=bool(
                 getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True)
+            ),
+            restore_trailing_period_on_next_dictation=bool(
+                getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False)
             ),
             llm_clipboard=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
         )

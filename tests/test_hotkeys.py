@@ -731,10 +731,12 @@ class TestHotkeyDispatcher:
             self.primary_key_combination = "cmd_l+alt"
             self.secondary_key_combination = "ctrl+shift+space"
             self.llm_key_combination = "ctrl+shift+l"
+            self.state = Config.STATUS_IDLE
             self.started = False
             self.toggle_count = 0
             self.toggle_llm_count = 0
             self.escape_keycodes: list[int] = []
+            self.transcriber = SimpleNamespace(handle_keyboard_activity=lambda: None)
 
         def toggle(self):
             self.toggle_count += 1
@@ -861,6 +863,37 @@ class TestHotkeyDispatcher:
 
         assert result is sentinel
         assert enabled_calls == [("fake_tap", True)]
+
+    def test_non_hotkey_key_down_notifies_transcriber_about_keyboard_activity(self, app_module, monkeypatch):
+        """Обычная клавиша вне режима распознавания должна сбрасывать продолжение фразы."""
+        import src.infrastructure.hotkeys as hotkeys_module
+
+        keyboard_activity_calls: list[bool] = []
+        fake_app = self._FakeApp()
+        fake_app.transcriber = SimpleNamespace(handle_keyboard_activity=lambda: keyboard_activity_calls.append(True))
+        dispatcher = app_module.HotkeyDispatcher(fake_app)
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda _kc: None)
+
+        result = dispatcher._handle_key_down(self._FakeEvent(0, "a"))
+
+        assert result is False
+        assert keyboard_activity_calls == [True]
+
+    def test_key_down_does_not_notify_transcriber_while_transcribing(self, app_module, monkeypatch):
+        """Во время программной вставки клавиши не должны сбрасывать продолжение фразы."""
+        import src.infrastructure.hotkeys as hotkeys_module
+
+        keyboard_activity_calls: list[bool] = []
+        fake_app = self._FakeApp()
+        fake_app.state = Config.STATUS_TRANSCRIBING
+        fake_app.transcriber = SimpleNamespace(handle_keyboard_activity=lambda: keyboard_activity_calls.append(True))
+        dispatcher = app_module.HotkeyDispatcher(fake_app)
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda _kc: None)
+
+        result = dispatcher._handle_key_down(self._FakeEvent(0, "a"))
+
+        assert result is False
+        assert keyboard_activity_calls == []
 
 
 class TestModifierConstants:

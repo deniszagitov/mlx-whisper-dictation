@@ -478,6 +478,7 @@ class TranscriberPreferences:
     paste_clipboard_enabled: bool
     capitalize_first_letter_enabled: bool
     remove_trailing_period_for_single_sentence_enabled: bool
+    restore_trailing_period_on_next_dictation_enabled: bool
     llm_clipboard_enabled: bool
     private_mode_enabled: bool
     total_tokens: int
@@ -496,6 +497,10 @@ class TranscriberPreferences:
             remove_trailing_period_for_single_sentence_enabled=settings_store.load_bool(
                 Config.DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE,
                 fallback=True,
+            ),
+            restore_trailing_period_on_next_dictation_enabled=settings_store.load_bool(
+                Config.DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION,
+                fallback=False,
             ),
             llm_clipboard_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True),
             private_mode_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, fallback=False),
@@ -535,6 +540,16 @@ class TranscriberPreferences:
             ),
         )
 
+    def with_restore_trailing_period_on_next_dictation_enabled(self, enabled: object) -> TranscriberPreferences:
+        """Возвращает новый набор настроек с автоточкой перед следующей диктовкой."""
+        return replace(
+            self,
+            restore_trailing_period_on_next_dictation_enabled=_coerce_bool(
+                enabled,
+                fallback=self.restore_trailing_period_on_next_dictation_enabled,
+            ),
+        )
+
     def with_llm_clipboard_enabled(self, enabled: object) -> TranscriberPreferences:
         """Возвращает новый набор настроек с обновлённым LLM clipboard."""
         return replace(self, llm_clipboard_enabled=_coerce_bool(enabled, fallback=self.llm_clipboard_enabled))
@@ -562,6 +577,7 @@ class MicrophoneProfile:
     paste_clipboard: bool
     capitalize_first_letter: bool
     remove_trailing_period_for_single_sentence: bool
+    restore_trailing_period_on_next_dictation: bool
     llm_clipboard: bool
 
     @classmethod
@@ -592,6 +608,10 @@ class MicrophoneProfile:
                 raw_profile.get("remove_trailing_period_for_single_sentence", True),
                 fallback=True,
             ),
+            restore_trailing_period_on_next_dictation=_coerce_bool(
+                raw_profile.get("restore_trailing_period_on_next_dictation", False),
+                fallback=False,
+            ),
             llm_clipboard=_coerce_bool(raw_profile.get("llm_clipboard", True), fallback=True),
         )
 
@@ -612,6 +632,7 @@ class MicrophoneProfile:
         paste_clipboard: object,
         capitalize_first_letter: object,
         remove_trailing_period_for_single_sentence: object,
+        restore_trailing_period_on_next_dictation: object,
         llm_clipboard: object,
     ) -> MicrophoneProfile:
         """Создаёт профиль из текущего runtime-состояния приложения."""
@@ -629,6 +650,7 @@ class MicrophoneProfile:
             "paste_clipboard": paste_clipboard,
             "capitalize_first_letter": capitalize_first_letter,
             "remove_trailing_period_for_single_sentence": remove_trailing_period_for_single_sentence,
+            "restore_trailing_period_on_next_dictation": restore_trailing_period_on_next_dictation,
             "llm_clipboard": llm_clipboard,
         }
         profile = cls.from_payload(payload)
@@ -652,6 +674,7 @@ class MicrophoneProfile:
             "paste_clipboard": self.paste_clipboard,
             "capitalize_first_letter": self.capitalize_first_letter,
             "remove_trailing_period_for_single_sentence": self.remove_trailing_period_for_single_sentence,
+            "restore_trailing_period_on_next_dictation": self.restore_trailing_period_on_next_dictation,
             "llm_clipboard": self.llm_clipboard,
         }
 
@@ -670,6 +693,7 @@ class MicrophoneProfile:
         paste_clipboard: bool,
         capitalize_first_letter: bool,
         remove_trailing_period_for_single_sentence: bool,
+        restore_trailing_period_on_next_dictation: bool,
         llm_clipboard: bool,
     ) -> bool:
         """Сравнивает профиль с текущими runtime-настройками."""
@@ -689,6 +713,7 @@ class MicrophoneProfile:
             and self.paste_clipboard == paste_clipboard
             and self.capitalize_first_letter == capitalize_first_letter
             and self.remove_trailing_period_for_single_sentence == remove_trailing_period_for_single_sentence
+            and self.restore_trailing_period_on_next_dictation == restore_trailing_period_on_next_dictation
             and self.llm_clipboard == llm_clipboard
         )
 
@@ -728,6 +753,7 @@ class AppSnapshot:
     paste_clipboard_enabled: bool
     capitalize_first_letter_enabled: bool
     remove_trailing_period_for_single_sentence_enabled: bool
+    restore_trailing_period_on_next_dictation_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int

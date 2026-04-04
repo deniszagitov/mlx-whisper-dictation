@@ -146,6 +146,7 @@ class FakeTranscriber:
         self.paste_clipboard_enabled = False
         self.capitalize_first_letter_enabled = True
         self.remove_trailing_period_for_single_sentence_enabled = True
+        self.restore_trailing_period_on_next_dictation_enabled = False
         self.llm_clipboard_enabled = True
         self.private_mode_enabled = False
         self.history: list[str] = []
@@ -290,6 +291,7 @@ def make_snapshot(**overrides):
         paste_clipboard_enabled=False,
         capitalize_first_letter_enabled=True,
         remove_trailing_period_for_single_sentence_enabled=True,
+        restore_trailing_period_on_next_dictation_enabled=True,
         llm_clipboard_enabled=True,
         history=["Привет мир"],
         total_tokens=123,
@@ -345,6 +347,9 @@ class FakeDictationController:
         self.remove_trailing_period_for_single_sentence_enabled = (
             snapshot.remove_trailing_period_for_single_sentence_enabled
         )
+        self.restore_trailing_period_on_next_dictation_enabled = (
+            snapshot.restore_trailing_period_on_next_dictation_enabled
+        )
         self.llm_clipboard_enabled = snapshot.llm_clipboard_enabled
         self.history = list(snapshot.history)
         self.total_tokens = snapshot.total_tokens
@@ -387,6 +392,10 @@ class FakeDictationController:
     def toggle_remove_trailing_period_for_single_sentence(self):
         """Запоминает команду переключения удаления точки."""
         self.calls.append(("toggle_remove_trailing_period_for_single_sentence", None))
+
+    def toggle_restore_trailing_period_on_next_dictation(self):
+        """Запоминает команду переключения автоточки перед следующей диктовкой."""
+        self.calls.append(("toggle_restore_trailing_period_on_next_dictation", None))
 
     def toggle_recording_overlay(self):
         """Запоминает команду переключения overlay."""
@@ -487,8 +496,8 @@ class TestStatusBarInit:
 
         assert app._menu_item(app.postprocessing_menu.title).title == app.postprocessing_menu.title
 
-    def test_postprocessing_menu_contains_both_rules(self, make_app):
-        """Подменю постобработки должно содержать оба переключателя правил."""
+    def test_postprocessing_menu_contains_all_rules(self, make_app):
+        """Подменю постобработки должно содержать все переключатели правил."""
         app, *_ = make_app(languages=["ru"])
 
         assert app.postprocessing_menu.title == "✨ Постобработка текста"
@@ -496,6 +505,10 @@ class TestStatusBarInit:
         assert (
             app.postprocessing_menu[app.remove_trailing_period_for_single_sentence_item.title].title
             == app.remove_trailing_period_for_single_sentence_item.title
+        )
+        assert (
+            app.postprocessing_menu[app.restore_trailing_period_on_next_dictation_item.title].title
+            == app.restore_trailing_period_on_next_dictation_item.title
         )
 
     def test_hotkey_in_menu(self, make_app):
@@ -604,14 +617,16 @@ class TestStatusBarInit:
         assert transcriber.llm_clipboard_enabled is True
         assert app.llm_clipboard_item.state == 1
 
-    def test_postprocessing_rules_enabled_by_default(self, make_app):
-        """Оба правила постобработки включены по умолчанию."""
+    def test_postprocessing_rules_default_state(self, make_app):
+        """Два базовых правила включены, а цепочка предложений выключена по умолчанию."""
         app, _recorder, transcriber = make_app(languages=["ru"])
 
         assert transcriber.capitalize_first_letter_enabled is True
         assert transcriber.remove_trailing_period_for_single_sentence_enabled is True
+        assert transcriber.restore_trailing_period_on_next_dictation_enabled is False
         assert app.capitalize_first_letter_item.state == 1
         assert app.remove_trailing_period_for_single_sentence_item.state == 1
+        assert app.restore_trailing_period_on_next_dictation_item.state == 0
 
 
 class TestStatusBarStateTransitions:
@@ -913,6 +928,7 @@ class TestStatusBarMenuSelections:
         transcriber.paste_clipboard_enabled = True
         transcriber.capitalize_first_letter_enabled = False
         transcriber.remove_trailing_period_for_single_sentence_enabled = False
+        transcriber.restore_trailing_period_on_next_dictation_enabled = False
         transcriber.llm_clipboard_enabled = False
 
         app.add_current_microphone_profile(None)
@@ -924,6 +940,7 @@ class TestStatusBarMenuSelections:
         assert saved_profiles[-1][0]["paste_clipboard"] is True
         assert saved_profiles[-1][0]["capitalize_first_letter"] is False
         assert saved_profiles[-1][0]["remove_trailing_period_for_single_sentence"] is False
+        assert saved_profiles[-1][0]["restore_trailing_period_on_next_dictation"] is False
         assert saved_profiles[-1][0]["llm_clipboard"] is False
 
     def test_apply_microphone_profile_updates_basic_settings(self, patched_app_module, monkeypatch):
@@ -973,6 +990,7 @@ class TestStatusBarMenuSelections:
                         "paste_clipboard": True,
                         "capitalize_first_letter": False,
                         "remove_trailing_period_for_single_sentence": False,
+                        "restore_trailing_period_on_next_dictation": False,
                         "llm_clipboard": False,
                     },
                 ]
@@ -996,6 +1014,7 @@ class TestStatusBarMenuSelections:
         assert transcriber.paste_clipboard_enabled is True
         assert transcriber.capitalize_first_letter_enabled is False
         assert transcriber.remove_trailing_period_for_single_sentence_enabled is False
+        assert transcriber.restore_trailing_period_on_next_dictation_enabled is False
         assert transcriber.llm_clipboard_enabled is False
         assert saved_device_indexes == [4]
         assert (Config.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_strings
@@ -1006,6 +1025,7 @@ class TestStatusBarMenuSelections:
         assert (Config.DEFAULTS_KEY_PASTE_CLIPBOARD, True) in saved_bools
         assert (Config.DEFAULTS_KEY_CAPITALIZE_FIRST_LETTER, False) in saved_bools
         assert (Config.DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE, False) in saved_bools
+        assert (Config.DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION, False) in saved_bools
         assert (Config.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
 
     def test_toggle_llm_clipboard_updates_transcriber_and_defaults(self, make_app, patched_app_module, monkeypatch):
@@ -1053,6 +1073,23 @@ class TestStatusBarMenuSelections:
         assert transcriber.remove_trailing_period_for_single_sentence_enabled is False
         assert app.remove_trailing_period_for_single_sentence_item.state == 0
         assert (Config.DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE, False) in saved_bools
+
+    def test_toggle_restore_trailing_period_updates_transcriber_and_defaults(
+        self,
+        make_app,
+        patched_app_module,
+        monkeypatch,
+    ):
+        """Переключатель автоточки должен менять runtime-state и сохраняться."""
+        saved_bools = []
+        app, _recorder, transcriber = make_app(languages=["ru"])
+        monkeypatch.setattr(app.app.settings_store, "save_bool", lambda key, value: saved_bools.append((key, value)))
+
+        app.toggle_restore_trailing_period_on_next_dictation(app.restore_trailing_period_on_next_dictation_item)
+
+        assert transcriber.restore_trailing_period_on_next_dictation_enabled is True
+        assert app.restore_trailing_period_on_next_dictation_item.state == 1
+        assert (Config.DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION, True) in saved_bools
 
     def test_delete_microphone_profile_removes_it(self, patched_app_module, monkeypatch):
         """Сохранённый профиль можно удалить из подменю быстрых профилей."""
@@ -1467,6 +1504,7 @@ class TestStatusBarWithFakeController:
                 show_recording_time_in_menu_bar=False,
                 capitalize_first_letter_enabled=False,
                 remove_trailing_period_for_single_sentence_enabled=False,
+                restore_trailing_period_on_next_dictation_enabled=False,
             )
         )
 
@@ -1477,6 +1515,7 @@ class TestStatusBarWithFakeController:
         assert app.recording_time_in_menu_bar_item.state == 0
         assert app.capitalize_first_letter_item.state == 0
         assert app.remove_trailing_period_for_single_sentence_item.state == 0
+        assert app.restore_trailing_period_on_next_dictation_item.state == 0
 
     def test_subscription_updates_snapshot_immediately_on_main_thread(self, monkeypatch):
         """На главном потоке snapshot применяется сразу, без отложенного dispatch."""
@@ -1534,6 +1573,7 @@ class TestStatusBarWithFakeController:
         app.toggle_recording_time_in_menu_bar(app.recording_time_in_menu_bar_item)
         app.toggle_capitalize_first_letter(app.capitalize_first_letter_item)
         app.toggle_remove_trailing_period_for_single_sentence(app.remove_trailing_period_for_single_sentence_item)
+        app.toggle_restore_trailing_period_on_next_dictation(app.restore_trailing_period_on_next_dictation_item)
         app.start_app(None)
         app.stop_app(None)
 
@@ -1543,6 +1583,7 @@ class TestStatusBarWithFakeController:
             ("toggle_recording_time_in_menu_bar", None),
             ("toggle_capitalize_first_letter", None),
             ("toggle_remove_trailing_period_for_single_sentence", None),
+            ("toggle_restore_trailing_period_on_next_dictation", None),
             ("start_recording", None),
             ("stop_recording", None),
         ]

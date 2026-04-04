@@ -195,6 +195,7 @@ class TranscriptionUseCases:
         request_input_monitoring_permission: Callable[[], bool | None] | None = None,
         warn_missing_accessibility_permission: Callable[[], None] | None = None,
         warn_missing_input_monitoring_permission: Callable[[], None] | None = None,
+        frontmost_application_info: Callable[[], dict[str, str | int] | None] | None = None,
     ) -> None:
         """Создаёт use case распознавания и вставки.
 
@@ -218,6 +219,7 @@ class TranscriptionUseCases:
             request_input_monitoring_permission: Необязательный повторный запрос права Input Monitoring.
             warn_missing_accessibility_permission: Необязательное предупреждение о недостающем Accessibility.
             warn_missing_input_monitoring_permission: Необязательное предупреждение о недостающем Input Monitoring.
+            frontmost_application_info: Необязательное чтение текущего активного приложения.
         """
         self.settings_store = settings_store or _InMemorySettingsStore()
         self.diagnostics_store = diagnostics_store or _DisabledDiagnosticsStore()
@@ -242,10 +244,14 @@ class TranscriptionUseCases:
         self._warn_missing_input_monitoring_permission_runtime = (
             warn_missing_input_monitoring_permission or _noop_permission_warning
         )
+        self._frontmost_application_info_reader = frontmost_application_info
         self.model_name = model_name
         self.preferences = preferences or TranscriberPreferences.from_store(self.settings_store)
         self._history_records: list[HistoryRecord] = []
         self.history: list[str] = []
+        self._pending_period_prefix_for_next_dictation = False
+        self._sentence_chain_established = False
+        self._pending_period_prefix_app_signature: tuple[str, int, str] | None = None
         if not self.private_mode_enabled:
             self._reload_persisted_history()
         self.history_callback: Callable[[], None] | None = None
@@ -295,6 +301,19 @@ class TranscriptionUseCases:
     @remove_trailing_period_for_single_sentence_enabled.setter
     def remove_trailing_period_for_single_sentence_enabled(self, enabled: object) -> None:
         self.preferences = self.preferences.with_remove_trailing_period_for_single_sentence_enabled(enabled)
+        if not self.preferences.remove_trailing_period_for_single_sentence_enabled:
+            self._reset_pending_period_prefix_for_next_dictation()
+
+    @property
+    def restore_trailing_period_on_next_dictation_enabled(self) -> bool:
+        """Возвращает флаг автоточки перед следующей диктовкой."""
+        return self.preferences.restore_trailing_period_on_next_dictation_enabled
+
+    @restore_trailing_period_on_next_dictation_enabled.setter
+    def restore_trailing_period_on_next_dictation_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_restore_trailing_period_on_next_dictation_enabled(enabled)
+        if not self.preferences.restore_trailing_period_on_next_dictation_enabled:
+            self._reset_pending_period_prefix_for_next_dictation()
 
     @property
     def llm_clipboard_enabled(self) -> bool:
@@ -415,6 +434,101 @@ class TranscriptionUseCases:
         self.settings_store.save_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, self.total_tokens)
         LOGGER.debug("🔢 Токены добавлены в счётчик: +%d, всего=%d", confirmed_tokens, self.total_tokens)
         self._notify_token_usage_changed()
+
+    def _normalize_frontmost_application_signature(
+        self,
+        app_info: dict[str, str | int] | None,
+    ) -> tuple[str, int, str] | None:
+        """Нормализует краткую информацию об активном приложении для сравнения."""
+        if app_info is None:
+            return None
+
+        bundle_id = str(app_info.get("bundle_id") or "").strip()
+        name = str(app_info.get("name") or "").strip()
+        try:
+            pid = int(app_info.get("pid", -1))
+        except (TypeError, ValueError):
+            pid = -1
+
+        if not bundle_id and not name and pid < 0:
+            return None
+        return (bundle_id, pid, name)
+
+    def _frontmost_application_signature(self) -> tuple[str, int, str] | None:
+        """Возвращает сигнатуру активного приложения через runtime-hook."""
+        if self._frontmost_application_info_reader is None:
+            return None
+
+        try:
+            return self._normalize_frontmost_application_signature(self._frontmost_application_info_reader())
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось определить активное приложение для автоточки")
+            return None
+
+    def _reset_pending_period_prefix_for_next_dictation(self) -> None:
+        """Сбрасывает состояние автоматической цепочки предложений."""
+        self._pending_period_prefix_for_next_dictation = False
+        self._sentence_chain_established = False
+        self._pending_period_prefix_app_signature = None
+
+    def _remember_period_prefix_for_next_dictation(self, *, established: bool) -> None:
+        """Запоминает или продлевает цепочку автоматического связывания предложений."""
+        self._pending_period_prefix_for_next_dictation = True
+        self._sentence_chain_established = established
+        if self._pending_period_prefix_app_signature is None:
+            self._pending_period_prefix_app_signature = self._frontmost_application_signature()
+
+    def _trailing_period_was_removed(self, text: str) -> bool:
+        """Проверяет, сняла ли постобработка финальную точку у текущего текста."""
+        if not text or not self.remove_trailing_period_for_single_sentence_enabled:
+            return False
+        return RemoveTrailingPeriodForSingleSentenceRule().apply(text) != text
+
+    def _text_ends_with_terminal_punctuation(self, text: str) -> bool:
+        """Проверяет, заканчивается ли текст завершающим знаком препинания."""
+        stripped_text = text.rstrip()
+        if not stripped_text:
+            return False
+
+        while stripped_text and stripped_text[-1] in ('"', "'", ")", "]", "}", "»"):
+            stripped_text = stripped_text[:-1]
+        if not stripped_text:
+            return False
+        return stripped_text.endswith((".", "!", "?", "…"))
+
+    def _ensure_terminal_punctuation(self, text: str) -> str:
+        """Добавляет завершающую точку, если фрагмент её не содержит."""
+        if not text or self._text_ends_with_terminal_punctuation(text):
+            return text
+        return f"{text}."
+
+    def _apply_pending_period_prefix(self, text: str) -> str:
+        """Форматирует продолжение цепочки предложений между диктовками."""
+        if not text:
+            return text
+        if not self.restore_trailing_period_on_next_dictation_enabled:
+            return text
+        if not self._pending_period_prefix_for_next_dictation:
+            return text
+        prefix = " " if self._sentence_chain_established else ". "
+        return self._ensure_terminal_punctuation(f"{prefix}{text}")
+
+    def handle_keyboard_activity(self) -> None:
+        """Сбрасывает продолжение фразы после любого ручного ввода с клавиатуры."""
+        self._reset_pending_period_prefix_for_next_dictation()
+
+    def handle_frontmost_application_change(self, app_info: dict[str, str | int] | None) -> None:
+        """Сбрасывает продолжение фразы, если пользователь ушёл в другое приложение."""
+        if not self._pending_period_prefix_for_next_dictation:
+            return
+        if self._pending_period_prefix_app_signature is None:
+            return
+
+        current_signature = self._normalize_frontmost_application_signature(app_info)
+        if current_signature is None:
+            return
+        if current_signature != self._pending_period_prefix_app_signature:
+            self._reset_pending_period_prefix_for_next_dictation()
 
     def _type_text_via_cgevent(self, text: str) -> None:
         """Вставляет текст через отправку Unicode-символов посредством CGEvent.
@@ -654,6 +768,7 @@ class TranscriptionUseCases:
                 text = str(result.get("text", "")).strip()
                 LOGGER.info("🧠 Повторный проход завершен, длина текста=%s, текст=%r", len(text), text[:120])
 
+        trailing_period_was_removed = self._trailing_period_was_removed(text)
         text = self._postprocess_transcribed_text(text)
         self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, result=result, text=text)
         self.add_token_usage(extract_transcription_token_count(result))
@@ -669,8 +784,11 @@ class TranscriptionUseCases:
         if looks_like_hallucination(text) and rms_energy < Config.HALLUCINATION_RMS_THRESHOLD:
             LOGGER.warning("👻 Отброшен вероятный галлюцинаторный результат: %r", text)
 
+        pending_period_prefix_was_active = self._pending_period_prefix_for_next_dictation
+        output_text = self._apply_pending_period_prefix(text)
+
         # Сохраняем текст в историю независимо от метода вставки
-        self.add_to_history(text)
+        self.add_to_history(output_text)
 
         # Проверяем разрешения macOS, необходимые для всех методов автовставки
         if not self._is_accessibility_trusted():
@@ -684,8 +802,9 @@ class TranscriptionUseCases:
             time.sleep(0.2)
 
         if not self._is_accessibility_trusted():
+            self._reset_pending_period_prefix_for_next_dictation()
             self._warn_missing_accessibility_permission()
-            clipboard_saved = self._copy_result_to_clipboard_fallback(text)
+            clipboard_saved = self._copy_result_to_clipboard_fallback(output_text)
             self._notify_user(
                 "MLX Whisper Dictation",
                 "Текст распознан и "
@@ -695,8 +814,9 @@ class TranscriptionUseCases:
             return
 
         if self._get_input_monitoring_status() is False:
+            self._reset_pending_period_prefix_for_next_dictation()
             self._warn_missing_input_monitoring_permission()
-            clipboard_saved = self._copy_result_to_clipboard_fallback(text)
+            clipboard_saved = self._copy_result_to_clipboard_fallback(output_text)
             self._notify_user(
                 "MLX Whisper Dictation",
                 "Текст распознан и "
@@ -716,7 +836,8 @@ class TranscriptionUseCases:
 
         if not methods:
             LOGGER.warning("⚠️ Ни один метод вставки не включён")
-            clipboard_saved = self._copy_result_to_clipboard_fallback(text)
+            self._reset_pending_period_prefix_for_next_dictation()
+            clipboard_saved = self._copy_result_to_clipboard_fallback(output_text)
             self._notify_user(
                 "MLX Whisper Dictation",
                 "Текст распознан и "
@@ -728,15 +849,27 @@ class TranscriptionUseCases:
         inserted = False
         for method_name, method_fn in methods:
             try:
-                method_fn(text)
+                method_fn(output_text)
                 LOGGER.info("✅ Текст вставлен через: %s", method_name)
                 inserted = True
                 break
             except Exception:
                 LOGGER.exception("⚠️ Метод «%s» не сработал", method_name)
 
+        if inserted:
+            if not self.restore_trailing_period_on_next_dictation_enabled:
+                self._reset_pending_period_prefix_for_next_dictation()
+            elif pending_period_prefix_was_active:
+                self._remember_period_prefix_for_next_dictation(established=True)
+            elif trailing_period_was_removed:
+                self._remember_period_prefix_for_next_dictation(established=False)
+            else:
+                self._reset_pending_period_prefix_for_next_dictation()
+            return
+
         if not inserted:
-            clipboard_saved = self._copy_result_to_clipboard_fallback(text)
+            self._reset_pending_period_prefix_for_next_dictation()
+            clipboard_saved = self._copy_result_to_clipboard_fallback(output_text)
             self._notify_user(
                 "MLX Whisper Dictation",
                 "Не удалось вставить текст автоматически. "

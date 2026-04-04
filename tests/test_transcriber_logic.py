@@ -1,7 +1,39 @@
 """Юнит-тесты основного сценария распознавания и автовставки."""
 
+from dataclasses import dataclass
+
 import numpy as np
 from src.domain.constants import Config
+
+AppInfo = dict[str, str | int]
+
+
+@dataclass(frozen=True, slots=True)
+class DictationScenarioStep:
+    """Описывает один шаг сценария последовательных диктовок."""
+
+    transcribed_text: str
+    keyboard_activity_after: bool = False
+    application_change_after: AppInfo | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DictationScenario:
+    """Описывает сценарий серии вызовов `transcribe`."""
+
+    steps: tuple[DictationScenarioStep, ...]
+    expected_inserted: tuple[str, ...]
+    expected_history: tuple[str, ...] | None = None
+    restore_trailing_period_on_next_dictation_enabled: bool = False
+    initial_frontmost_application: AppInfo | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TranscribeToTextScenario:
+    """Описывает сценарий для `transcribe_to_text`."""
+
+    transcription_result: dict[str, object]
+    expected_text: str | None
 
 
 class FakeSettingsStore:
@@ -61,6 +93,149 @@ def make_transcriber(app_module, diagnostics_enabled=False):
         settings_store=FakeSettingsStore(),
         diagnostics_store=diagnostics_store,
     )
+
+
+# Сценарии
+
+NOTES_APP_INFO: AppInfo = {"name": "Notes", "bundle_id": "com.apple.Notes", "pid": 100}
+SAFARI_APP_INFO: AppInfo = {"name": "Safari", "bundle_id": "com.apple.Safari", "pid": 200}
+
+RESTORES_PERIOD_BEFORE_NEXT_DICTATION_SCENARIO = DictationScenario(
+    steps=(
+        DictationScenarioStep("привет."),
+        DictationScenarioStep("как дела"),
+    ),
+    expected_inserted=("Привет", ". Как дела."),
+    restore_trailing_period_on_next_dictation_enabled=True,
+)
+
+DOES_NOT_RESTORE_PERIOD_WHEN_FEATURE_DISABLED_SCENARIO = DictationScenario(
+    steps=(
+        DictationScenarioStep("привет."),
+        DictationScenarioStep("как дела"),
+    ),
+    expected_inserted=("Привет", "Как дела"),
+    restore_trailing_period_on_next_dictation_enabled=False,
+)
+
+KEYBOARD_ACTIVITY_CLEARS_PENDING_PERIOD_PREFIX_SCENARIO = DictationScenario(
+    steps=(
+        DictationScenarioStep("привет.", keyboard_activity_after=True),
+        DictationScenarioStep("как дела"),
+    ),
+    expected_inserted=("Привет", "Как дела"),
+    restore_trailing_period_on_next_dictation_enabled=True,
+)
+
+APPLICATION_CHANGE_CLEARS_PENDING_PERIOD_PREFIX_SCENARIO = DictationScenario(
+    steps=(
+        DictationScenarioStep("привет.", application_change_after=SAFARI_APP_INFO),
+        DictationScenarioStep("как дела"),
+    ),
+    expected_inserted=("Привет", "Как дела"),
+    restore_trailing_period_on_next_dictation_enabled=True,
+    initial_frontmost_application=NOTES_APP_INFO,
+)
+
+KEEPS_RESTORING_PERIOD_ACROSS_MULTIPLE_DICTATIONS_SCENARIO = DictationScenario(
+    steps=(
+        DictationScenarioStep("первое после нажатия."),
+        DictationScenarioStep("второе"),
+        DictationScenarioStep("третье"),
+        DictationScenarioStep("четвертое"),
+    ),
+    expected_inserted=(
+        "Первое после нажатия",
+        ". Второе.",
+        " Третье.",
+        " Четвертое.",
+    ),
+    restore_trailing_period_on_next_dictation_enabled=True,
+)
+
+KEEPS_EXISTING_TERMINAL_PUNCTUATION_INSIDE_CHAIN_SCENARIO = DictationScenario(
+    steps=(
+        DictationScenarioStep("первое после нажатия."),
+        DictationScenarioStep("второе!"),
+        DictationScenarioStep("третье"),
+    ),
+    expected_inserted=(
+        "Первое после нажатия",
+        ". Второе!",
+        " Третье.",
+    ),
+    restore_trailing_period_on_next_dictation_enabled=True,
+)
+
+KEYBOARD_ACTIVITY_STARTS_NEW_CHAIN_AFTER_EXISTING_ONE_SCENARIO = DictationScenario(
+    steps=(
+        DictationScenarioStep("первое после нажатия."),
+        DictationScenarioStep("второе", keyboard_activity_after=True),
+        DictationScenarioStep("было нажатие."),
+        DictationScenarioStep("теперь второе"),
+    ),
+    expected_inserted=(
+        "Первое после нажатия",
+        ". Второе.",
+        "Было нажатие",
+        ". Теперь второе.",
+    ),
+    restore_trailing_period_on_next_dictation_enabled=True,
+)
+
+TRANSCRIBE_TO_TEXT_POSTPROCESSING_SCENARIO = TranscribeToTextScenario(
+    transcription_result={"text": "привет.", "segments": [{"tokens": [1]}]},
+    expected_text="Привет",
+)
+
+
+# Общий код выполнения сценариев
+
+def run_dictation_scenario(app_module, monkeypatch, scenario: DictationScenario):
+    """Прогоняет сценарий серии диктовок и возвращает наблюдаемые эффекты."""
+    transcriber = make_transcriber(app_module)
+    transcriber.restore_trailing_period_on_next_dictation_enabled = (
+        scenario.restore_trailing_period_on_next_dictation_enabled
+    )
+    inserted: list[str] = []
+    history_added: list[str] = []
+    transcription_results = iter([{"text": step.transcribed_text} for step in scenario.steps])
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: next(transcription_results))
+    monkeypatch.setattr(transcriber, "_type_text_via_cgevent", inserted.append)
+    monkeypatch.setattr(transcriber, "add_to_history", history_added.append)
+
+    if scenario.initial_frontmost_application is not None:
+        transcriber._frontmost_application_info_reader = lambda: scenario.initial_frontmost_application
+
+    for step in scenario.steps:
+        transcriber.transcribe(make_audio(), "ru")
+        if step.keyboard_activity_after:
+            transcriber.handle_keyboard_activity()
+        if step.application_change_after is not None:
+            transcriber.handle_frontmost_application_change(step.application_change_after)
+
+    return inserted, history_added
+
+
+def assert_dictation_scenario(app_module, monkeypatch, scenario: DictationScenario) -> None:
+    """Проверяет сценарий серии диктовок через общий runner."""
+    inserted, history_added = run_dictation_scenario(app_module, monkeypatch, scenario)
+    expected_history = scenario.expected_history or scenario.expected_inserted
+
+    assert inserted == list(scenario.expected_inserted)
+    assert history_added == list(expected_history)
+
+
+def run_transcribe_to_text_scenario(app_module, monkeypatch, scenario: TranscribeToTextScenario):
+    """Прогоняет сценарий `transcribe_to_text` через общую настройку transcriber-а."""
+    transcriber = make_transcriber(app_module)
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: scenario.transcription_result)
+    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
+    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
+
+    return transcriber.transcribe_to_text(make_audio(), "ru")
 
 
 def test_transcribe_inserts_via_cgevent_when_enabled(app_module, monkeypatch):
@@ -442,18 +617,71 @@ def test_transcribe_keeps_final_period_for_multiple_sentences(app_module, monkey
     assert inserted == ["Привет. как дела."]
 
 
+def test_transcribe_restores_period_before_next_dictation_when_enabled(app_module, monkeypatch):
+    """Второй фрагмент цепочки должен получить '. ' в начале и точку в конце."""
+    assert_dictation_scenario(app_module, monkeypatch, RESTORES_PERIOD_BEFORE_NEXT_DICTATION_SCENARIO)
+
+
+def test_transcribe_does_not_restore_period_when_feature_disabled(app_module, monkeypatch):
+    """При выключенной автоточке следующая диктовка не должна получать префикс."""
+    assert_dictation_scenario(
+        app_module,
+        monkeypatch,
+        DOES_NOT_RESTORE_PERIOD_WHEN_FEATURE_DISABLED_SCENARIO,
+    )
+
+
+def test_keyboard_activity_clears_pending_period_prefix(app_module, monkeypatch):
+    """Любой ручной ввод с клавиатуры должен отменять автоточку на следующую диктовку."""
+    assert_dictation_scenario(
+        app_module,
+        monkeypatch,
+        KEYBOARD_ACTIVITY_CLEARS_PENDING_PERIOD_PREFIX_SCENARIO,
+    )
+
+
+def test_application_change_clears_pending_period_prefix(app_module, monkeypatch):
+    """Смена активного приложения должна отменять автоточку на следующую диктовку."""
+    assert_dictation_scenario(
+        app_module,
+        monkeypatch,
+        APPLICATION_CHANGE_CLEARS_PENDING_PERIOD_PREFIX_SCENARIO,
+    )
+
+
+def test_transcribe_keeps_restoring_period_across_multiple_dictations(app_module, monkeypatch):
+    """Без ручного ввода цепочка должна оформляться как последовательность предложений."""
+    assert_dictation_scenario(
+        app_module,
+        monkeypatch,
+        KEEPS_RESTORING_PERIOD_ACROSS_MULTIPLE_DICTATIONS_SCENARIO,
+    )
+
+
+def test_transcribe_keeps_existing_terminal_punctuation_inside_chain(app_module, monkeypatch):
+    """Внутри цепочки существующий знак конца предложения не должен заменяться точкой."""
+    assert_dictation_scenario(
+        app_module,
+        monkeypatch,
+        KEEPS_EXISTING_TERMINAL_PUNCTUATION_INSIDE_CHAIN_SCENARIO,
+    )
+
+
+def test_keyboard_activity_starts_new_chain_after_existing_one(app_module, monkeypatch):
+    """После ручного ввода следующая диктовка должна начинать новую цепочку заново."""
+    assert_dictation_scenario(
+        app_module,
+        monkeypatch,
+        KEYBOARD_ACTIVITY_STARTS_NEW_CHAIN_AFTER_EXISTING_ONE_SCENARIO,
+    )
+
+
 def test_transcribe_to_text_applies_postprocessing_rules(app_module, monkeypatch):
     """transcribe_to_text тоже должен возвращать уже постобработанный текст."""
-    transcriber = make_transcriber(app_module)
-
-    monkeypatch.setattr(
-        transcriber,
-        "_run_transcription",
-        lambda *_args: {"text": "привет.", "segments": [{"tokens": [1]}]},
+    result = run_transcribe_to_text_scenario(
+        app_module,
+        monkeypatch,
+        TRANSCRIBE_TO_TEXT_POSTPROCESSING_SCENARIO,
     )
-    monkeypatch.setattr(transcriber.settings_store, "save_int", lambda *_args: None)
-    monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
 
-    result = transcriber.transcribe_to_text(make_audio(), "ru")
-
-    assert result == "Привет"
+    assert result == TRANSCRIBE_TO_TEXT_POSTPROCESSING_SCENARIO.expected_text

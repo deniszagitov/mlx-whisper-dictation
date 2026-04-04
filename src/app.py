@@ -331,6 +331,7 @@ class DictationApp:
         self.elapsed_time = 0
         self.key_listener: Any = None
         self.wake_observer: Any = None
+        self.application_activation_observer: Any = None
         self._llm_downloading = False
         self._preferred_input_device_unavailable = False
         self._preferred_input_device_notified = False
@@ -616,6 +617,11 @@ class DictationApp:
         return bool(getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True))
 
     @property
+    def restore_trailing_period_on_next_dictation_enabled(self) -> bool:
+        """Возвращает флаг автоточки перед следующей диктовкой."""
+        return bool(getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False))
+
+    @property
     def llm_clipboard_enabled(self) -> bool:
         """Возвращает флаг использования буфера обмена для LLM."""
         return bool(getattr(self.transcriber, "llm_clipboard_enabled", True))
@@ -803,6 +809,9 @@ class DictationApp:
             remove_trailing_period_for_single_sentence_enabled=bool(
                 getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True)
             ),
+            restore_trailing_period_on_next_dictation_enabled=bool(
+                getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False)
+            ),
             llm_clipboard_enabled=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
             history=list(getattr(self.transcriber, "history", [])),
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
@@ -937,6 +946,9 @@ class DictationApp:
             remove_trailing_period_for_single_sentence=bool(
                 getattr(self.transcriber, "remove_trailing_period_for_single_sentence_enabled", True)
             ),
+            restore_trailing_period_on_next_dictation=bool(
+                getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False)
+            ),
             llm_clipboard=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
         )
 
@@ -1015,6 +1027,10 @@ class DictationApp:
     def toggle_remove_trailing_period_for_single_sentence(self) -> None:
         """Переключает удаление точки в конце одного предложения."""
         self.settings_use_cases.toggle_remove_trailing_period_for_single_sentence()
+
+    def toggle_restore_trailing_period_on_next_dictation(self) -> None:
+        """Переключает автоточку перед следующей диктовкой."""
+        self.settings_use_cases.toggle_restore_trailing_period_on_next_dictation()
 
     def prune_expired_history(self) -> None:
         """Удаляет просроченную историю, если transcriber поддерживает это."""

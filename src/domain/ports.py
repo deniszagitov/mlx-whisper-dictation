@@ -57,6 +57,7 @@ class StatusBarControllerProtocol(Protocol):
     paste_clipboard_enabled: bool
     capitalize_first_letter_enabled: bool
     remove_trailing_period_for_single_sentence_enabled: bool
+    restore_trailing_period_on_next_dictation_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int
@@ -189,6 +190,10 @@ class StatusBarControllerProtocol(Protocol):
 
     def toggle_remove_trailing_period_for_single_sentence(self) -> None:
         """Переключает удаление точки в конце одного предложения."""
+        ...
+
+    def toggle_restore_trailing_period_on_next_dictation(self) -> None:
+        """Переключает автоточку перед следующей диктовкой."""
         ...
 
     def copy_history_text(self, text: str) -> None:

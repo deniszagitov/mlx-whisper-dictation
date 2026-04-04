@@ -225,6 +225,23 @@ class SettingsUseCases:
         )
         self.publish_snapshot()
 
+    def toggle_restore_trailing_period_on_next_dictation(self) -> None:
+        """Переключает связывание последовательных диктовок в цепочку предложений."""
+        self.transcriber.restore_trailing_period_on_next_dictation_enabled = not getattr(
+            self.transcriber,
+            "restore_trailing_period_on_next_dictation_enabled",
+            False,
+        )
+        self.settings_store.save_bool(
+            Config.DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION,
+            self.transcriber.restore_trailing_period_on_next_dictation_enabled,
+        )
+        LOGGER.info(
+            "✨ Связывание диктовок в цепочку предложений: %s",
+            "включено" if self.transcriber.restore_trailing_period_on_next_dictation_enabled else "выключено",
+        )
+        self.publish_snapshot()
+
     def change_llm_prompt(self, prompt_name: str) -> None:
         """Переключает текущий пресет системного промпта LLM."""
         if prompt_name not in Config.LLM_PROMPT_PRESETS:

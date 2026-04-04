@@ -64,6 +64,7 @@ from src.infrastructure.permissions import (
     notify_user,
     permission_label,  # noqa: F401
     permission_preflight_status,  # noqa: F401
+    register_application_activation_observer,
     register_wake_observer,
     request_accessibility_permission,
     request_input_monitoring_permission,
@@ -267,6 +268,7 @@ def main() -> None:
         request_input_monitoring_permission=request_input_monitoring_permission,
         warn_missing_accessibility_permission=warn_missing_accessibility_permission,
         warn_missing_input_monitoring_permission=warn_missing_input_monitoring_permission,
+        frontmost_application_info=frontmost_application_info,
     )
     recorder = Recorder()
     llm_processor = LLMProcessor(
@@ -321,6 +323,9 @@ def main() -> None:
     key_listener.start()
     app_controller.key_listener = key_listener
     app_controller.wake_observer = register_wake_observer(app_controller.handle_system_wake)
+    app_controller.application_activation_observer = register_application_activation_observer(
+        transcriber.handle_frontmost_application_change
+    )
 
     _log_startup_configuration(args)
     app.run()

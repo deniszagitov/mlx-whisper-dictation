@@ -23,6 +23,7 @@ def test_microphone_profile_from_payload_normalizes_fields() -> None:
             "paste_clipboard": True,
             "capitalize_first_letter": False,
             "remove_trailing_period_for_single_sentence": False,
+            "restore_trailing_period_on_next_dictation": False,
             "llm_clipboard": False,
         }
     )
@@ -37,6 +38,7 @@ def test_microphone_profile_from_payload_normalizes_fields() -> None:
     assert profile.paste_ax is True
     assert profile.capitalize_first_letter is False
     assert profile.remove_trailing_period_for_single_sentence is False
+    assert profile.restore_trailing_period_on_next_dictation is False
     assert profile.llm_clipboard is False
 
 
@@ -56,6 +58,7 @@ def test_microphone_profile_to_payload_roundtrip() -> None:
         paste_clipboard=True,
         capitalize_first_letter=True,
         remove_trailing_period_for_single_sentence=False,
+        restore_trailing_period_on_next_dictation=False,
         llm_clipboard=True,
     )
 
@@ -73,6 +76,7 @@ def test_microphone_profile_to_payload_roundtrip() -> None:
         "paste_clipboard": True,
         "capitalize_first_letter": True,
         "remove_trailing_period_for_single_sentence": False,
+        "restore_trailing_period_on_next_dictation": False,
         "llm_clipboard": True,
     }
 
@@ -107,4 +111,5 @@ def test_app_snapshot_type_annotations_stay_available() -> None:
         "show_recording_time_in_menu_bar",
         "capitalize_first_letter_enabled",
         "remove_trailing_period_for_single_sentence_enabled",
+        "restore_trailing_period_on_next_dictation_enabled",
     }
