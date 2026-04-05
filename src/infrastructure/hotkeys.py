@@ -329,7 +329,19 @@ class HotkeyDispatcher:
         mask = MODIFIER_FLAG_MASKS.get(modifier_name, 0)
         return bool(modifier_flags & mask)
 
+    def _sync_modifier_state_from_event(self, event: Any) -> None:
+        """Удаляет из runtime-state модификаторы, которых уже нет в текущем event."""
+        modifier_flags = int(event.modifierFlags())
+        stale_modifier_names = {
+            modifier_name
+            for modifier_name in self.pressed_modifier_names
+            if not modifier_flags & MODIFIER_FLAG_MASKS.get(modifier_name, 0)
+        }
+        if stale_modifier_names:
+            self.pressed_modifier_names.difference_update(stale_modifier_names)
+
     def _handle_flags_changed(self, event: Any) -> bool:
+        self._sync_modifier_state_from_event(event)
         key_code = int(event.keyCode())
         modifier_name = MODIFIER_KEYCODES_MAP.get(key_code)
         if modifier_name is None:
@@ -364,6 +376,7 @@ class HotkeyDispatcher:
         return should_suppress
 
     def _handle_key_down(self, event: Any) -> bool:
+        self._sync_modifier_state_from_event(event)
         event_key_name = _event_key_name_static(event)
         if event_key_name == "esc" and getattr(self.app, "started", False):
             LOGGER.info("⌨️ Escape перехвачен dispatcher-ом — отменяю запись")
@@ -427,12 +440,14 @@ class HotkeyDispatcher:
     def _cgevent_tap_callback(self, _proxy: Any, event_type: int, cg_event: Any, _refcon: Any) -> Any | None:
         if event_type == Quartz.kCGEventTapDisabledByTimeout:
             LOGGER.warning("⌨️ CGEventTap отключён по таймауту, включаем обратно")
+            self._reset_runtime_state()
             if self._event_tap is not None:
                 Quartz.CGEventTapEnable(self._event_tap, True)
             return cg_event
 
         if event_type == Quartz.kCGEventTapDisabledByUserInput:
             LOGGER.warning("⌨️ CGEventTap отключён системой, включаем обратно")
+            self._reset_runtime_state()
             if self._event_tap is not None:
                 Quartz.CGEventTapEnable(self._event_tap, True)
             return cg_event

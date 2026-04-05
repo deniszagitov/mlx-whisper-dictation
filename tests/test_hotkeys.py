@@ -766,7 +766,10 @@ class TestHotkeyDispatcher:
 
     def test_modifier_only_hotkey_triggers_toggle(self, app_module):
         dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
-        event = self._FakeEvent(58, modifier_flags=app_module.MODIFIER_FLAG_MASKS["alt_l"])
+        event = self._FakeEvent(
+            58,
+            modifier_flags=app_module.MODIFIER_FLAG_MASKS["cmd_l"] | app_module.MODIFIER_FLAG_MASKS["alt_l"],
+        )
 
         dispatcher.pressed_modifier_names = {"cmd_l"}
 
@@ -780,8 +783,9 @@ class TestHotkeyDispatcher:
         dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
         dispatcher.pressed_modifier_names = {"ctrl_l", "shift_l"}
 
-        key_down = self._FakeEvent(49, " ")
-        key_up = self._FakeEvent(49, " ")
+        modifier_flags = app_module.MODIFIER_FLAG_MASKS["ctrl_l"] | app_module.MODIFIER_FLAG_MASKS["shift_l"]
+        key_down = self._FakeEvent(49, " ", modifier_flags=modifier_flags)
+        key_up = self._FakeEvent(49, " ", modifier_flags=modifier_flags)
 
         assert dispatcher._handle_key_down(key_down) is True
         assert dispatcher.app.toggle_count == 1
@@ -794,7 +798,11 @@ class TestHotkeyDispatcher:
         dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
         dispatcher.pressed_modifier_names = {"ctrl_l", "shift_l"}
 
-        event = self._FakeEvent(37, "l")
+        event = self._FakeEvent(
+            37,
+            "l",
+            modifier_flags=app_module.MODIFIER_FLAG_MASKS["ctrl_l"] | app_module.MODIFIER_FLAG_MASKS["shift_l"],
+        )
 
         assert dispatcher._handle_key_down(event) is True
         assert dispatcher.app.toggle_llm_count == 1
@@ -864,6 +872,32 @@ class TestHotkeyDispatcher:
         assert result is sentinel
         assert enabled_calls == [("fake_tap", True)]
 
+    def test_callback_clears_modifier_state_on_timeout_disable(self, app_module, monkeypatch):
+        """После timeout-disable dispatcher не должен хранить залипшие модификаторы."""
+        import Quartz as _quartz_mod  # noqa: N813
+
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher._event_tap = "fake_tap"
+        dispatcher.pressed_modifier_names = {"alt_l"}
+        monkeypatch.setattr(_quartz_mod, "CGEventTapEnable", lambda *_args: None)
+
+        dispatcher._cgevent_tap_callback(None, _quartz_mod.kCGEventTapDisabledByTimeout, object(), None)
+
+        assert dispatcher.pressed_modifier_names == set()
+
+    def test_callback_clears_modifier_state_on_user_input_disable(self, app_module, monkeypatch):
+        """После системного disable dispatcher не должен хранить залипшие модификаторы."""
+        import Quartz as _quartz_mod  # noqa: N813
+
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher._event_tap = "fake_tap"
+        dispatcher.pressed_modifier_names = {"alt_l"}
+        monkeypatch.setattr(_quartz_mod, "CGEventTapEnable", lambda *_args: None)
+
+        dispatcher._cgevent_tap_callback(None, _quartz_mod.kCGEventTapDisabledByUserInput, object(), None)
+
+        assert dispatcher.pressed_modifier_names == set()
+
     def test_non_hotkey_key_down_notifies_transcriber_about_keyboard_activity(self, app_module, monkeypatch):
         """Обычная клавиша вне режима распознавания должна сбрасывать продолжение фразы."""
         import src.infrastructure.hotkeys as hotkeys_module
@@ -894,6 +928,42 @@ class TestHotkeyDispatcher:
 
         assert result is False
         assert keyboard_activity_calls == []
+
+    def test_bare_backtick_does_not_trigger_option_backtick_with_stale_alt(self, app_module, monkeypatch):
+        """Залипший runtime-state не должен превращать bare backtick в option+backtick."""
+        import src.infrastructure.hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda _kc: None)
+        fake_app = self._FakeApp()
+        fake_app.primary_key_combination = "alt+`"
+        fake_app.secondary_key_combination = ""
+        fake_app.llm_key_combination = ""
+        dispatcher = app_module.HotkeyDispatcher(fake_app)
+        dispatcher.pressed_modifier_names = {"alt_l"}
+
+        result = dispatcher._handle_key_down(self._FakeEvent(50, "`", modifier_flags=0))
+
+        assert result is False
+        assert fake_app.toggle_count == 0
+
+    def test_option_backtick_triggers_when_alt_flag_is_present(self, app_module, monkeypatch):
+        """option+backtick должен срабатывать, когда alt реально зажат в keyDown event."""
+        import src.infrastructure.hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda _kc: None)
+        fake_app = self._FakeApp()
+        fake_app.primary_key_combination = "alt+`"
+        fake_app.secondary_key_combination = ""
+        fake_app.llm_key_combination = ""
+        dispatcher = app_module.HotkeyDispatcher(fake_app)
+        dispatcher.pressed_modifier_names = {"alt_l"}
+
+        result = dispatcher._handle_key_down(
+            self._FakeEvent(50, "`", modifier_flags=app_module.MODIFIER_FLAG_MASKS["alt_l"])
+        )
+
+        assert result is True
+        assert fake_app.toggle_count == 1
 
 
 class TestModifierConstants:
