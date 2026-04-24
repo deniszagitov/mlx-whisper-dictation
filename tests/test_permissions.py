@@ -46,6 +46,34 @@ class TestPermissionPreflightStatus:
         assert isinstance(result, bool)
 
 
+class TestOpenPath:
+    """Тесты открытия файлов и папок через macOS workspace."""
+
+    def test_open_path_uses_nsworkspace_on_macos(self, monkeypatch, tmp_path):
+        """open_path должен передавать путь в NSWorkspace.openFile_."""
+        import src.infrastructure.permissions as permissions_module
+
+        opened_paths = []
+
+        def shared_workspace():
+            return FakeWorkspace()
+
+        class FakeWorkspace:
+            def openFile_(self, path):
+                opened_paths.append(path)
+                return True
+
+        monkeypatch.setattr(permissions_module.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            permissions_module.AppKit,
+            "NSWorkspace",
+            type("WorkspaceStub", (), {"sharedWorkspace": staticmethod(shared_workspace)}),
+        )
+
+        assert permissions_module.open_path(str(tmp_path)) is True
+        assert opened_paths == [str(tmp_path)]
+
+
 class TestWakeObserver:
     """Тесты регистрации observer пробуждения macOS."""
 

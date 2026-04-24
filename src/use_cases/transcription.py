@@ -306,6 +306,7 @@ class TranscriptionUseCases:
         self._frontmost_application_info_reader = frontmost_application_info
         self.model_name = model_name
         self.preferences = preferences or TranscriberPreferences.from_store(self.settings_store)
+        self._sync_diagnostics_cleanup_setting()
         self._history_records: list[HistoryRecord] = []
         self.history: list[str] = []
         self._pending_period_prefix_for_next_dictation = False
@@ -382,6 +383,22 @@ class TranscriptionUseCases:
     @gain_normalization_enabled.setter
     def gain_normalization_enabled(self, enabled: object) -> None:
         self.preferences = self.preferences.with_gain_normalization_enabled(enabled)
+
+    @property
+    def audio_artifact_cleanup_enabled(self) -> bool:
+        """Возвращает флаг автоочистки WAV-артефактов записи."""
+        return self.preferences.audio_artifact_cleanup_enabled
+
+    @audio_artifact_cleanup_enabled.setter
+    def audio_artifact_cleanup_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_audio_artifact_cleanup_enabled(enabled)
+        self._sync_diagnostics_cleanup_setting()
+
+    def _sync_diagnostics_cleanup_setting(self) -> None:
+        """Синхронизирует настройку автоочистки с diagnostics store."""
+        setter = getattr(self.diagnostics_store, "set_recording_artifact_cleanup_enabled", None)
+        if setter is not None:
+            setter(self.preferences.audio_artifact_cleanup_enabled)
 
     @property
     def llm_clipboard_enabled(self) -> bool:

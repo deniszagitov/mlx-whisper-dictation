@@ -61,6 +61,7 @@ class StatusBarControllerProtocol(Protocol):
     remove_trailing_period_for_single_sentence_enabled: bool
     restore_trailing_period_on_next_dictation_enabled: bool
     gain_normalization_enabled: bool
+    audio_artifact_cleanup_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int
@@ -169,6 +170,14 @@ class StatusBarControllerProtocol(Protocol):
 
     def toggle_gain_normalization(self) -> None:
         """Переключает бережную нормализацию аудио."""
+        ...
+
+    def toggle_audio_artifact_cleanup(self) -> None:
+        """Переключает автоочистку диагностических WAV-записей."""
+        ...
+
+    def open_recordings_directory(self) -> None:
+        """Открывает папку диагностических WAV-записей."""
         ...
 
     def change_performance_mode(self, performance_mode: object) -> None:

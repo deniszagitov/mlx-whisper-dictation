@@ -104,6 +104,7 @@ class Config:
     DEFAULTS_KEY_PERFORMANCE_MODE = "performance_mode"
     DEFAULTS_KEY_HIGH_QUALITY_MAC_BUILTIN = "audio_high_quality_mac_builtin"
     DEFAULTS_KEY_GAIN_NORMALIZATION = "audio_gain_normalization"
+    DEFAULTS_KEY_AUDIO_ARTIFACT_CLEANUP = "audio_artifact_cleanup_enabled"
     DEFAULTS_KEY_MICROPHONE_PROFILES = "microphone_profiles"
     MAX_MICROPHONE_PROFILES = 10
     PERFORMANCE_MODE_NORMAL = "normal"

@@ -74,6 +74,7 @@ class FakeTranscriber:
         self.remove_trailing_period_for_single_sentence_enabled = True
         self.restore_trailing_period_on_next_dictation_enabled = False
         self.gain_normalization_enabled = True
+        self.audio_artifact_cleanup_enabled = False
         self.llm_clipboard_enabled = True
         self.private_mode_enabled = False
         self.history: list[str] = []
@@ -183,12 +184,22 @@ class FakeSettingsStore:
         return None
 
 
-def make_system_integration_service(*, notifications=None):
+def make_system_integration_service(
+    *,
+    notifications=None,
+    open_paths=None,
+    open_path_result: bool = True,
+):
     """Создаёт concrete bundle системных уведомлений и permission-status для тестов."""
     sink = notifications if notifications is not None else []
+    path_sink = open_paths if open_paths is not None else []
 
     def notify(title: str, message: str) -> None:
         sink.append((title, message))
+
+    def open_path(path: str) -> bool:
+        path_sink.append(path)
+        return open_path_result
 
     return app_module.SystemIntegrationService(
         notify=notify,
@@ -198,6 +209,7 @@ def make_system_integration_service(*, notifications=None):
         request_input_monitoring_permission=lambda: True,
         warn_missing_accessibility_permission=lambda: None,
         warn_missing_input_monitoring_permission=lambda: None,
+        open_path=open_path,
     )
 
 
@@ -218,7 +230,7 @@ def make_input_device_catalog(*, devices=None):
     return app_module.InputDeviceCatalogService(list_input_devices=lambda: list(input_devices))
 
 
-def make_controller(monkeypatch):
+def make_controller(monkeypatch, *, system_integration_service=None):
     """Создаёт DictationApp с замоканными внешними зависимостями."""
     recorder = FakeRecorder()
     transcriber = FakeTranscriber()
@@ -233,7 +245,7 @@ def make_controller(monkeypatch):
         load_profiles=lambda: [],
         save_profiles=lambda _profiles: None,
     )
-    system_integration_service = make_system_integration_service()
+    system_integration_service = system_integration_service or make_system_integration_service()
     launch_config = LaunchConfig.from_sources(
         model="mlx-community/whisper-large-v3-turbo",
         language=["ru"],
@@ -432,6 +444,7 @@ def test_snapshot_reflects_initial_runtime_state(monkeypatch):
     assert snapshot.capitalize_first_letter_enabled is True
     assert snapshot.remove_trailing_period_for_single_sentence_enabled is True
     assert snapshot.restore_trailing_period_on_next_dictation_enabled is False
+    assert snapshot.audio_artifact_cleanup_enabled is False
     assert snapshot.current_input_device["index"] == 0
     assert recorder.input_device["index"] == 0
 
@@ -452,6 +465,33 @@ def test_subscribe_receives_state_transitions(monkeypatch):
     ]
     assert recorder.started is True
     assert recorder.stopped is True
+
+
+def test_open_recordings_directory_creates_folder_and_opens_it(monkeypatch, tmp_path):
+    """Команда меню должна открыть папку диагностических WAV-записей."""
+    open_paths: list[str] = []
+    service = make_system_integration_service(open_paths=open_paths)
+    monkeypatch.setattr(Config, "LOG_DIR", tmp_path)
+    controller, _recorder, _transcriber = make_controller(monkeypatch, system_integration_service=service)
+
+    controller.open_recordings_directory()
+
+    expected_dir = tmp_path / "recordings"
+    assert expected_dir.is_dir()
+    assert open_paths == [str(expected_dir)]
+
+
+def test_open_recordings_directory_notifies_when_finder_open_fails(monkeypatch, tmp_path):
+    """Если Finder не открыл папку, пользователь должен получить уведомление."""
+    notifications: list[tuple[str, str]] = []
+    service = make_system_integration_service(notifications=notifications, open_path_result=False)
+    monkeypatch.setattr(Config, "LOG_DIR", tmp_path)
+    controller, _recorder, _transcriber = make_controller(monkeypatch, system_integration_service=service)
+
+    controller.open_recordings_directory()
+
+    assert notifications
+    assert "Не удалось открыть папку WAV-записей" in notifications[0][1]
 
 
 def test_change_secondary_hotkey_updates_listener_and_snapshot(monkeypatch):

@@ -521,6 +521,7 @@ class TranscriberPreferences:
     remove_trailing_period_for_single_sentence_enabled: bool
     restore_trailing_period_on_next_dictation_enabled: bool
     gain_normalization_enabled: bool
+    audio_artifact_cleanup_enabled: bool
     llm_clipboard_enabled: bool
     private_mode_enabled: bool
     total_tokens: int
@@ -545,6 +546,10 @@ class TranscriberPreferences:
                 fallback=False,
             ),
             gain_normalization_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_GAIN_NORMALIZATION, fallback=True),
+            audio_artifact_cleanup_enabled=settings_store.load_bool(
+                Config.DEFAULTS_KEY_AUDIO_ARTIFACT_CLEANUP,
+                fallback=False,
+            ),
             llm_clipboard_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True),
             private_mode_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, fallback=False),
             total_tokens=max(settings_store.load_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, fallback=0), 0),
@@ -596,6 +601,13 @@ class TranscriberPreferences:
     def with_gain_normalization_enabled(self, enabled: object) -> TranscriberPreferences:
         """Возвращает новый набор настроек с бережной нормализацией аудио."""
         return replace(self, gain_normalization_enabled=_coerce_bool(enabled, fallback=self.gain_normalization_enabled))
+
+    def with_audio_artifact_cleanup_enabled(self, enabled: object) -> TranscriberPreferences:
+        """Возвращает новый набор настроек с автоочисткой WAV-артефактов."""
+        return replace(
+            self,
+            audio_artifact_cleanup_enabled=_coerce_bool(enabled, fallback=self.audio_artifact_cleanup_enabled),
+        )
 
     def with_llm_clipboard_enabled(self, enabled: object) -> TranscriberPreferences:
         """Возвращает новый набор настроек с обновлённым LLM clipboard."""
@@ -804,6 +816,7 @@ class AppSnapshot:
     remove_trailing_period_for_single_sentence_enabled: bool
     restore_trailing_period_on_next_dictation_enabled: bool
     gain_normalization_enabled: bool
+    audio_artifact_cleanup_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int

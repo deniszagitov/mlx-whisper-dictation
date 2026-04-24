@@ -153,6 +153,7 @@ class FakeTranscriber:
         self.remove_trailing_period_for_single_sentence_enabled = True
         self.restore_trailing_period_on_next_dictation_enabled = False
         self.gain_normalization_enabled = True
+        self.audio_artifact_cleanup_enabled = False
         self.llm_clipboard_enabled = True
         self.private_mode_enabled = False
         self.history: list[str] = []
@@ -207,12 +208,23 @@ def make_microphone_profiles_service(*, profiles=None, saved_profiles=None):
     )
 
 
-def make_system_integration_service(*, notifications=None, accessibility_status=True, input_monitoring_status=True):
+def make_system_integration_service(
+    *,
+    notifications=None,
+    accessibility_status=True,
+    input_monitoring_status=True,
+    open_paths=None,
+):
     """Создаёт concrete bundle уведомлений и статусов разрешений для тестов."""
     sink = notifications if notifications is not None else []
+    path_sink = open_paths if open_paths is not None else []
 
     def notify(title, message):
         sink.append((title, message))
+
+    def open_path(path):
+        path_sink.append(path)
+        return True
 
     return app_controller_module.SystemIntegrationService(
         notify=notify,
@@ -222,6 +234,7 @@ def make_system_integration_service(*, notifications=None, accessibility_status=
         request_input_monitoring_permission=lambda: input_monitoring_status,
         warn_missing_accessibility_permission=lambda: None,
         warn_missing_input_monitoring_permission=lambda: None,
+        open_path=open_path,
     )
 
 
@@ -310,6 +323,7 @@ def make_snapshot(**overrides):
         remove_trailing_period_for_single_sentence_enabled=True,
         restore_trailing_period_on_next_dictation_enabled=True,
         gain_normalization_enabled=True,
+        audio_artifact_cleanup_enabled=False,
         llm_clipboard_enabled=True,
         history=["Привет мир"],
         total_tokens=123,
@@ -371,6 +385,7 @@ class FakeDictationController:
             snapshot.restore_trailing_period_on_next_dictation_enabled
         )
         self.gain_normalization_enabled = snapshot.gain_normalization_enabled
+        self.audio_artifact_cleanup_enabled = snapshot.audio_artifact_cleanup_enabled
         self.llm_clipboard_enabled = snapshot.llm_clipboard_enabled
         self.history = list(snapshot.history)
         self.total_tokens = snapshot.total_tokens
@@ -433,6 +448,14 @@ class FakeDictationController:
     def toggle_gain_normalization(self):
         """Запоминает команду переключения бережной нормализации."""
         self.calls.append(("toggle_gain_normalization", None))
+
+    def toggle_audio_artifact_cleanup(self):
+        """Запоминает команду переключения автоочистки WAV-записей."""
+        self.calls.append(("toggle_audio_artifact_cleanup", None))
+
+    def open_recordings_directory(self):
+        """Запоминает команду открытия папки WAV-записей."""
+        self.calls.append(("open_recordings_directory", None))
 
     def start_recording(self):
         """Имитирует старт записи и публикует recording snapshot."""
@@ -638,6 +661,8 @@ class TestStatusBarInit:
         assert "MacBook HQ" in app.audio_profile_item.title
         assert app.audio_menu[app.high_quality_mac_builtin_item.title].state == 1
         assert app.audio_menu[app.gain_normalization_item.title].state == 1
+        assert app.audio_menu[app.audio_artifact_cleanup_item.title].state == 0
+        assert app.audio_menu[app.open_recordings_directory_item.title].title == "Открыть папку WAV-записей…"
         assert "Voice Isolation" in app.voice_isolation_hint_item.title
 
     def test_private_mode_item_stays_on_top_level(self, make_app):
@@ -1079,6 +1104,18 @@ class TestStatusBarMenuSelections:
         assert transcriber.llm_clipboard_enabled is False
         assert app.llm_clipboard_item.state == 0
         assert (Config.DEFAULTS_KEY_LLM_CLIPBOARD, False) in saved_bools
+
+    def test_toggle_audio_artifact_cleanup_updates_transcriber_and_defaults(self, make_app, monkeypatch):
+        """Автоочистка WAV должна быть выключена по умолчанию и сохраняться при включении."""
+        saved_bools = []
+        app, _recorder, transcriber = make_app(languages=["ru"])
+        monkeypatch.setattr(app.app.settings_store, "save_bool", lambda key, value: saved_bools.append((key, value)))
+
+        app.toggle_audio_artifact_cleanup(app.audio_artifact_cleanup_item)
+
+        assert transcriber.audio_artifact_cleanup_enabled is True
+        assert app.audio_artifact_cleanup_item.state == 1
+        assert (Config.DEFAULTS_KEY_AUDIO_ARTIFACT_CLEANUP, True) in saved_bools
 
     def test_toggle_capitalize_first_letter_updates_transcriber_and_defaults(
         self,
@@ -1613,6 +1650,8 @@ class TestStatusBarWithFakeController:
         app.toggle_recording_time_in_menu_bar(app.recording_time_in_menu_bar_item)
         app.toggle_high_quality_mac_builtin(app.high_quality_mac_builtin_item)
         app.toggle_gain_normalization(app.gain_normalization_item)
+        app.toggle_audio_artifact_cleanup(app.audio_artifact_cleanup_item)
+        app.open_recordings_directory(app.open_recordings_directory_item)
         app.toggle_capitalize_first_letter(app.capitalize_first_letter_item)
         app.toggle_remove_trailing_period_for_single_sentence(app.remove_trailing_period_for_single_sentence_item)
         app.toggle_restore_trailing_period_on_next_dictation(app.restore_trailing_period_on_next_dictation_item)
@@ -1625,6 +1664,8 @@ class TestStatusBarWithFakeController:
             ("toggle_recording_time_in_menu_bar", None),
             ("toggle_high_quality_mac_builtin", None),
             ("toggle_gain_normalization", None),
+            ("toggle_audio_artifact_cleanup", None),
+            ("open_recordings_directory", None),
             ("toggle_capitalize_first_letter", None),
             ("toggle_remove_trailing_period_for_single_sentence", None),
             ("toggle_restore_trailing_period_on_next_dictation", None),

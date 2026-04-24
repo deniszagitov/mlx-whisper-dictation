@@ -69,6 +69,7 @@ from src.infrastructure.permissions import (
     get_input_monitoring_status,
     is_accessibility_trusted,
     notify_user,
+    open_path,
     permission_label,  # noqa: F401
     permission_preflight_status,  # noqa: F401
     register_application_activation_observer,
@@ -259,7 +260,9 @@ def main() -> None:
         args.model,
         settings_store=defaults,
         preferences=transcriber_preferences,
-        diagnostics_store=DiagnosticsStore(),
+        diagnostics_store=DiagnosticsStore(
+            recording_artifact_cleanup_enabled=transcriber_preferences.audio_artifact_cleanup_enabled,
+        ),
         audio_preprocessor=preprocess_recorded_audio,
         transcription_runner=run_asr_transcription,
         type_text_via_cgevent=lambda text: type_text_via_cgevent(text, frontmost_app_info=frontmost_application_info),
@@ -303,6 +306,7 @@ def main() -> None:
         request_input_monitoring_permission=request_input_monitoring_permission,
         warn_missing_accessibility_permission=warn_missing_accessibility_permission,
         warn_missing_input_monitoring_permission=warn_missing_input_monitoring_permission,
+        open_path=open_path,
     )
     input_device_catalog = InputDeviceCatalogService(list_input_devices=list_input_devices)
     hotkey_capture_service = HotkeyCaptureService(capture_combination=capture_hotkey_combination)

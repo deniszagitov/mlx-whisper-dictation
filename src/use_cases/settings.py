@@ -149,6 +149,46 @@ class SettingsUseCases:
         )
         self.publish_snapshot()
 
+    def toggle_audio_artifact_cleanup(self) -> None:
+        """Переключает автоочистку диагностических WAV-записей."""
+        self.transcriber.audio_artifact_cleanup_enabled = not getattr(
+            self.transcriber,
+            "audio_artifact_cleanup_enabled",
+            False,
+        )
+        self.settings_store.save_bool(
+            Config.DEFAULTS_KEY_AUDIO_ARTIFACT_CLEANUP,
+            self.transcriber.audio_artifact_cleanup_enabled,
+        )
+        LOGGER.info(
+            "🎙️ Автоочистка WAV-записей: %s",
+            "включена" if self.transcriber.audio_artifact_cleanup_enabled else "выключена",
+        )
+        self.publish_snapshot()
+
+    def open_recordings_directory(self) -> None:
+        """Открывает папку диагностических WAV-записей в Finder."""
+        recordings_dir = Config.LOG_DIR / "recordings"
+        try:
+            recordings_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            LOGGER.exception("❌ Не удалось создать папку диагностических записей: %s", recordings_dir)
+            self.system_integration_service.notify(
+                "MLX Whisper Dictation",
+                "Не удалось создать папку диагностических WAV-записей. Смотрите stderr.log.",
+            )
+            return
+
+        if self.system_integration_service.open_path(str(recordings_dir)):
+            LOGGER.info("🎙️ Открыта папка диагностических WAV-записей: %s", recordings_dir)
+            return
+
+        LOGGER.warning("⚠️ Не удалось открыть папку диагностических WAV-записей: %s", recordings_dir)
+        self.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            f"Не удалось открыть папку WAV-записей: {recordings_dir}",
+        )
+
     def change_performance_mode(self, performance_mode: object) -> None:
         """Меняет баланс между задержкой и ресурсами."""
         normalized_mode = Config.normalize_performance_mode(performance_mode)

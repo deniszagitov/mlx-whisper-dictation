@@ -65,6 +65,7 @@ class SystemIntegrationService:
     request_input_monitoring_permission: Callable[[], bool | None]
     warn_missing_accessibility_permission: Callable[[], None]
     warn_missing_input_monitoring_permission: Callable[[], None]
+    open_path: Callable[[str], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +128,11 @@ def _null_permission_status() -> bool | None:
 def _null_permission_warning() -> None:
     """Игнорирует предупреждение о недостающих разрешениях."""
     return None
+
+
+def _null_open_path(_path: str) -> bool:
+    """Возвращает отрицательный результат открытия пути без integration-сервиса."""
+    return False
 
 
 def _empty_input_devices() -> list[AudioDeviceInfo]:
@@ -290,6 +296,7 @@ class DictationApp:
             request_input_monitoring_permission=_null_optional_permission_request,
             warn_missing_accessibility_permission=_null_permission_warning,
             warn_missing_input_monitoring_permission=_null_permission_warning,
+            open_path=_null_open_path,
         )
         self.input_device_catalog = input_device_catalog or InputDeviceCatalogService(list_input_devices=_empty_input_devices)
         self.hotkey_capture_service = hotkey_capture_service or HotkeyCaptureService(capture_combination=_noop_capture_combination)
@@ -631,6 +638,11 @@ class DictationApp:
         return bool(getattr(self.transcriber, "gain_normalization_enabled", True))
 
     @property
+    def audio_artifact_cleanup_enabled(self) -> bool:
+        """Возвращает флаг автоочистки WAV-артефактов."""
+        return bool(getattr(self.transcriber, "audio_artifact_cleanup_enabled", False))
+
+    @property
     def llm_clipboard_enabled(self) -> bool:
         """Возвращает флаг использования буфера обмена для LLM."""
         return bool(getattr(self.transcriber, "llm_clipboard_enabled", True))
@@ -841,6 +853,7 @@ class DictationApp:
                 getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False)
             ),
             gain_normalization_enabled=bool(getattr(self.transcriber, "gain_normalization_enabled", True)),
+            audio_artifact_cleanup_enabled=self.audio_artifact_cleanup_enabled,
             llm_clipboard_enabled=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
             history=list(getattr(self.transcriber, "history", [])),
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
@@ -1032,6 +1045,14 @@ class DictationApp:
     def toggle_gain_normalization(self) -> None:
         """Переключает бережную нормализацию аудио."""
         self.settings_use_cases.toggle_gain_normalization()
+
+    def toggle_audio_artifact_cleanup(self) -> None:
+        """Переключает автоочистку диагностических WAV-записей."""
+        self.settings_use_cases.toggle_audio_artifact_cleanup()
+
+    def open_recordings_directory(self) -> None:
+        """Открывает папку диагностических WAV-записей."""
+        self.settings_use_cases.open_recordings_directory()
 
     def change_performance_mode(self, performance_mode: object) -> None:
         """Меняет баланс между задержкой и ресурсами."""

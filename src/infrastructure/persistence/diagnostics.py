@@ -108,6 +108,7 @@ class DiagnosticsStore:
         enabled: bool = True,
         max_artifacts: int = Config.MAX_DEBUG_ARTIFACTS,
         retention_seconds: float = Config.ARTIFACT_TTL_SECONDS,
+        recording_artifact_cleanup_enabled: bool = False,
     ) -> None:
         """Создает хранилище диагностических файлов.
 
@@ -116,11 +117,13 @@ class DiagnosticsStore:
             enabled: Нужно ли сохранять диагностические файлы.
             max_artifacts: Устаревший аргумент, сохранён только для совместимости.
             retention_seconds: Время жизни диагностических артефактов в секундах.
+            recording_artifact_cleanup_enabled: Нужно ли удалять старые raw/final WAV-артефакты.
         """
         self.root_dir = Path(root_dir)
         self.enabled = enabled
         self.max_artifacts = max_artifacts
         self.retention_seconds = retention_seconds
+        self.recording_artifact_cleanup_enabled = recording_artifact_cleanup_enabled
 
     @property
     def recordings_dir(self) -> Path:
@@ -141,6 +144,15 @@ class DiagnosticsStore:
     def _cleanup_directory(self, directory: Path) -> None:
         """Удаляет диагностические файлы старше retention_seconds."""
         _cleanup_expired_files(directory, "*", self.retention_seconds, include_current_file=True)
+
+    def set_recording_artifact_cleanup_enabled(self, enabled: object) -> None:
+        """Переключает автоочистку WAV-артефактов записи."""
+        self.recording_artifact_cleanup_enabled = bool(enabled)
+
+    def _cleanup_recordings_directory(self) -> None:
+        """Удаляет старые WAV/JSON записи только если автоочистка включена."""
+        if self.recording_artifact_cleanup_enabled:
+            self._cleanup_directory(self.recordings_dir)
 
     def build_audio_diagnostics(self, audio_data: npt.NDArray[np.float32], language: str | None) -> AudioDiagnostics:
         """Собирает компактную диагностику входного аудиосигнала."""
@@ -195,7 +207,7 @@ class DiagnosticsStore:
 
         metadata_path = self.recordings_dir / f"{stem}.json"
         metadata_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._cleanup_directory(self.recordings_dir)
+        self._cleanup_recordings_directory()
         return wav_path
 
     def save_recording_artifacts(
@@ -226,7 +238,7 @@ class DiagnosticsStore:
         self._write_pcm16_wav(final_wav_path, preprocessed_audio.audio, preprocessed_audio.sample_rate)
         metadata_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
-        self._cleanup_directory(self.recordings_dir)
+        self._cleanup_recordings_directory()
         return {
             "raw_wav": str(raw_wav_path),
             "final_wav": str(final_wav_path),

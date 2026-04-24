@@ -8,6 +8,7 @@ import ctypes
 import logging
 import platform
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 import AppKit
@@ -93,6 +94,19 @@ def open_system_settings(url: str) -> bool:
         return bool(AppKit.NSWorkspace.sharedWorkspace().openURL_(settings_url))
     except Exception:
         LOGGER.exception("❌ Не удалось открыть System Settings: %s", url)
+        return False
+
+
+def open_path(path: str) -> bool:
+    """Открывает файл или папку в Finder через NSWorkspace."""
+    if platform.system() != "Darwin":
+        return False
+
+    normalized_path = Path(path).expanduser()
+    try:
+        return bool(AppKit.NSWorkspace.sharedWorkspace().openFile_(str(normalized_path)))
+    except Exception:
+        LOGGER.exception("❌ Не удалось открыть путь в Finder: %s", normalized_path)
         return False
 
 

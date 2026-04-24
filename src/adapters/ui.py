@@ -112,11 +112,21 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.audio_profile_item.set_callback(None)
         self.high_quality_mac_builtin_item = rumps.MenuItem("Профиль MacBook HQ", callback=self.toggle_high_quality_mac_builtin)
         self.gain_normalization_item = rumps.MenuItem("Бережная нормализация", callback=self.toggle_gain_normalization)
+        self.audio_artifact_cleanup_item = rumps.MenuItem(
+            "Автоочистка WAV через 24 часа",
+            callback=self.toggle_audio_artifact_cleanup,
+        )
+        self.open_recordings_directory_item = rumps.MenuItem(
+            "Открыть папку WAV-записей…",
+            callback=self.open_recordings_directory,
+        )
         self.voice_isolation_hint_item = rumps.MenuItem("Voice Isolation включается вручную в macOS")
         self.voice_isolation_hint_item.set_callback(None)
         self.audio_menu.add(self.audio_profile_item)
         self.audio_menu.add(self.high_quality_mac_builtin_item)
         self.audio_menu.add(self.gain_normalization_item)
+        self.audio_menu.add(self.audio_artifact_cleanup_item)
+        self.audio_menu.add(self.open_recordings_directory_item)
         self.audio_menu.add(self.voice_isolation_hint_item)
 
         self.postprocessing_menu = rumps.MenuItem("✨ Постобработка текста")
@@ -406,6 +416,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def gain_normalization_enabled(self) -> bool:
         """Возвращает флаг бережной нормализации аудио."""
         return self.app.gain_normalization_enabled
+
+    @property
+    def audio_artifact_cleanup_enabled(self) -> bool:
+        """Возвращает флаг автоочистки WAV-записей."""
+        return self.app.audio_artifact_cleanup_enabled
 
     @property
     def history(self) -> list[str]:
@@ -707,6 +722,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.recording_time_in_menu_bar_item.state = int(snapshot.show_recording_time_in_menu_bar)
         self.high_quality_mac_builtin_item.state = int(snapshot.high_quality_mac_builtin_enabled)
         self.gain_normalization_item.state = int(snapshot.gain_normalization_enabled)
+        self.audio_artifact_cleanup_item.state = int(snapshot.audio_artifact_cleanup_enabled)
         self.private_mode_item.state = int(snapshot.private_mode_enabled)
         self.llm_clipboard_item.state = int(snapshot.llm_clipboard_enabled)
         self.paste_cgevent_item.state = int(snapshot.paste_cgevent_enabled)
@@ -838,6 +854,14 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def toggle_gain_normalization(self, _sender: rumps.MenuItem) -> None:
         """Переключает бережную нормализацию аудио."""
         self.app.toggle_gain_normalization()
+
+    def toggle_audio_artifact_cleanup(self, _sender: rumps.MenuItem) -> None:
+        """Переключает автоочистку диагностических WAV-записей."""
+        self.app.toggle_audio_artifact_cleanup()
+
+    def open_recordings_directory(self, _sender: rumps.MenuItem) -> None:
+        """Открывает папку диагностических WAV-записей."""
+        self.app.open_recordings_directory()
 
     def change_performance_mode(self, sender: rumps.MenuItem) -> None:
         """Переключает режим производительности."""

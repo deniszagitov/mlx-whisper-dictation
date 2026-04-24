@@ -96,6 +96,45 @@ def test_save_recording_artifacts_writes_raw_final_and_metadata(app_module, tmp_
     assert metadata["profile_name"] == Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY
 
 
+def test_recording_artifacts_are_not_cleaned_by_default(app_module, tmp_path, monkeypatch):
+    """По умолчанию WAV-артефакты должны храниться бессрочно."""
+    diagnostics_store = app_module.DiagnosticsStore(root_dir=tmp_path, enabled=True, retention_seconds=1)
+    recordings_dir = tmp_path / "recordings"
+    recordings_dir.mkdir(parents=True)
+    old_wav = recordings_dir / "old.raw.wav"
+    old_wav.write_bytes(b"old")
+    stale_time = 2_000_000.0
+    current_time = stale_time + 10
+    os.utime(old_wav, (stale_time, stale_time))
+    monkeypatch.setattr(diagnostics_module.time, "time", lambda: current_time)
+
+    diagnostics_store.save_audio_recording("fresh", make_audio(), {"ok": True})
+
+    assert old_wav.exists()
+
+
+def test_recording_artifact_cleanup_can_be_enabled(app_module, tmp_path, monkeypatch):
+    """Если автоочистка включена, старые WAV-артефакты удаляются при следующем сохранении."""
+    diagnostics_store = app_module.DiagnosticsStore(
+        root_dir=tmp_path,
+        enabled=True,
+        retention_seconds=1,
+        recording_artifact_cleanup_enabled=True,
+    )
+    recordings_dir = tmp_path / "recordings"
+    recordings_dir.mkdir(parents=True)
+    old_wav = recordings_dir / "old.raw.wav"
+    old_wav.write_bytes(b"old")
+    stale_time = 2_000_000.0
+    current_time = stale_time + 10
+    os.utime(old_wav, (stale_time, stale_time))
+    monkeypatch.setattr(diagnostics_module.time, "time", lambda: current_time)
+
+    diagnostics_store.save_audio_recording("fresh", make_audio(), {"ok": True})
+
+    assert not old_wav.exists()
+
+
 def test_diagnostics_retention_removes_files_older_than_24_hours(app_module, tmp_path):
     """DiagnosticsStore должен удалять артефакты старше 24 часов."""
     diagnostics_store = app_module.DiagnosticsStore(root_dir=tmp_path, enabled=True, retention_seconds=24 * 60 * 60)
