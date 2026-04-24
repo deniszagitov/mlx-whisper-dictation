@@ -46,6 +46,8 @@ class StatusBarControllerProtocol(Protocol):
     current_language: str | None
     input_devices: list[AudioDeviceInfo]
     current_input_device: AudioDeviceInfo | None
+    audio_profile_name: str
+    high_quality_mac_builtin_enabled: bool
     permission_status: dict[str, bool | None]
     microphone_profiles: list[MicrophoneProfile]
     show_recording_notification: bool
@@ -58,6 +60,7 @@ class StatusBarControllerProtocol(Protocol):
     capitalize_first_letter_enabled: bool
     remove_trailing_period_for_single_sentence_enabled: bool
     restore_trailing_period_on_next_dictation_enabled: bool
+    gain_normalization_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int
@@ -160,6 +163,14 @@ class StatusBarControllerProtocol(Protocol):
         """Переключает таймер записи в menu bar."""
         ...
 
+    def toggle_high_quality_mac_builtin(self) -> None:
+        """Переключает автоматический MacBook HQ-профиль."""
+        ...
+
+    def toggle_gain_normalization(self) -> None:
+        """Переключает бережную нормализацию аудио."""
+        ...
+
     def change_performance_mode(self, performance_mode: object) -> None:
         """Меняет режим производительности."""
         ...
@@ -260,6 +271,10 @@ class RecorderProtocol(Protocol):
         """Переключает режим производительности."""
         ...
 
+    def set_high_quality_mac_builtin(self, enabled: object) -> None:
+        """Переключает MacBook HQ-профиль."""
+        ...
+
     def set_status_callback(self, status_callback: Any) -> None:
         """Регистрирует callback статуса."""
         ...
@@ -301,8 +316,18 @@ class DiagnosticsStoreProtocol(Protocol):
         stem: str,
         audio_data: Any,
         diagnostics: AudioDiagnostics,
-    ) -> None:
+    ) -> Any:
         """Сохраняет WAV-артефакт записи."""
+        ...
+
+    def save_recording_artifacts(
+        self,
+        stem: str,
+        raw_audio: Any,
+        preprocessed_audio: Any,
+        diagnostics: dict[str, Any],
+    ) -> Any:
+        """Сохраняет raw/final WAV-артефакты записи."""
         ...
 
     def save_transcription_artifacts(

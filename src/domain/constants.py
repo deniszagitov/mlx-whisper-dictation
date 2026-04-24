@@ -29,6 +29,29 @@ class Config:
     SILENCE_RMS_THRESHOLD = 0.0005
     HALLUCINATION_RMS_THRESHOLD = 0.002
     SHORT_AUDIO_WARNING_SECONDS = 0.3
+    AUDIO_SAMPLE_RATE = 16000
+    AUDIO_CHANNELS_MONO = 1
+    AUDIO_PROFILE_GENERIC = "generic"
+    AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY = "macbook_builtin_high_quality"
+    AUDIO_PROFILE_LABELS: ClassVar[dict[str, str]] = {
+        AUDIO_PROFILE_GENERIC: "обычный",
+        AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY: "MacBook HQ",
+    }
+    AUDIO_POST_ROLL_MS_DEFAULT = 300
+    AUDIO_POST_ROLL_MS_MIN = 100
+    AUDIO_POST_ROLL_MS_MAX = 800
+    AUDIO_NO_SPEECH_RMS_THRESHOLD = 0.0003
+    AUDIO_NO_SPEECH_PEAK_THRESHOLD = 0.003
+    AUDIO_MIN_RECORDING_DURATION_FOR_SKIP_S = 0.5
+    AUDIO_VAD_FRAME_MS = 30
+    AUDIO_VAD_MODE = 1
+    AUDIO_TARGET_SPEECH_RMS = 0.05
+    AUDIO_MAX_GAIN_DB = 9.0
+    AUDIO_PEAK_LIMIT = 0.95
+    AUDIO_DO_NOT_NORMALIZE_IF_PEAK_ABOVE = 0.80
+    AUDIO_DO_NOT_NORMALIZE_IF_RMS_BELOW_WITHOUT_VAD_SPEECH = 0.0005
+    AUDIO_CLIPPING_THRESHOLD = 0.98
+    AUDIO_CLIPPING_WARNING_RATIO = 0.005
     MAX_DEBUG_ARTIFACTS = 10
     LOG_DIR = Path.home() / "Library/Logs/whisper-dictation"
     ARTIFACT_TTL_SECONDS = 24 * 60 * 60
@@ -79,6 +102,8 @@ class Config:
     DEFAULTS_KEY_RECORDING_NOTIFICATION = "show_recording_notification"
     DEFAULTS_KEY_RECORDING_OVERLAY = "recording_overlay"
     DEFAULTS_KEY_PERFORMANCE_MODE = "performance_mode"
+    DEFAULTS_KEY_HIGH_QUALITY_MAC_BUILTIN = "audio_high_quality_mac_builtin"
+    DEFAULTS_KEY_GAIN_NORMALIZATION = "audio_gain_normalization"
     DEFAULTS_KEY_MICROPHONE_PROFILES = "microphone_profiles"
     MAX_MICROPHONE_PROFILES = 10
     PERFORMANCE_MODE_NORMAL = "normal"
@@ -146,3 +171,8 @@ class Config:
         if performance_mode in Config.PERFORMANCE_MODE_LABELS:
             return str(performance_mode)
         return Config.DEFAULT_PERFORMANCE_MODE
+
+    @staticmethod
+    def audio_profile_label(profile_name: str) -> str:
+        """Возвращает человекочитаемую подпись аудиопрофиля."""
+        return Config.AUDIO_PROFILE_LABELS.get(profile_name, Config.AUDIO_PROFILE_LABELS[Config.AUDIO_PROFILE_GENERIC])

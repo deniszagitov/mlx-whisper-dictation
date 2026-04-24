@@ -124,6 +124,31 @@ class SettingsUseCases:
         )
         self.publish_snapshot()
 
+    def toggle_high_quality_mac_builtin(self) -> None:
+        """Переключает автоматический профиль MacBook HQ."""
+        self.runtime.high_quality_mac_builtin_enabled = not self.runtime.high_quality_mac_builtin_enabled
+        self.settings_store.save_bool(
+            Config.DEFAULTS_KEY_HIGH_QUALITY_MAC_BUILTIN,
+            self.runtime.high_quality_mac_builtin_enabled,
+        )
+        if hasattr(self.recorder, "set_high_quality_mac_builtin"):
+            self.recorder.set_high_quality_mac_builtin(self.runtime.high_quality_mac_builtin_enabled)
+        LOGGER.info(
+            "🎙️ Профиль MacBook HQ: %s",
+            "включён" if self.runtime.high_quality_mac_builtin_enabled else "выключен",
+        )
+        self.publish_snapshot()
+
+    def toggle_gain_normalization(self) -> None:
+        """Переключает бережную нормализацию аудио."""
+        self.transcriber.gain_normalization_enabled = not getattr(self.transcriber, "gain_normalization_enabled", True)
+        self.settings_store.save_bool(Config.DEFAULTS_KEY_GAIN_NORMALIZATION, self.transcriber.gain_normalization_enabled)
+        LOGGER.info(
+            "🎙️ Бережная нормализация аудио: %s",
+            "включена" if self.transcriber.gain_normalization_enabled else "выключена",
+        )
+        self.publish_snapshot()
+
     def change_performance_mode(self, performance_mode: object) -> None:
         """Меняет баланс между задержкой и ресурсами."""
         normalized_mode = Config.normalize_performance_mode(performance_mode)

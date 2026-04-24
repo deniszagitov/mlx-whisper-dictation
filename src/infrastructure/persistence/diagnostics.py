@@ -15,9 +15,10 @@ import numpy as np
 import numpy.typing as npt
 
 from ...domain.constants import Config
+from ...domain.types import RecordedAudio
 
 if TYPE_CHECKING:
-    from ...domain.types import AudioDiagnostics
+    from ...domain.types import AudioDiagnostics, PreprocessedAudio
 
 
 class MaxLevelFilter(logging.Filter):
@@ -143,7 +144,7 @@ class DiagnosticsStore:
 
     def build_audio_diagnostics(self, audio_data: npt.NDArray[np.float32], language: str | None) -> AudioDiagnostics:
         """Собирает компактную диагностику входного аудиосигнала."""
-        audio_duration_seconds = len(audio_data) / 16000
+        audio_duration_seconds = len(audio_data) / Config.AUDIO_SAMPLE_RATE
         rms_energy = float(np.sqrt(np.mean(audio_data**2)))
         peak_amplitude = float(np.max(np.abs(audio_data))) if len(audio_data) else 0.0
         return {
@@ -153,29 +154,84 @@ class DiagnosticsStore:
             "peak_amplitude": peak_amplitude,
             "silence_threshold": Config.SILENCE_RMS_THRESHOLD,
             "hallucination_threshold": Config.HALLUCINATION_RMS_THRESHOLD,
-            "sample_rate": 16000,
+            "sample_rate": Config.AUDIO_SAMPLE_RATE,
             "samples": len(audio_data),
             "first_samples": audio_data[:16].tolist(),
         }
 
-    def save_audio_recording(self, stem: str, audio_data: npt.NDArray[np.float32], diagnostics: AudioDiagnostics) -> Path | None:
-        """Сохраняет аудиозапись и метаданные, если диагностика включена."""
+    def _write_pcm16_wav(self, wav_path: Path, audio_data: npt.NDArray[np.float32], sample_rate: int) -> None:
+        """Пишет float32 waveform как PCM16 WAV."""
+        with wave.open(str(wav_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            pcm_data = np.clip(audio_data * 32768.0, -32768, 32767).astype(np.int16)
+            wav_file.writeframes(pcm_data.tobytes())
+
+    def _recorded_audio_to_float32(self, recorded_audio: RecordedAudio) -> npt.NDArray[np.float32]:
+        """Готовит сырую запись к diagnostic WAV без resampling."""
+        samples = np.asarray(recorded_audio.samples)
+        channels = max(int(recorded_audio.channels), 1)
+        if channels > 1:
+            usable_length = (len(samples) // channels) * channels
+            samples = samples[:usable_length].reshape(-1, channels).mean(axis=1)
+        if recorded_audio.sample_format == "int16" or samples.dtype == np.int16:
+            return (samples.astype(np.float32) / 32768.0).astype(np.float32, copy=False)
+        return np.clip(samples.astype(np.float32, copy=False), -1.0, 1.0)
+
+    def save_audio_recording(
+        self,
+        stem: str,
+        audio_data: npt.NDArray[np.float32],
+        diagnostics: AudioDiagnostics | dict[str, Any],
+    ) -> Path | None:
+        """Сохраняет финальную аудиозапись и метаданные, если диагностика включена."""
         if not self.enabled:
             return None
 
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
         wav_path = self.recordings_dir / f"{stem}.wav"
-        with wave.open(str(wav_path), "wb") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(16000)
-            pcm_data = np.clip(audio_data * 32768.0, -32768, 32767).astype(np.int16)
-            wav_file.writeframes(pcm_data.tobytes())
+        self._write_pcm16_wav(wav_path, audio_data, Config.AUDIO_SAMPLE_RATE)
 
         metadata_path = self.recordings_dir / f"{stem}.json"
         metadata_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
         self._cleanup_directory(self.recordings_dir)
         return wav_path
+
+    def save_recording_artifacts(
+        self,
+        stem: str,
+        raw_audio: RecordedAudio | object,
+        preprocessed_audio: PreprocessedAudio,
+        diagnostics: dict[str, Any],
+    ) -> dict[str, str] | None:
+        """Сохраняет raw/final WAV и общие metadata для завершённой записи."""
+        if not self.enabled:
+            return None
+
+        self.recordings_dir.mkdir(parents=True, exist_ok=True)
+
+        if isinstance(raw_audio, RecordedAudio):
+            raw_sample_rate = int(raw_audio.sample_rate)
+            raw_audio_data = self._recorded_audio_to_float32(raw_audio)
+        else:
+            raw_sample_rate = Config.AUDIO_SAMPLE_RATE
+            raw_audio_data = np.asarray(raw_audio, dtype=np.float32)
+
+        raw_wav_path = self.recordings_dir / f"{stem}.raw.wav"
+        final_wav_path = self.recordings_dir / f"{stem}.final.wav"
+        metadata_path = self.recordings_dir / f"{stem}.json"
+
+        self._write_pcm16_wav(raw_wav_path, raw_audio_data, raw_sample_rate)
+        self._write_pcm16_wav(final_wav_path, preprocessed_audio.audio, preprocessed_audio.sample_rate)
+        metadata_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+        self._cleanup_directory(self.recordings_dir)
+        return {
+            "raw_wav": str(raw_wav_path),
+            "final_wav": str(final_wav_path),
+            "metadata": str(metadata_path),
+        }
 
     def save_transcription_artifacts(
         self,

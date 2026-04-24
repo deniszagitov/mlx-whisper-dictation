@@ -4,10 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .constants import Config
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from .types import AudioDeviceInfo
+
+_MACBOOK_BUILTIN_MIC_NAMES = {
+    "macbook pro microphone",
+    "macbook air microphone",
+    "built-in microphone",
+    "internal microphone",
+}
 
 
 def microphone_menu_title(device_info: AudioDeviceInfo) -> str:
@@ -31,6 +40,41 @@ def input_device_name_matches(expected_name: object, actual_name: object) -> boo
     if normalized_expected is None or normalized_actual is None:
         return False
     return normalized_expected.casefold() == normalized_actual.casefold()
+
+
+def input_device_looks_like_macbook_builtin(device_info: AudioDeviceInfo | None) -> bool:
+    """Проверяет, похож ли микрофон на встроенный микрофон MacBook."""
+    if device_info is None:
+        return False
+
+    normalized_name = normalize_input_device_name(device_info.get("name"))
+    if normalized_name is None:
+        return False
+
+    name_key = normalized_name.casefold()
+    name_matches = name_key in _MACBOOK_BUILTIN_MIC_NAMES or (
+        "macbook" in name_key and "microphone" in name_key
+    )
+    if not name_matches:
+        return False
+
+    host_api_name = normalize_input_device_name(device_info.get("host_api_name"))
+    if host_api_name is None:
+        return True
+
+    host_api_key = host_api_name.replace(" ", "").casefold()
+    return "coreaudio" in host_api_key
+
+
+def audio_profile_for_input_device(
+    device_info: AudioDeviceInfo | None,
+    *,
+    high_quality_mac_builtin_enabled: bool,
+) -> str:
+    """Выбирает аудиопрофиль для текущего устройства ввода."""
+    if high_quality_mac_builtin_enabled and input_device_looks_like_macbook_builtin(device_info):
+        return Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY
+    return Config.AUDIO_PROFILE_GENERIC
 
 
 def resolve_input_device(

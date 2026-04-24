@@ -6,6 +6,8 @@
 Тесты помечены маркером `hardware`, потому что требуют доступ к микрофону.
 """
 
+from typing import Any
+
 import numpy as np
 import pyaudio
 import pytest
@@ -217,6 +219,150 @@ class TestMicrophoneListing:
         title = app_module.microphone_menu_title({"index": 3, "name": "USB Mic"})
 
         assert title == "[3] USB Mic"
+
+    def test_list_input_devices_includes_host_api_name(self, app_module, monkeypatch):
+        """Список микрофонов должен сохранять host API для выбора аудиопрофиля."""
+
+        class FakePyAudioWithHostApi(FakePyAudio):
+            def __init__(self):
+                super().__init__()
+                self.devices[1]["hostApi"] = 5
+
+            def get_host_api_info_by_index(self, index):
+                assert index == 5
+                return {"name": "Core Audio"}
+
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudioWithHostApi)  # type: ignore[attr-defined]
+
+        devices = app_module.list_input_devices()
+
+        assert devices[0]["host_api_name"] == "Core Audio"
+
+
+class TestRecorderHighQualityCapture:
+    """Тесты capture-first профиля записи."""
+
+    def test_macbook_profile_tries_native_float32_before_native_int16(self, app_module):
+        """MacBook HQ должен пробовать native float32 перед native int16."""
+        recorder = app_module.Recorder()
+        recorder.set_input_device(
+            {
+                "index": 1,
+                "name": "Built-in Microphone",
+                "default_sample_rate": 48000.0,
+                "host_api_name": "Core Audio",
+            }
+        )
+        format_checks: list[tuple[int, int]] = []
+        open_calls: list[tuple[int, int]] = []
+
+        class FakeStream:
+            pass
+
+        class FakePyAudio:
+            def is_format_supported(self, rate, *, input_device=None, input_channels=None, input_format=None):
+                format_checks.append((rate, input_format))
+                return input_format != audio_runtime.pyaudio.paFloat32
+
+            def open(self, **kwargs):
+                open_calls.append((kwargs["rate"], kwargs["format"]))
+                return FakeStream()
+
+        opened = recorder._open_stream(FakePyAudio(), frames_per_buffer=512)
+
+        assert format_checks[:2] == [
+            (48000, audio_runtime.pyaudio.paFloat32),
+            (48000, audio_runtime.pyaudio.paInt16),
+        ]
+        assert open_calls == [(48000, audio_runtime.pyaudio.paInt16)]
+        assert opened.sample_rate == 48000
+        assert opened.sample_format == "int16"
+        assert opened.profile_name == Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY
+
+    def test_record_impl_appends_post_roll_after_stop(self, app_module, monkeypatch):
+        """После stop() Recorder должен дочитать короткий post-roll."""
+        recorder = app_module.Recorder()
+        recorder.frames_per_buffer = 512
+        recorder.set_post_roll_ms(100)
+        captured: list[Any] = []
+        read_calls: list[int] = []
+
+        class FakeStream:
+            def read(self, frames_per_buffer, exception_on_overflow=False):
+                read_calls.append(frames_per_buffer)
+                if len(read_calls) == 1:
+                    recorder.recording = False
+                return np.zeros(frames_per_buffer, dtype=np.int16).tobytes()
+
+            def stop_stream(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakePyAudio:
+            def is_format_supported(self, *args, **kwargs):
+                return True
+
+            def open(self, **kwargs):
+                return FakeStream()
+
+            def terminate(self):
+                return None
+
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
+
+        recorder._record_impl(
+            language="ru",
+            request_id=recorder._begin_request(),
+            on_audio_ready=lambda audio, *_args: captured.append(audio),
+        )
+
+        assert read_calls == [512, 512, 512, 512, 64]
+        assert len(captured) == 1
+        assert len(captured[0].samples) == 512 + 1600
+        assert captured[0].metadata["post_roll_ms"] == 100
+
+    def test_cancel_does_not_append_post_roll_or_transcribe(self, app_module, monkeypatch):
+        """При cancel() Recorder не должен дочитывать post-roll и запускать callback."""
+        recorder = app_module.Recorder()
+        recorder.frames_per_buffer = 512
+        recorder.set_post_roll_ms(100)
+        captured: list[object] = []
+        read_calls: list[int] = []
+
+        class FakeStream:
+            def read(self, frames_per_buffer, exception_on_overflow=False):
+                read_calls.append(frames_per_buffer)
+                recorder.cancel()
+                return np.zeros(frames_per_buffer, dtype=np.int16).tobytes()
+
+            def stop_stream(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakePyAudio:
+            def is_format_supported(self, *args, **kwargs):
+                return True
+
+            def open(self, **kwargs):
+                return FakeStream()
+
+            def terminate(self):
+                return None
+
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
+
+        recorder._record_impl(
+            language="ru",
+            request_id=recorder._begin_request(),
+            on_audio_ready=lambda audio, *_args: captured.append(audio),
+        )
+
+        assert read_calls == [512]
+        assert captured == []
 
 
 class TestRecorderCancel:

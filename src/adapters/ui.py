@@ -107,6 +107,18 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             item.state = int(performance_mode == self.performance_mode)
             self.performance_menu.add(item)
 
+        self.audio_menu = rumps.MenuItem("🎙️ Аудио")
+        self.audio_profile_item = rumps.MenuItem(f"Профиль: {Config.audio_profile_label(self.audio_profile_name)}")
+        self.audio_profile_item.set_callback(None)
+        self.high_quality_mac_builtin_item = rumps.MenuItem("Профиль MacBook HQ", callback=self.toggle_high_quality_mac_builtin)
+        self.gain_normalization_item = rumps.MenuItem("Бережная нормализация", callback=self.toggle_gain_normalization)
+        self.voice_isolation_hint_item = rumps.MenuItem("Voice Isolation включается вручную в macOS")
+        self.voice_isolation_hint_item.set_callback(None)
+        self.audio_menu.add(self.audio_profile_item)
+        self.audio_menu.add(self.high_quality_mac_builtin_item)
+        self.audio_menu.add(self.gain_normalization_item)
+        self.audio_menu.add(self.voice_isolation_hint_item)
+
         self.postprocessing_menu = rumps.MenuItem("✨ Постобработка текста")
         self.capitalize_first_letter_item = rumps.MenuItem(
             "Первая буква с заглавной",
@@ -150,6 +162,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.behavior_menu = rumps.MenuItem("⚙️ Поведение и вид")
         self.behavior_menu.add(self.recording_notification_item)
         self.behavior_menu.add(self.recording_indicator_menu)
+        self.behavior_menu.add(self.audio_menu)
         self.behavior_menu.add(self.paste_method_menu)
 
         self.history_menu = rumps.MenuItem("📋 История текста")
@@ -303,6 +316,16 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         return self.app.current_input_device
 
     @property
+    def audio_profile_name(self) -> str:
+        """Возвращает активный аудиопрофиль."""
+        return self.app.audio_profile_name
+
+    @property
+    def high_quality_mac_builtin_enabled(self) -> bool:
+        """Возвращает флаг MacBook HQ-профиля."""
+        return self.app.high_quality_mac_builtin_enabled
+
+    @property
     def permission_status(self) -> dict[str, bool | None]:
         """Возвращает статусы системных разрешений."""
         return self.app.permission_status
@@ -378,6 +401,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def restore_trailing_period_on_next_dictation_enabled(self) -> bool:
         """Возвращает флаг автоточки перед следующей диктовкой."""
         return self.app.restore_trailing_period_on_next_dictation_enabled
+
+    @property
+    def gain_normalization_enabled(self) -> bool:
+        """Возвращает флаг бережной нормализации аудио."""
+        return self.app.gain_normalization_enabled
 
     @property
     def history(self) -> list[str]:
@@ -673,9 +701,12 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.input_device_menu.title = f"🎙️ Микрофон: {self._format_input_device()}"
         self.max_time_item.title = f"⏱ Длительность записи: {Config.format_max_time_status(snapshot.max_time)}"
         self.performance_menu.title = f"⚡ Режим работы: {Config.performance_mode_label(snapshot.performance_mode)}"
+        self.audio_profile_item.title = f"Профиль: {Config.audio_profile_label(snapshot.audio_profile_name)}"
         self.recording_notification_item.state = int(snapshot.show_recording_notification)
         self.recording_overlay_item.state = int(snapshot.show_recording_overlay)
         self.recording_time_in_menu_bar_item.state = int(snapshot.show_recording_time_in_menu_bar)
+        self.high_quality_mac_builtin_item.state = int(snapshot.high_quality_mac_builtin_enabled)
+        self.gain_normalization_item.state = int(snapshot.gain_normalization_enabled)
         self.private_mode_item.state = int(snapshot.private_mode_enabled)
         self.llm_clipboard_item.state = int(snapshot.llm_clipboard_enabled)
         self.paste_cgevent_item.state = int(snapshot.paste_cgevent_enabled)
@@ -799,6 +830,14 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def toggle_recording_time_in_menu_bar(self, _sender: rumps.MenuItem) -> None:
         """Переключает показ времени записи в строке меню."""
         self.app.toggle_recording_time_in_menu_bar()
+
+    def toggle_high_quality_mac_builtin(self, _sender: rumps.MenuItem) -> None:
+        """Переключает автоматический MacBook HQ-профиль."""
+        self.app.toggle_high_quality_mac_builtin()
+
+    def toggle_gain_normalization(self, _sender: rumps.MenuItem) -> None:
+        """Переключает бережную нормализацию аудио."""
+        self.app.toggle_gain_normalization()
 
     def change_performance_mode(self, sender: rumps.MenuItem) -> None:
         """Переключает режим производительности."""

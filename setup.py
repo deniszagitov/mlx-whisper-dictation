@@ -70,7 +70,19 @@ APP = ["main.py"]
 ROOT = Path(__file__).parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
-_PY2APP_PACKAGES = ["mlx", "mlx_audio", "mlx_whisper", "numpy", "pyaudio", "pynput", "rumps", "src", "tqdm"]
+_PY2APP_PACKAGES = [
+    "mlx",
+    "mlx_audio",
+    "mlx_whisper",
+    "numpy",
+    "pyaudio",
+    "pynput",
+    "rumps",
+    "soxr",
+    "src",
+    "tqdm",
+    "webrtcvad",
+]
 
 if "py2app" in sys.argv:
     # py2app (через modulegraph) использует устаревший imp.find_module, который
@@ -103,7 +115,16 @@ OPTIONS = {
     "site_packages": False,
     "iconfile": "assets/icons/Dictator.icns",
     "packages": _PY2APP_PACKAGES,
-    "includes": ["AppKit", "Foundation", "PyObjCTools", "Quartz", "objc", "pynput.keyboard._darwin"],
+    "includes": [
+        "AppKit",
+        "Foundation",
+        "PyObjCTools",
+        "Quartz",
+        "_webrtcvad",
+        "objc",
+        "pynput.keyboard._darwin",
+        "soxr.soxr_ext",
+    ],
     "plist": {
         "CFBundleDisplayName": "Dictator",
         "CFBundleName": "Dictator",

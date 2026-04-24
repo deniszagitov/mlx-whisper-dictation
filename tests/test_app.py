@@ -20,6 +20,7 @@ class FakeRecorder:
         self.last_on_audio_ready = None
         self.input_device = None
         self.performance_mode = None
+        self.high_quality_mac_builtin_enabled: bool | None = None
         self.runtime_error_callback = None
 
     def set_status_callback(self, callback) -> None:
@@ -41,6 +42,10 @@ class FakeRecorder:
     def set_performance_mode(self, performance_mode) -> None:
         """Запоминает выбранный режим производительности."""
         self.performance_mode = performance_mode
+
+    def set_high_quality_mac_builtin(self, enabled) -> None:
+        """Запоминает флаг MacBook HQ-профиля."""
+        self.high_quality_mac_builtin_enabled = bool(enabled)
 
     def start(self, language=None, on_audio_ready=None) -> None:
         """Имитирует старт записи."""
@@ -68,6 +73,7 @@ class FakeTranscriber:
         self.capitalize_first_letter_enabled = True
         self.remove_trailing_period_for_single_sentence_enabled = True
         self.restore_trailing_period_on_next_dictation_enabled = False
+        self.gain_normalization_enabled = True
         self.llm_clipboard_enabled = True
         self.private_mode_enabled = False
         self.history: list[str] = []

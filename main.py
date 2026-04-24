@@ -34,8 +34,15 @@ from src.domain.hotkeys import (  # noqa: F401
     normalize_key_combination,
     normalize_key_name,
 )
-from src.domain.types import AppPreferences, LaunchConfig, TranscriberPreferences
+from src.domain.types import (  # noqa: F401
+    AppPreferences,
+    LaunchConfig,
+    PreprocessedAudio,
+    RecordedAudio,
+    TranscriberPreferences,
+)
 from src.infrastructure.asr_runtime import run_asr_transcription
+from src.infrastructure.audio_preprocessing import preprocess_recorded_audio, resample_to_16k  # noqa: F401
 from src.infrastructure.audio_runtime import Recorder, list_input_devices
 from src.infrastructure.hotkeys import (
     MODIFIER_FLAG_MASKS,  # noqa: F401
@@ -253,6 +260,7 @@ def main() -> None:
         settings_store=defaults,
         preferences=transcriber_preferences,
         diagnostics_store=DiagnosticsStore(),
+        audio_preprocessor=preprocess_recorded_audio,
         transcription_runner=run_asr_transcription,
         type_text_via_cgevent=lambda text: type_text_via_cgevent(text, frontmost_app_info=frontmost_application_info),
         insert_text_via_ax=insert_text_via_ax,

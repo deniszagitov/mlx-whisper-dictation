@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pyaudio
 
+from ..domain.audio import audio_profile_for_input_device
 from ..domain.constants import Config
+from ..domain.types import RecordedAudio
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,6 +31,26 @@ RETRYABLE_AUDIO_ERROR_CODES = {-9998, -9996}
 PERMISSION_ERROR_CODES = {-9996}
 
 
+@dataclass(frozen=True, slots=True)
+class _StreamCandidate:
+    """Кандидат формата открытия PyAudio stream."""
+
+    sample_rate: int
+    pyaudio_format: int
+    sample_format: str
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenedStream:
+    """Открытый PyAudio stream с фактическими параметрами записи."""
+
+    stream: Any
+    sample_rate: int
+    channels: int
+    sample_format: str
+    profile_name: str
+
+
 class Recorder:
     """Записывает звук с микрофона."""
 
@@ -41,8 +64,12 @@ class Recorder:
         self.runtime_error_callback: Callable[[str, str], None] | None = None
         self.input_device_index: int | None = None
         self.input_device_name = "системный по умолчанию"
+        self.input_device_default_sample_rate = float(DEFAULT_SAMPLE_RATE)
+        self.input_device_host_api_name: str | None = None
         self.performance_mode = PERFORMANCE_MODE_NORMAL
         self.frames_per_buffer = NORMAL_FRAMES_PER_BUFFER
+        self.high_quality_mac_builtin_enabled = True
+        self.post_roll_ms = Config.AUDIO_POST_ROLL_MS_DEFAULT
         self._request_lock = threading.Lock()
         self._next_request_id = 0
         self._latest_request_id = 0
@@ -88,10 +115,35 @@ class Recorder:
         if device_info is None:
             self.input_device_index = None
             self.input_device_name = "системный по умолчанию"
+            self.input_device_default_sample_rate = float(DEFAULT_SAMPLE_RATE)
+            self.input_device_host_api_name = None
             return
 
         self.input_device_index = int(device_info["index"])
         self.input_device_name = str(device_info["name"])
+        self.input_device_default_sample_rate = float(device_info.get("default_sample_rate", DEFAULT_SAMPLE_RATE))
+        self.input_device_host_api_name = device_info.get("host_api_name")
+
+    def set_high_quality_mac_builtin(self, enabled: object) -> None:
+        """Переключает автоматический MacBook HQ-профиль записи."""
+        self.high_quality_mac_builtin_enabled = bool(enabled)
+
+    def set_post_roll_ms(self, post_roll_ms: object) -> None:
+        """Сохраняет длительность хвоста записи после stop()."""
+        if isinstance(post_roll_ms, bool):
+            value = int(post_roll_ms)
+        elif isinstance(post_roll_ms, int):
+            value = post_roll_ms
+        elif isinstance(post_roll_ms, float):
+            value = int(post_roll_ms)
+        elif isinstance(post_roll_ms, str):
+            try:
+                value = int(post_roll_ms.strip())
+            except ValueError:
+                value = Config.AUDIO_POST_ROLL_MS_DEFAULT
+        else:
+            value = Config.AUDIO_POST_ROLL_MS_DEFAULT
+        self.post_roll_ms = min(max(value, Config.AUDIO_POST_ROLL_MS_MIN), Config.AUDIO_POST_ROLL_MS_MAX)
 
     def set_performance_mode(self, performance_mode: str) -> None:
         """Переключает режим работы записи и связанных подсистем."""
@@ -149,72 +201,171 @@ class Recorder:
         error_code = self._audio_error_code(error)
         return self.input_device_index is not None and error_code in RETRYABLE_AUDIO_ERROR_CODES
 
-    def _can_open_stream(self, audio_interface: pyaudio.PyAudio, *, device_index: int | None) -> bool:
+    def _current_device_info(self) -> AudioDeviceInfo | None:
+        """Возвращает текущие параметры выбранного устройства ввода."""
+        if self.input_device_index is None:
+            return None
+        return {
+            "index": self.input_device_index,
+            "name": self.input_device_name,
+            "max_input_channels": DEFAULT_CHANNELS,
+            "default_sample_rate": self.input_device_default_sample_rate,
+            "is_default": False,
+            "host_api_name": self.input_device_host_api_name,
+        }
+
+    def _current_audio_profile(self) -> str:
+        """Выбирает аудиопрофиль для следующей записи."""
+        profile_name = audio_profile_for_input_device(
+            self._current_device_info(),
+            high_quality_mac_builtin_enabled=self.high_quality_mac_builtin_enabled,
+        )
+        if profile_name == Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY:
+            LOGGER.info(
+                "🎙️ Включён аудиопрофиль MacBook HQ: input_device_index=%s, input_device_name=%s, host_api=%s",
+                self.input_device_index,
+                self.input_device_name,
+                self.input_device_host_api_name,
+            )
+        return profile_name
+
+    def _stream_candidates(self, profile_name: str) -> list[_StreamCandidate]:
+        """Возвращает порядок форматов открытия stream."""
+        if profile_name != Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY:
+            return [_StreamCandidate(DEFAULT_SAMPLE_RATE, pyaudio.paInt16, "int16")]
+
+        native_sample_rate = round(self.input_device_default_sample_rate) or DEFAULT_SAMPLE_RATE
+        return [
+            _StreamCandidate(native_sample_rate, pyaudio.paFloat32, "float32"),
+            _StreamCandidate(native_sample_rate, pyaudio.paInt16, "int16"),
+            _StreamCandidate(DEFAULT_SAMPLE_RATE, pyaudio.paInt16, "int16"),
+        ]
+
+    def _can_open_stream(
+        self,
+        audio_interface: pyaudio.PyAudio,
+        *,
+        device_index: int | None,
+        candidate: _StreamCandidate,
+    ) -> bool:
         """Проверяет поддержку текущего аудиоформата до открытия stream."""
         try:
             return bool(
                 audio_interface.is_format_supported(
-                    DEFAULT_SAMPLE_RATE,
+                    candidate.sample_rate,
                     input_device=device_index,
                     input_channels=DEFAULT_CHANNELS,
-                    input_format=pyaudio.paInt16,
+                    input_format=candidate.pyaudio_format,
                 )
             )
         except ValueError as error:
             LOGGER.warning(
-                "🎙️ Формат записи не поддерживается: input_device_index=%s, error=%s",
+                "🎙️ Формат записи не поддерживается: input_device_index=%s, sample_rate=%s, format=%s, error=%s",
                 device_index,
+                candidate.sample_rate,
+                candidate.sample_format,
                 error,
             )
             return False
         except Exception:
             LOGGER.warning(
-                "🎙️ Не удалось выполнить preflight формата записи: input_device_index=%s",
+                "🎙️ Не удалось выполнить preflight формата записи: input_device_index=%s, sample_rate=%s, format=%s",
                 device_index,
+                candidate.sample_rate,
+                candidate.sample_format,
                 exc_info=True,
             )
             return True
 
-    def _open_stream(self, audio_interface: pyaudio.PyAudio, *, frames_per_buffer: int) -> Any:
-        """Открывает поток записи, при необходимости повторяя попытку через default input."""
-        requested_device_index = self.input_device_index
-        open_kwargs = {
-            "format": pyaudio.paInt16,
-            "channels": DEFAULT_CHANNELS,
-            "rate": DEFAULT_SAMPLE_RATE,
-            "frames_per_buffer": frames_per_buffer,
-            "input": True,
-            "input_device_index": requested_device_index,
-        }
+    def _open_candidate(
+        self,
+        audio_interface: pyaudio.PyAudio,
+        *,
+        device_index: int | None,
+        frames_per_buffer: int,
+        candidate: _StreamCandidate,
+        profile_name: str,
+    ) -> _OpenedStream:
+        """Открывает stream с одним набором параметров."""
+        if not self._can_open_stream(audio_interface, device_index=device_index, candidate=candidate):
+            raise OSError(-9998, "Unsupported input format")
 
-        LOGGER.info(
-            "🎙️ Открываю поток записи: input_device_index=%s, input_device_name=%s",
-            requested_device_index,
-            self.input_device_name,
+        stream = audio_interface.open(
+            format=candidate.pyaudio_format,
+            channels=DEFAULT_CHANNELS,
+            rate=candidate.sample_rate,
+            frames_per_buffer=frames_per_buffer,
+            input=True,
+            input_device_index=device_index,
+        )
+        return _OpenedStream(
+            stream=stream,
+            sample_rate=candidate.sample_rate,
+            channels=DEFAULT_CHANNELS,
+            sample_format=candidate.sample_format,
+            profile_name=profile_name,
         )
 
-        if not self._can_open_stream(audio_interface, device_index=requested_device_index):
-            raise OSError(-9998, "Invalid number of channels")
+    def _open_stream(self, audio_interface: pyaudio.PyAudio, *, frames_per_buffer: int) -> _OpenedStream:
+        """Открывает поток записи, при необходимости повторяя попытку через default input."""
+        requested_device_index = self.input_device_index
+        profile_name = self._current_audio_profile()
+        candidates = self._stream_candidates(profile_name)
 
-        try:
-            return audio_interface.open(**open_kwargs)
-        except OSError as error:
-            if not self._should_retry_with_default_device(error):
-                raise
+        LOGGER.info(
+            "🎙️ Открываю поток записи: input_device_index=%s, input_device_name=%s, profile=%s",
+            requested_device_index,
+            self.input_device_name,
+            profile_name,
+        )
 
-            LOGGER.warning(
-                "🎙️ Поток не открылся для выбранного микрофона, повторяю через системный default: index=%s, name=%s, error=%s",
-                requested_device_index,
-                self.input_device_name,
-                error,
-            )
-            open_kwargs["input_device_index"] = None
-            if not self._can_open_stream(audio_interface, device_index=None):
-                raise
-            stream = audio_interface.open(**open_kwargs)
-            self.input_device_index = None
-            self.input_device_name = "системный по умолчанию"
-            return stream
+        last_error: OSError | None = None
+        for candidate in candidates:
+            try:
+                return self._open_candidate(
+                    audio_interface,
+                    device_index=requested_device_index,
+                    frames_per_buffer=frames_per_buffer,
+                    candidate=candidate,
+                    profile_name=profile_name,
+                )
+            except OSError as error:
+                last_error = error
+                if self._audio_error_code(error) not in RETRYABLE_AUDIO_ERROR_CODES:
+                    raise
+                LOGGER.warning(
+                    "🎙️ Не открылся кандидат записи: input_device_index=%s, sample_rate=%s, format=%s, error=%s",
+                    requested_device_index,
+                    candidate.sample_rate,
+                    candidate.sample_format,
+                    error,
+                )
+
+        if last_error is None:
+            last_error = OSError(-9998, "No supported input format")
+
+        if not self._should_retry_with_default_device(last_error):
+            raise last_error
+
+        LOGGER.warning(
+            "🎙️ Поток не открылся для выбранного микрофона, повторяю через системный default: index=%s, name=%s, error=%s",
+            requested_device_index,
+            self.input_device_name,
+            last_error,
+        )
+        default_candidate = _StreamCandidate(DEFAULT_SAMPLE_RATE, pyaudio.paInt16, "int16")
+        opened = self._open_candidate(
+            audio_interface,
+            device_index=None,
+            frames_per_buffer=frames_per_buffer,
+            candidate=default_candidate,
+            profile_name=Config.AUDIO_PROFILE_GENERIC,
+        )
+        self.input_device_index = None
+        self.input_device_name = "системный по умолчанию"
+        self.input_device_default_sample_rate = float(DEFAULT_SAMPLE_RATE)
+        self.input_device_host_api_name = None
+        return opened
 
     def _record_impl(self, language: str | None, request_id: int, on_audio_ready: Callable[..., None] | None = None) -> None:
         """Выполняет запись, конвертацию аудио и запуск распознавания."""
@@ -222,16 +373,26 @@ class Recorder:
         self.cancelled = False
         frames_per_buffer = self.frames_per_buffer
         audio_interface = pyaudio.PyAudio()
-        stream = None
+        opened_stream: _OpenedStream | None = None
         frames = []
 
         try:
-            stream = self._open_stream(audio_interface, frames_per_buffer=frames_per_buffer)
+            opened_stream = self._open_stream(audio_interface, frames_per_buffer=frames_per_buffer)
+            stream = opened_stream.stream
             self._set_permission_status("microphone", True)
 
             while self.recording:
                 data = stream.read(frames_per_buffer, exception_on_overflow=False)
                 frames.append(data)
+
+            if not self.cancelled:
+                post_roll_frames = int(opened_stream.sample_rate * (self.post_roll_ms / 1000.0))
+                remaining_frames = post_roll_frames
+                while remaining_frames > 0:
+                    chunk_frames = min(frames_per_buffer, remaining_frames)
+                    data = stream.read(chunk_frames, exception_on_overflow=False)
+                    frames.append(data)
+                    remaining_frames -= chunk_frames
         except Exception as error:
             self.recording = False
             self.cancelled = False
@@ -248,9 +409,9 @@ class Recorder:
             self._notify_runtime_error("MLX Whisper Dictation", message)
             return
         finally:
-            if stream is not None:
-                stream.stop_stream()
-                stream.close()
+            if opened_stream is not None:
+                opened_stream.stream.stop_stream()
+                opened_stream.stream.close()
             audio_interface.terminate()
             self.recording = False
 
@@ -265,13 +426,35 @@ class Recorder:
             self._set_status_if_current(request_id, Config.STATUS_IDLE)
             return
 
-        audio_data = np.frombuffer(b"".join(frames), dtype=np.int16)
-        audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
+        assert opened_stream is not None
+        sample_dtype = np.float32 if opened_stream.sample_format == "float32" else np.int16
+        audio_data = np.frombuffer(b"".join(frames), dtype=sample_dtype)
+        device_index = self.input_device_index
+        device_name = None if self.input_device_name == "системный по умолчанию" else self.input_device_name
+        recorded_audio = RecordedAudio(
+            samples=audio_data,
+            sample_rate=opened_stream.sample_rate,
+            channels=opened_stream.channels,
+            sample_format=opened_stream.sample_format,
+            device_index=device_index,
+            device_name=device_name,
+            profile_name=opened_stream.profile_name,
+            metadata={
+                "pre_roll_ms": 0,
+                "post_roll_ms": self.post_roll_ms,
+                "frames_per_buffer": frames_per_buffer,
+                "frame_chunks": len(frames),
+                "host_api_name": self.input_device_host_api_name,
+            },
+        )
         LOGGER.info(
-            "✅ Запись завершена: фреймов=%s, сэмплов=%s, длительность=%.2f с",
+            "✅ Запись завершена: фреймов=%s, сэмплов=%s, длительность=%.2f с, sample_rate=%s, format=%s, profile=%s",
             len(frames),
-            len(audio_data_fp32),
-            len(audio_data_fp32) / 16000,
+            len(audio_data),
+            len(audio_data) / max(opened_stream.sample_rate, 1),
+            opened_stream.sample_rate,
+            opened_stream.sample_format,
+            opened_stream.profile_name,
         )
 
         def set_status(status: str) -> None:
@@ -282,7 +465,7 @@ class Recorder:
 
         set_status(Config.STATUS_TRANSCRIBING)
         if on_audio_ready is not None:
-            on_audio_ready(audio_data_fp32, language, set_status, is_current)
+            on_audio_ready(recorded_audio, language, set_status, is_current)
         set_status(Config.STATUS_IDLE)
 
 
@@ -303,12 +486,21 @@ def list_input_devices() -> list[AudioDeviceInfo]:
             info = audio_interface.get_device_info_by_index(device_index)
             if int(info.get("maxInputChannels", 0)) <= 0:
                 continue
+            host_api_name = None
+            host_api_index = info.get("hostApi")
+            if host_api_index is not None and hasattr(audio_interface, "get_host_api_info_by_index"):
+                try:
+                    host_api_info = audio_interface.get_host_api_info_by_index(int(host_api_index))
+                    host_api_name = str(host_api_info.get("name", "")).strip() or None
+                except Exception:
+                    LOGGER.debug("🎙️ Не удалось прочитать host API устройства index=%s", device_index, exc_info=True)
             normalized: AudioDeviceInfo = {
                 "index": int(info.get("index", device_index)),
                 "name": str(info.get("name", f"Input {device_index}")),
                 "max_input_channels": int(info.get("maxInputChannels", 0)),
                 "default_sample_rate": float(info.get("defaultSampleRate", 16000.0)),
                 "is_default": int(info.get("index", device_index)) == default_input,
+                "host_api_name": host_api_name,
             }
             devices.append(normalized)
     finally:

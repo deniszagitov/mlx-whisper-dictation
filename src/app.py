@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .domain.audio import (
+    audio_profile_for_input_device,
     input_device_name_matches,
     normalize_input_device_name,
     resolve_input_device,
@@ -323,6 +324,7 @@ class DictationApp:
         self.microphone_profiles = self.microphone_profiles_service.load_profiles()
         self.llm_prompt_name = self.app_preferences.llm_prompt_name
         self.performance_mode = self.app_preferences.performance_mode
+        self.high_quality_mac_builtin_enabled = self.app_preferences.high_quality_mac_builtin_enabled
         self.show_recording_notification = self.app_preferences.show_recording_notification
         self.show_recording_overlay = self.app_preferences.show_recording_overlay
         self.show_recording_time_in_menu_bar = self.app_preferences.show_recording_time_in_menu_bar
@@ -388,6 +390,8 @@ class DictationApp:
 
         if hasattr(self.recorder, "set_performance_mode"):
             self.recorder.set_performance_mode(self.performance_mode)
+        if hasattr(self.recorder, "set_high_quality_mac_builtin"):
+            self.recorder.set_high_quality_mac_builtin(self.high_quality_mac_builtin_enabled)
         if hasattr(self.recorder, "set_error_callback"):
             self.recorder.set_error_callback(self.system_integration_service.notify)
         if hasattr(self.recorder, "set_runtime_error_callback"):
@@ -622,6 +626,11 @@ class DictationApp:
         return bool(getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False))
 
     @property
+    def gain_normalization_enabled(self) -> bool:
+        """Возвращает флаг бережной нормализации аудио."""
+        return bool(getattr(self.transcriber, "gain_normalization_enabled", True))
+
+    @property
     def llm_clipboard_enabled(self) -> bool:
         """Возвращает флаг использования буфера обмена для LLM."""
         return bool(getattr(self.transcriber, "llm_clipboard_enabled", True))
@@ -695,6 +704,23 @@ class DictationApp:
     @performance_mode.setter
     def performance_mode(self, value: str) -> None:
         self.app_preferences = self.app_preferences.with_performance_mode(value)
+
+    @property
+    def audio_profile_name(self) -> str:
+        """Возвращает активный аудиопрофиль для текущего микрофона."""
+        return audio_profile_for_input_device(
+            self.current_input_device,
+            high_quality_mac_builtin_enabled=self.high_quality_mac_builtin_enabled,
+        )
+
+    @property
+    def high_quality_mac_builtin_enabled(self) -> bool:
+        """Возвращает флаг автоматического MacBook HQ-профиля."""
+        return self.app_preferences.high_quality_mac_builtin_enabled
+
+    @high_quality_mac_builtin_enabled.setter
+    def high_quality_mac_builtin_enabled(self, value: bool) -> None:
+        self.app_preferences = self.app_preferences.with_high_quality_mac_builtin(value)
 
     @property
     def show_recording_notification(self) -> bool:
@@ -796,6 +822,8 @@ class DictationApp:
             current_language=self.current_language,
             input_devices=list(self.input_devices),
             current_input_device=self.current_input_device,
+            audio_profile_name=self.audio_profile_name,
+            high_quality_mac_builtin_enabled=self.high_quality_mac_builtin_enabled,
             permission_status=dict(self.permission_status),
             microphone_profiles=list(self.microphone_profiles),
             show_recording_notification=self.show_recording_notification,
@@ -812,6 +840,7 @@ class DictationApp:
             restore_trailing_period_on_next_dictation_enabled=bool(
                 getattr(self.transcriber, "restore_trailing_period_on_next_dictation_enabled", False)
             ),
+            gain_normalization_enabled=bool(getattr(self.transcriber, "gain_normalization_enabled", True)),
             llm_clipboard_enabled=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
             history=list(getattr(self.transcriber, "history", [])),
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
@@ -995,6 +1024,14 @@ class DictationApp:
     def toggle_recording_time_in_menu_bar(self) -> None:
         """Переключает отображение времени записи в menu bar."""
         self.settings_use_cases.toggle_recording_time_in_menu_bar()
+
+    def toggle_high_quality_mac_builtin(self) -> None:
+        """Переключает автоматический MacBook HQ-профиль."""
+        self.settings_use_cases.toggle_high_quality_mac_builtin()
+
+    def toggle_gain_normalization(self) -> None:
+        """Переключает бережную нормализацию аудио."""
+        self.settings_use_cases.toggle_gain_normalization()
 
     def change_performance_mode(self, performance_mode: object) -> None:
         """Меняет баланс между задержкой и ресурсами."""

@@ -93,7 +93,7 @@ def build_audio_diagnostics(
     language: str | None,
 ) -> AudioDiagnostics:
     """Собирает компактную диагностику входного аудиосигнала."""
-    audio_duration_seconds = len(audio_data) / 16000
+    audio_duration_seconds = len(audio_data) / Config.AUDIO_SAMPLE_RATE
     rms_energy = float(((audio_data**2).mean()) ** 0.5) if len(audio_data) else 0.0
     peak_amplitude = float(abs(audio_data).max()) if len(audio_data) else 0.0
     return {
@@ -103,7 +103,7 @@ def build_audio_diagnostics(
         "peak_amplitude": peak_amplitude,
         "silence_threshold": Config.SILENCE_RMS_THRESHOLD,
         "hallucination_threshold": Config.HALLUCINATION_RMS_THRESHOLD,
-        "sample_rate": 16000,
+        "sample_rate": Config.AUDIO_SAMPLE_RATE,
         "samples": len(audio_data),
         "first_samples": audio_data[:16].tolist(),
     }

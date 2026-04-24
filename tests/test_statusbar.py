@@ -29,6 +29,7 @@ class FakeRecorder:
         self.last_on_audio_ready = None
         self.input_device: Any = None
         self.performance_mode: object = None
+        self.high_quality_mac_builtin_enabled: bool | None = None
         self.runtime_error_callback = None
 
     def set_status_callback(self, callback):
@@ -46,6 +47,10 @@ class FakeRecorder:
     def set_performance_mode(self, performance_mode):
         """Сохраняет выбранный режим производительности."""
         self.performance_mode = performance_mode
+
+    def set_high_quality_mac_builtin(self, enabled):
+        """Сохраняет флаг MacBook HQ-профиля."""
+        self.high_quality_mac_builtin_enabled = bool(enabled)
 
     def set_runtime_error_callback(self, callback):
         """Сохраняет callback сброса runtime после ошибки записи."""
@@ -147,6 +152,7 @@ class FakeTranscriber:
         self.capitalize_first_letter_enabled = True
         self.remove_trailing_period_for_single_sentence_enabled = True
         self.restore_trailing_period_on_next_dictation_enabled = False
+        self.gain_normalization_enabled = True
         self.llm_clipboard_enabled = True
         self.private_mode_enabled = False
         self.history: list[str] = []
@@ -230,6 +236,7 @@ def make_input_device_catalog(*, devices=None):
                 "max_input_channels": 1,
                 "default_sample_rate": 48000.0,
                 "is_default": True,
+                "host_api_name": "Core Audio",
             },
         ],
     )
@@ -271,7 +278,14 @@ def make_snapshot(**overrides):
         languages=["ru", "en"],
         current_language="ru",
         input_devices=[
-            {"index": 0, "name": "Built-in Microphone", "max_input_channels": 1, "default_sample_rate": 48000.0, "is_default": True},
+            {
+                "index": 0,
+                "name": "Built-in Microphone",
+                "max_input_channels": 1,
+                "default_sample_rate": 48000.0,
+                "is_default": True,
+                "host_api_name": "Core Audio",
+            },
         ],
         current_input_device={
             "index": 0,
@@ -279,7 +293,10 @@ def make_snapshot(**overrides):
             "max_input_channels": 1,
             "default_sample_rate": 48000.0,
             "is_default": True,
+            "host_api_name": "Core Audio",
         },
+        audio_profile_name=Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY,
+        high_quality_mac_builtin_enabled=True,
         permission_status={"accessibility": True, "input_monitoring": True, "microphone": True},
         microphone_profiles=[],
         show_recording_notification=True,
@@ -292,6 +309,7 @@ def make_snapshot(**overrides):
         capitalize_first_letter_enabled=True,
         remove_trailing_period_for_single_sentence_enabled=True,
         restore_trailing_period_on_next_dictation_enabled=True,
+        gain_normalization_enabled=True,
         llm_clipboard_enabled=True,
         history=["Привет мир"],
         total_tokens=123,
@@ -334,6 +352,8 @@ class FakeDictationController:
         self.current_language = snapshot.current_language
         self.input_devices = list(snapshot.input_devices)
         self.current_input_device = snapshot.current_input_device
+        self.audio_profile_name = snapshot.audio_profile_name
+        self.high_quality_mac_builtin_enabled = snapshot.high_quality_mac_builtin_enabled
         self.permission_status = dict(snapshot.permission_status)
         self.microphone_profiles = list(snapshot.microphone_profiles)
         self.show_recording_notification = snapshot.show_recording_notification
@@ -350,6 +370,7 @@ class FakeDictationController:
         self.restore_trailing_period_on_next_dictation_enabled = (
             snapshot.restore_trailing_period_on_next_dictation_enabled
         )
+        self.gain_normalization_enabled = snapshot.gain_normalization_enabled
         self.llm_clipboard_enabled = snapshot.llm_clipboard_enabled
         self.history = list(snapshot.history)
         self.total_tokens = snapshot.total_tokens
@@ -404,6 +425,14 @@ class FakeDictationController:
     def toggle_recording_time_in_menu_bar(self):
         """Запоминает команду переключения таймера в menu bar."""
         self.calls.append(("toggle_recording_time_in_menu_bar", None))
+
+    def toggle_high_quality_mac_builtin(self):
+        """Запоминает команду переключения MacBook HQ-профиля."""
+        self.calls.append(("toggle_high_quality_mac_builtin", None))
+
+    def toggle_gain_normalization(self):
+        """Запоминает команду переключения бережной нормализации."""
+        self.calls.append(("toggle_gain_normalization", None))
 
     def start_recording(self):
         """Имитирует старт записи и публикует recording snapshot."""
@@ -598,7 +627,18 @@ class TestStatusBarInit:
         assert app.behavior_menu.title == "⚙️ Поведение и вид"
         assert app.behavior_menu[app.recording_notification_item.title].title == app.recording_notification_item.title
         assert app.behavior_menu[app.recording_indicator_menu.title].title == app.recording_indicator_menu.title
+        assert app.behavior_menu[app.audio_menu.title].title == app.audio_menu.title
         assert app.behavior_menu[app.paste_method_menu.title].title == app.paste_method_menu.title
+
+    def test_audio_menu_shows_profile_and_voice_isolation_hint(self, make_app):
+        """Аудиоменю должно показывать профиль, toggles и подсказку про Voice Isolation."""
+        app, *_ = make_app(languages=["ru"])
+
+        assert app.audio_menu.title == "🎙️ Аудио"
+        assert "MacBook HQ" in app.audio_profile_item.title
+        assert app.audio_menu[app.high_quality_mac_builtin_item.title].state == 1
+        assert app.audio_menu[app.gain_normalization_item.title].state == 1
+        assert "Voice Isolation" in app.voice_isolation_hint_item.title
 
     def test_private_mode_item_stays_on_top_level(self, make_app):
         """Приватный режим доступен отдельным пунктом верхнего уровня."""
@@ -1571,6 +1611,8 @@ class TestStatusBarWithFakeController:
         app.change_language(ui_module.rumps.MenuItem("en"))
         app.toggle_recording_overlay(app.recording_overlay_item)
         app.toggle_recording_time_in_menu_bar(app.recording_time_in_menu_bar_item)
+        app.toggle_high_quality_mac_builtin(app.high_quality_mac_builtin_item)
+        app.toggle_gain_normalization(app.gain_normalization_item)
         app.toggle_capitalize_first_letter(app.capitalize_first_letter_item)
         app.toggle_remove_trailing_period_for_single_sentence(app.remove_trailing_period_for_single_sentence_item)
         app.toggle_restore_trailing_period_on_next_dictation(app.restore_trailing_period_on_next_dictation_item)
@@ -1581,6 +1623,8 @@ class TestStatusBarWithFakeController:
             ("change_language", "en"),
             ("toggle_recording_overlay", None),
             ("toggle_recording_time_in_menu_bar", None),
+            ("toggle_high_quality_mac_builtin", None),
+            ("toggle_gain_normalization", None),
             ("toggle_capitalize_first_letter", None),
             ("toggle_remove_trailing_period_for_single_sentence", None),
             ("toggle_restore_trailing_period_on_next_dictation", None),

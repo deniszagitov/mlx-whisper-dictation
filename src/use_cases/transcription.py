@@ -6,10 +6,11 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import numpy as np
     import numpy.typing as npt
 
     from ..domain.ports import SettingsStoreProtocol
@@ -26,7 +27,7 @@ from ..domain.transcription import (
     looks_like_hallucination,
     normalize_history_record,
 )
-from ..domain.types import TranscriberPreferences
+from ..domain.types import PreprocessedAudio, RecordedAudio, TranscriberPreferences
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class _DisabledDiagnosticsStore:
         self,
         stem: str,
         audio_data: npt.NDArray[np.float32],
-        diagnostics: AudioDiagnostics,
+        diagnostics: AudioDiagnostics | dict[str, Any],
     ) -> None:
         """Игнорирует сохранение WAV-артефактов."""
         return None
@@ -52,13 +53,68 @@ class _DisabledDiagnosticsStore:
     def save_transcription_artifacts(
         self,
         stem: str,
-        diagnostics: AudioDiagnostics,
+        diagnostics: AudioDiagnostics | dict[str, Any],
         result: Any = None,
         text: str = "",
         error_message: str | None = None,
     ) -> None:
         """Игнорирует сохранение диагностических результатов."""
         return None
+
+
+def _legacy_preprocess_audio(
+    audio_input: Any,
+    language: str | None,
+    *,
+    enable_gain_normalization: bool = True,
+) -> PreprocessedAudio:
+    """Поддерживает старый ndarray-контракт без infrastructure-preprocessor."""
+    if isinstance(audio_input, RecordedAudio):
+        raw_audio = np.asarray(audio_input.samples)
+        sample_format = audio_input.sample_format
+    else:
+        raw_audio = np.asarray(audio_input)
+        sample_format = "int16" if raw_audio.dtype == np.int16 else "float32"
+
+    if sample_format == "int16" or raw_audio.dtype == np.int16:
+        audio = raw_audio.astype(np.float32) / 32768.0
+    else:
+        audio = raw_audio.astype(np.float32, copy=False)
+    audio = np.nan_to_num(audio.reshape(-1), nan=0.0, posinf=0.0, neginf=0.0)
+    audio = np.clip(audio, -1.0, 1.0).astype(np.float32, copy=False)
+    diagnostics = dict(build_audio_diagnostics(audio, language))
+    diagnostics.update(
+        {
+            "profile_name": Config.AUDIO_PROFILE_GENERIC,
+            "capture_sample_rate": Config.AUDIO_SAMPLE_RATE,
+            "capture_format": sample_format,
+            "capture_channels": Config.AUDIO_CHANNELS_MONO,
+            "final_sample_rate": Config.AUDIO_SAMPLE_RATE,
+            "duration_before_preprocessing_s": diagnostics["duration_seconds"],
+            "duration_after_preprocessing_s": diagnostics["duration_seconds"],
+            "pre_roll_ms": 0,
+            "post_roll_ms": 0,
+            "clipping_ratio": float(np.mean(np.abs(audio) >= Config.AUDIO_CLIPPING_THRESHOLD)) if len(audio) else 0.0,
+            "dc_offset_before": float(np.mean(audio)) if len(audio) else 0.0,
+            "dc_offset_after": float(np.mean(audio)) if len(audio) else 0.0,
+            "vad_speech_duration_s": None,
+            "vad_speech_ratio": None,
+            "gain_applied_db": 0.0,
+            "resampled": False,
+            "skip_asr": False,
+            "legacy_preprocessor": True,
+        }
+    )
+    duration_value = diagnostics.get("duration_seconds", 0.0)
+    duration_seconds = float(duration_value) if isinstance(duration_value, int | float) else 0.0
+    return PreprocessedAudio(
+        audio=audio,
+        sample_rate=Config.AUDIO_SAMPLE_RATE,
+        speech_detected=True,
+        duration_s=duration_seconds,
+        speech_duration_s=None,
+        diagnostics=diagnostics,
+    )
 
 
 class _InMemorySettingsStore:
@@ -180,6 +236,7 @@ class TranscriptionUseCases:
         settings_store: SettingsStoreProtocol | None = None,
         preferences: TranscriberPreferences | None = None,
         diagnostics_store: Any | None = None,
+        audio_preprocessor: Callable[..., PreprocessedAudio] | None = None,
         transcription_runner: Callable[[npt.NDArray[np.float32], str, str | None], dict[str, Any]] | None = None,
         type_text_via_cgevent: Callable[[str], None] | None = None,
         insert_text_via_ax: Callable[[str], None] | None = None,
@@ -204,6 +261,7 @@ class TranscriptionUseCases:
             settings_store: Хранилище пользовательских настроек и флагов runtime.
             preferences: Нормализованные настройки методов вставки и private mode.
             diagnostics_store: Необязательный adapter сохранения диагностических файлов.
+            audio_preprocessor: Необязательный runtime-preprocessor записанного аудио.
             transcription_runner: Необязательный runtime-вызов Whisper.
             type_text_via_cgevent: Необязательный runtime-ввод через CGEvent.
             insert_text_via_ax: Необязательный runtime-ввод через Accessibility API.
@@ -223,6 +281,7 @@ class TranscriptionUseCases:
         """
         self.settings_store = settings_store or _InMemorySettingsStore()
         self.diagnostics_store = diagnostics_store or _DisabledDiagnosticsStore()
+        self._audio_preprocessor = audio_preprocessor or _legacy_preprocess_audio
         self._transcription_runner = transcription_runner
         self._type_text_via_cgevent_runtime = type_text_via_cgevent
         self._insert_text_via_ax_runtime = insert_text_via_ax
@@ -314,6 +373,15 @@ class TranscriptionUseCases:
         self.preferences = self.preferences.with_restore_trailing_period_on_next_dictation_enabled(enabled)
         if not self.preferences.restore_trailing_period_on_next_dictation_enabled:
             self._reset_pending_period_prefix_for_next_dictation()
+
+    @property
+    def gain_normalization_enabled(self) -> bool:
+        """Возвращает флаг бережной нормализации аудио."""
+        return self.preferences.gain_normalization_enabled
+
+    @gain_normalization_enabled.setter
+    def gain_normalization_enabled(self, enabled: object) -> None:
+        self.preferences = self.preferences.with_gain_normalization_enabled(enabled)
 
     @property
     def llm_clipboard_enabled(self) -> bool:
@@ -690,6 +758,37 @@ class TranscriptionUseCases:
             raise RuntimeError("Whisper runtime не настроен")
         return self._transcription_runner(audio_data, self.model_name, language)
 
+    def _asr_backend_name(self) -> str:
+        """Возвращает короткое имя ASR backend-а по текущей модели."""
+        normalized_model = self.model_name.rsplit("/", maxsplit=1)[-1].lower()
+        if normalized_model.startswith("qwen3-asr"):
+            return "qwen3-asr"
+        return "mlx_whisper"
+
+    def _preprocess_audio(self, audio_data: Any, language: str | None) -> PreprocessedAudio:
+        """Приводит записанное аудио к контракту ASR-модели."""
+        preprocessed = self._audio_preprocessor(
+            audio_data,
+            language,
+            enable_gain_normalization=self.gain_normalization_enabled,
+        )
+        preprocessed.diagnostics.setdefault("asr_backend", self._asr_backend_name())
+        preprocessed.diagnostics.setdefault("model_name", self.model_name)
+        return preprocessed
+
+    def _save_recording_artifacts(
+        self,
+        stem: str,
+        raw_audio: Any,
+        preprocessed_audio: PreprocessedAudio,
+        diagnostics: dict[str, Any],
+    ) -> Any:
+        """Сохраняет raw/final WAV-артефакты, если store это поддерживает."""
+        save_recording_artifacts = getattr(self.diagnostics_store, "save_recording_artifacts", None)
+        if save_recording_artifacts is not None:
+            return save_recording_artifacts(stem, raw_audio, preprocessed_audio, diagnostics)
+        return self.diagnostics_store.save_audio_recording(stem, preprocessed_audio.audio, diagnostics)
+
     def _build_text_postprocessor(self) -> TranscriptionPostprocessor:
         """Собирает цепочку включённых правил постобработки распознанного текста."""
         rules: list[TranscriptionPostprocessingRule] = []
@@ -705,35 +804,54 @@ class TranscriptionUseCases:
             return text
         return self._build_text_postprocessor().apply(text)
 
-    def transcribe(self, audio_data: npt.NDArray[np.float32], language: str | None = None) -> None:
+    def transcribe(self, audio_data: Any, language: str | None = None) -> None:
         """Распознает аудио и вставляет результат в активное приложение.
 
         Args:
-            audio_data: Массив с аудио в формате float32.
+            audio_data: Записанное аудио или legacy-массив float32.
             language: Необязательный код языка для улучшения распознавания.
         """
         stem = self.diagnostics_store.artifact_stem()
-        diagnostics = build_audio_diagnostics(audio_data, language)
+        preprocessed_audio = self._preprocess_audio(audio_data, language)
+        final_audio = preprocessed_audio.audio
+        diagnostics = dict(preprocessed_audio.diagnostics)
+        diagnostics.update(build_audio_diagnostics(final_audio, language))
+        diagnostics["asr_backend"] = self._asr_backend_name()
+        diagnostics["model_name"] = self.model_name
         audio_duration_seconds = diagnostics["duration_seconds"]
         rms_energy = diagnostics["rms_energy"]
         peak_amplitude = diagnostics["peak_amplitude"]
-        wav_path = self.diagnostics_store.save_audio_recording(stem, audio_data, diagnostics)
-        if wav_path is None:
+        artifact_paths = self._save_recording_artifacts(stem, audio_data, preprocessed_audio, diagnostics)
+        if artifact_paths is None:
             LOGGER.info(
-                "🔍 Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s",
+                "🔍 Диагностика аудио: profile=%s, capture=%s/%s, final=%s, длительность=%.2f с, RMS=%.6f, peak=%.6f, "
+                "VAD=%s, gain=%.2f dB, language=%s",
+                diagnostics.get("profile_name"),
+                diagnostics.get("capture_sample_rate"),
+                diagnostics.get("capture_format"),
+                diagnostics.get("final_sample_rate"),
                 audio_duration_seconds,
                 rms_energy,
                 peak_amplitude,
+                diagnostics.get("vad_speech_duration_s"),
+                diagnostics.get("gain_applied_db", 0.0),
                 language,
             )
         else:
             LOGGER.info(
-                "🔍 Диагностика аудио: длительность=%.2f с, RMS=%.6f, peak=%.6f, language=%s, wav=%s",
+                "🔍 Диагностика аудио: profile=%s, capture=%s/%s, final=%s, длительность=%.2f с, RMS=%.6f, peak=%.6f, "
+                "VAD=%s, gain=%.2f dB, language=%s, artifacts=%s",
+                diagnostics.get("profile_name"),
+                diagnostics.get("capture_sample_rate"),
+                diagnostics.get("capture_format"),
+                diagnostics.get("final_sample_rate"),
                 audio_duration_seconds,
                 rms_energy,
                 peak_amplitude,
+                diagnostics.get("vad_speech_duration_s"),
+                diagnostics.get("gain_applied_db", 0.0),
                 language,
-                wav_path,
+                artifact_paths,
             )
         if audio_duration_seconds < Config.SHORT_AUDIO_WARNING_SECONDS:
             LOGGER.warning("⚠️ Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
@@ -743,9 +861,17 @@ class TranscriptionUseCases:
                 rms_energy,
                 Config.SILENCE_RMS_THRESHOLD,
             )
+        if diagnostics.get("skip_asr"):
+            LOGGER.warning("🔇 ASR пропущен: запись похожа на тишину/no-speech")
+            self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, text="", error_message="No speech")
+            self._notify_user(
+                "MLX Whisper Dictation",
+                "Речь не обнаружена. Проверьте микрофон, уровень сигнала и попробуйте ещё раз.",
+            )
+            return
 
         try:
-            result = self._run_transcription(audio_data, language)
+            result = self._run_transcription(final_audio, language)
         except Exception:
             LOGGER.exception("❌ Ошибка распознавания")
             self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, error_message="Ошибка распознавания")
@@ -761,7 +887,7 @@ class TranscriptionUseCases:
         if not text and language is not None:
             LOGGER.info("🔄 Первый проход вернул пустой результат, повторяю распознавание без фиксированного языка")
             try:
-                result = self._run_transcription(audio_data, None)
+                result = self._run_transcription(final_audio, None)
             except Exception:
                 LOGGER.exception("❌ Ошибка повторного распознавания без языка")
             else:
@@ -876,14 +1002,14 @@ class TranscriptionUseCases:
                 f"Результат {self._fallback_storage_message(clipboard_saved=clipboard_saved)}.",
             )
 
-    def transcribe_to_text(self, audio_data: npt.NDArray[np.float32], language: str | None = None) -> str | None:
+    def transcribe_to_text(self, audio_data: Any, language: str | None = None) -> str | None:
         """Распознаёт аудио через Whisper и возвращает текст без вставки.
 
         Выполняет диагностику аудио, один проход Whisper, учёт токенов
         и проверку на галлюцинации. Не вставляет текст и не работает с LLM.
 
         Args:
-            audio_data: Массив с аудио в формате float32.
+            audio_data: Записанное аудио или legacy-массив float32.
             language: Необязательный код языка для улучшения распознавания.
 
         Returns:
@@ -891,18 +1017,27 @@ class TranscriptionUseCases:
             или результат отброшен как галлюцинация.
         """
         stem = self.diagnostics_store.artifact_stem()
-        diagnostics = build_audio_diagnostics(audio_data, language)
+        preprocessed_audio = self._preprocess_audio(audio_data, language)
+        final_audio = preprocessed_audio.audio
+        diagnostics = dict(preprocessed_audio.diagnostics)
+        diagnostics.update(build_audio_diagnostics(final_audio, language))
+        diagnostics["asr_backend"] = self._asr_backend_name()
+        diagnostics["model_name"] = self.model_name
         audio_duration_seconds = diagnostics["duration_seconds"]
         rms_energy = diagnostics["rms_energy"]
-        self.diagnostics_store.save_audio_recording(stem, audio_data, diagnostics)
+        self._save_recording_artifacts(stem, audio_data, preprocessed_audio, diagnostics)
 
         if audio_duration_seconds < Config.SHORT_AUDIO_WARNING_SECONDS:
             LOGGER.warning("⚠️ Аудио короткое (%.2f с)", audio_duration_seconds)
         if rms_energy < Config.SILENCE_RMS_THRESHOLD:
             LOGGER.warning("🔇 Аудио тихое (RMS=%.6f)", rms_energy)
+        if diagnostics.get("skip_asr"):
+            LOGGER.warning("🔇 ASR пропущен: запись похожа на тишину/no-speech")
+            self._notify_user("MLX Whisper Dictation", "Речь не обнаружена. Попробуйте ещё раз.")
+            return None
 
         try:
-            result = self._run_transcription(audio_data, language)
+            result = self._run_transcription(final_audio, language)
         except Exception:
             LOGGER.exception("❌ Ошибка распознавания")
             self._notify_user("MLX Whisper Dictation", "Ошибка распознавания. Смотрите stderr.log.")

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, TypedDict
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from .audio import input_device_name_matches, normalize_input_device_name
 from .constants import Config
@@ -11,6 +11,8 @@ from .hotkeys import format_hotkey_status, normalize_key_combination
 
 if TYPE_CHECKING:
     from collections.abc import Collection
+
+    import numpy.typing as npt
 
     from .ports import SettingsStoreProtocol
 
@@ -30,6 +32,7 @@ class AudioDeviceInfo(TypedDict):
     max_input_channels: int
     default_sample_rate: float
     is_default: bool
+    host_api_name: NotRequired[str | None]
 
 
 class AudioDiagnostics(TypedDict):
@@ -44,6 +47,32 @@ class AudioDiagnostics(TypedDict):
     sample_rate: int
     samples: int
     first_samples: list[float]
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedAudio:
+    """Сырой результат записи до ASR-preprocessing."""
+
+    samples: npt.NDArray[Any]
+    sample_rate: int
+    channels: int
+    sample_format: str
+    device_index: int | None
+    device_name: str | None
+    profile_name: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class PreprocessedAudio:
+    """Аудио, приведённое к контракту локальной ASR-модели."""
+
+    audio: npt.NDArray[Any]
+    sample_rate: int
+    speech_detected: bool
+    duration_s: float
+    speech_duration_s: float | None
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 def _coerce_bool(value: object, *, fallback: bool) -> bool:
@@ -382,6 +411,7 @@ class AppPreferences:
     selected_language: str | None
     selected_input_device_index: int | None
     selected_input_device_name: str | None
+    high_quality_mac_builtin_enabled: bool
     show_recording_notification: bool
     show_recording_overlay: bool
     show_recording_time_in_menu_bar: bool
@@ -408,6 +438,10 @@ class AppPreferences:
             selected_input_device_index=selected_input_device_index,
             selected_input_device_name=_coerce_optional_str(
                 settings_store.load_str(Config.DEFAULTS_KEY_INPUT_DEVICE_NAME, fallback=None),
+            ),
+            high_quality_mac_builtin_enabled=settings_store.load_bool(
+                Config.DEFAULTS_KEY_HIGH_QUALITY_MAC_BUILTIN,
+                fallback=True,
             ),
             show_recording_notification=settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_NOTIFICATION, fallback=True),
             show_recording_overlay=settings_store.load_bool(Config.DEFAULTS_KEY_RECORDING_OVERLAY, fallback=True),
@@ -453,6 +487,13 @@ class AppPreferences:
             selected_input_device_name=normalized_name,
         )
 
+    def with_high_quality_mac_builtin(self, enabled: object) -> AppPreferences:
+        """Возвращает новый набор настроек с обновлённым MacBook HQ-профилем."""
+        return replace(
+            self,
+            high_quality_mac_builtin_enabled=_coerce_bool(enabled, fallback=self.high_quality_mac_builtin_enabled),
+        )
+
     def with_recording_notification(self, enabled: object) -> AppPreferences:
         """Возвращает новый набор настроек с обновлённым флагом уведомления."""
         return replace(self, show_recording_notification=_coerce_bool(enabled, fallback=self.show_recording_notification))
@@ -479,6 +520,7 @@ class TranscriberPreferences:
     capitalize_first_letter_enabled: bool
     remove_trailing_period_for_single_sentence_enabled: bool
     restore_trailing_period_on_next_dictation_enabled: bool
+    gain_normalization_enabled: bool
     llm_clipboard_enabled: bool
     private_mode_enabled: bool
     total_tokens: int
@@ -502,6 +544,7 @@ class TranscriberPreferences:
                 Config.DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION,
                 fallback=False,
             ),
+            gain_normalization_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_GAIN_NORMALIZATION, fallback=True),
             llm_clipboard_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_LLM_CLIPBOARD, fallback=True),
             private_mode_enabled=settings_store.load_bool(Config.DEFAULTS_KEY_PRIVATE_MODE, fallback=False),
             total_tokens=max(settings_store.load_int(Config.DEFAULTS_KEY_TOTAL_TOKENS, fallback=0), 0),
@@ -549,6 +592,10 @@ class TranscriberPreferences:
                 fallback=self.restore_trailing_period_on_next_dictation_enabled,
             ),
         )
+
+    def with_gain_normalization_enabled(self, enabled: object) -> TranscriberPreferences:
+        """Возвращает новый набор настроек с бережной нормализацией аудио."""
+        return replace(self, gain_normalization_enabled=_coerce_bool(enabled, fallback=self.gain_normalization_enabled))
 
     def with_llm_clipboard_enabled(self, enabled: object) -> TranscriberPreferences:
         """Возвращает новый набор настроек с обновлённым LLM clipboard."""
@@ -742,6 +789,8 @@ class AppSnapshot:
     current_language: str | None
     input_devices: list[AudioDeviceInfo]
     current_input_device: AudioDeviceInfo | None
+    audio_profile_name: str
+    high_quality_mac_builtin_enabled: bool
     permission_status: dict[str, bool | None]
     microphone_profiles: list[MicrophoneProfile]
     show_recording_notification: bool
@@ -754,6 +803,7 @@ class AppSnapshot:
     capitalize_first_letter_enabled: bool
     remove_trailing_period_for_single_sentence_enabled: bool
     restore_trailing_period_on_next_dictation_enabled: bool
+    gain_normalization_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int

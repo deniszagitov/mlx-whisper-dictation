@@ -20,6 +20,8 @@ dependencies = [
 	"pyaudio>=0.2.13",
 	"pynput>=1.7.6",
 	"rumps>=0.4.0",
+	"soxr>=1.0.0",
+	"webrtcvad-wheels>=2.0.14",
 ]
 
 [project.urls]
@@ -134,9 +136,11 @@ module = [
     "pyaudio.*",
     "pynput.*",
     "py2app.*",
+    "soxr.*",
     "modulegraph.*",
     "setuptools.*",
     "tqdm.*",
+    "webrtcvad.*",
 ]
 ignore_missing_imports = true
 

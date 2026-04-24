@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..domain.constants import Config
-
-if TYPE_CHECKING:
-    import numpy as np
-    import numpy.typing as npt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -104,7 +100,7 @@ class RecordingUseCases:
 
     def _on_audio_ready(
         self,
-        audio_data: npt.NDArray[np.float32],
+        audio_data: Any,
         language: str | None,
         _set_status: Any,
         _is_current: Any,

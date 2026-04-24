@@ -61,6 +61,41 @@ def test_enabled_diagnostics_write_audio_and_transcription_files(app_module, tmp
     assert (tmp_path / "transcriptions" / "sample.txt").read_text(encoding="utf-8") == "Привет"
 
 
+def test_save_recording_artifacts_writes_raw_final_and_metadata(app_module, tmp_path):
+    """DiagnosticsStore должен сохранять raw/final WAV и общий JSON для записи."""
+    diagnostics_store = app_module.DiagnosticsStore(root_dir=tmp_path, enabled=True)
+    recorded = app_module.RecordedAudio(
+        samples=np.zeros(48000, dtype=np.float32),
+        sample_rate=48000,
+        channels=1,
+        sample_format="float32",
+        device_index=0,
+        device_name="Built-in Microphone",
+        profile_name=Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY,
+    )
+    preprocessed = app_module.PreprocessedAudio(
+        audio=np.zeros(16000, dtype=np.float32),
+        sample_rate=16000,
+        speech_detected=True,
+        duration_s=1.0,
+        speech_duration_s=0.5,
+        diagnostics={"profile_name": Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY},
+    )
+
+    paths = diagnostics_store.save_recording_artifacts(
+        "sample",
+        recorded,
+        preprocessed,
+        {"profile_name": Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY},
+    )
+
+    assert paths is not None
+    assert (tmp_path / "recordings" / "sample.raw.wav").exists()
+    assert (tmp_path / "recordings" / "sample.final.wav").exists()
+    metadata = json.loads((tmp_path / "recordings" / "sample.json").read_text(encoding="utf-8"))
+    assert metadata["profile_name"] == Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY
+
+
 def test_diagnostics_retention_removes_files_older_than_24_hours(app_module, tmp_path):
     """DiagnosticsStore должен удалять артефакты старше 24 часов."""
     diagnostics_store = app_module.DiagnosticsStore(root_dir=tmp_path, enabled=True, retention_seconds=24 * 60 * 60)

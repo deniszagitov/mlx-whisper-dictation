@@ -95,7 +95,81 @@ def make_transcriber(app_module, diagnostics_enabled=False):
     )
 
 
+def make_recorded_audio(app_module, seconds=1.0, sample_rate=48000, amplitude=0.02):
+    """Создаёт RecordedAudio с native sample rate для тестов ASR-контракта."""
+    samples = int(sample_rate * seconds)
+    audio = np.tile(np.array([amplitude, -amplitude], dtype=np.float32), samples // 2)
+    return app_module.RecordedAudio(
+        samples=audio,
+        sample_rate=sample_rate,
+        channels=1,
+        sample_format="float32",
+        device_index=0,
+        device_name="Built-in Microphone",
+        profile_name=Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY,
+        metadata={"post_roll_ms": 300},
+    )
+
+
 # Сценарии
+
+def test_transcribe_to_text_sends_preprocessed_in_memory_16khz_to_asr(app_module):
+    """ASR runner должен получать in-memory float32 mono 16 kHz, а не raw/native audio."""
+    calls: list[tuple[np.ndarray, str, str | None]] = []
+
+    def runner(audio, model, language):
+        calls.append((audio, model, language))
+        return {"text": "готово"}
+
+    transcriber = app_module.SpeechTranscriber(
+        "dummy-model",
+        settings_store=FakeSettingsStore(),
+        diagnostics_store=app_module.DiagnosticsStore(enabled=False),
+        audio_preprocessor=app_module.preprocess_recorded_audio,
+        transcription_runner=runner,
+    )
+
+    result = transcriber.transcribe_to_text(make_recorded_audio(app_module), "ru")
+
+    assert result == "Готово"
+    assert calls
+    audio, model, language = calls[0]
+    assert model == "dummy-model"
+    assert language == "ru"
+    assert audio.dtype == np.float32
+    assert len(audio) == 16000
+
+
+def test_transcribe_to_text_skips_asr_for_confident_no_speech(app_module):
+    """Уверенная тишина не должна отправляться в ASR runner."""
+    calls: list[object] = []
+
+    def runner(*_args):
+        calls.append(True)
+        return {"text": "не должно быть"}
+
+    transcriber = app_module.SpeechTranscriber(
+        "dummy-model",
+        settings_store=FakeSettingsStore(),
+        diagnostics_store=app_module.DiagnosticsStore(enabled=False),
+        audio_preprocessor=app_module.preprocess_recorded_audio,
+        transcription_runner=runner,
+    )
+    recorded = app_module.RecordedAudio(
+        samples=np.zeros(16000, dtype=np.float32),
+        sample_rate=16000,
+        channels=1,
+        sample_format="float32",
+        device_index=0,
+        device_name="Built-in Microphone",
+        profile_name=Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY,
+    )
+
+    result = transcriber.transcribe_to_text(recorded, "ru")
+
+    assert result is None
+    assert calls == []
+
 
 NOTES_APP_INFO: AppInfo = {"name": "Notes", "bundle_id": "com.apple.Notes", "pid": 100}
 SAFARI_APP_INFO: AppInfo = {"name": "Safari", "bundle_id": "com.apple.Safari", "pid": 200}
