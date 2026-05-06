@@ -123,9 +123,13 @@ class FakeLLMProcessor:
         """Запоминает выбранный режим производительности."""
         self.performance_mode = mode
 
-    def process_text(self, text: str, system_prompt: str, *, context: str | None = None) -> str:
+    def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
         """Возвращает входной текст без изменений."""
         return text
+
+    def change_model(self, model_name: str) -> None:
+        """Запоминает выбранную модель."""
+        self.model_name = model_name
 
     def ensure_model_downloaded(self) -> None:
         """Заглушка для загрузки модели."""
@@ -230,6 +234,31 @@ def make_input_device_catalog(*, devices=None):
     return app_module.InputDeviceCatalogService(list_input_devices=lambda: list(input_devices))
 
 
+def install_display_sleep_prevention(controller):
+    """Подключает к контроллеру фейковый display sleep assertion и возвращает журнал событий."""
+    events: list[str] = []
+
+    def acquire() -> bool:
+        events.append("acquire")
+        return True
+
+    def release() -> None:
+        events.append("release")
+
+    controller.display_sleep_prevention_service = app_module.DisplaySleepPreventionService(
+        acquire=acquire,
+        release=release,
+    )
+    return events
+
+
+def install_system_diagnostics(controller):
+    """Подключает к контроллеру фейковый сбор системной диагностики."""
+    events: list[str] = []
+    controller.system_diagnostics_service = app_module.SystemDiagnosticsService(capture=events.append)
+    return events
+
+
 def make_controller(monkeypatch, *, system_integration_service=None):
     """Создаёт DictationApp с замоканными внешними зависимостями."""
     recorder = FakeRecorder()
@@ -266,6 +295,7 @@ def make_controller(monkeypatch, *, system_integration_service=None):
         input_device_catalog=input_device_catalog,
         settings_store=cast("Any", settings_store),
     )
+    controller.display_sleep_release_delay_seconds = 0
     return controller, recorder, transcriber
 
 
@@ -381,16 +411,16 @@ def test_prepare_recording_falls_back_to_default_device(monkeypatch):
     assert controller.current_input_device["index"] == 0
     assert recorder.input_device is not None
     assert recorder.input_device["index"] == 0
-    assert notifications == [
-        ("MLX Whisper Dictation", "Выбранный микрофон временно недоступен. Переключаюсь на: Built-in Microphone")
-    ]
+    assert notifications == [("MLX Whisper Dictation", "Выбранный микрофон временно недоступен. Переключаюсь на: Built-in Microphone")]
 
 
 def test_handle_recording_runtime_error_resets_runtime_state(monkeypatch):
     """Runtime-ошибка записи должна возвращать приложение в idle и обновлять каталог микрофонов."""
     controller, recorder, _transcriber = make_controller(monkeypatch)
+    display_events = install_display_sleep_prevention(controller)
     controller.started = True
     controller.state = Config.STATUS_RECORDING
+    controller.prevent_display_sleep_for_active_session()
     hidden_calls: list[bool] = []
     controller.recording_overlay = cast("Any", type("OverlayStub", (), {"hide": lambda self: hidden_calls.append(True)})())
 
@@ -399,6 +429,7 @@ def test_handle_recording_runtime_error_resets_runtime_state(monkeypatch):
     assert controller.started is False
     assert controller.state == Config.STATUS_IDLE
     assert hidden_calls == [True]
+    assert display_events == ["acquire", "release"]
     assert recorder.input_device["index"] == 0
 
 
@@ -406,9 +437,11 @@ def test_handle_system_wake_cancels_recording_and_recovers_listener(monkeypatch)
     """После wake приложение должно отменить запись, обновить аудио и восстановить listener."""
     notifications: list[tuple[str, str]] = []
     controller, recorder, _transcriber = make_controller(monkeypatch)
+    display_events = install_display_sleep_prevention(controller)
     controller.system_integration_service = make_system_integration_service(notifications=notifications)
     controller.started = True
     controller.state = Config.STATUS_RECORDING
+    controller.prevent_display_sleep_for_active_session()
     hide_calls: list[bool] = []
     controller.recording_overlay = cast("Any", type("OverlayStub", (), {"hide": lambda self: hide_calls.append(True)})())
     wake_calls: list[bool] = []
@@ -426,8 +459,52 @@ def test_handle_system_wake_cancels_recording_and_recovers_listener(monkeypatch)
     assert controller.state == Config.STATUS_IDLE
     assert hide_calls == [True]
     assert wake_calls == [True]
+    assert display_events == ["acquire", "release"]
     assert controller.current_input_device["index"] == 0
     assert notifications == []
+
+
+def test_system_wake_during_grace_keeps_display_sleep_prevention(monkeypatch):
+    """Wake во время post-dictation grace-паузы не должен сам отпускать assertion."""
+    controller, recorder, _transcriber = make_controller(monkeypatch)
+    controller.display_sleep_release_delay_seconds = 120
+    display_events = install_display_sleep_prevention(controller)
+    diagnostics_events = install_system_diagnostics(controller)
+
+    class FakeTimer:
+        def __init__(self, _delay, _callback):
+            self.daemon = False
+            self.cancelled = False
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            self.cancelled = True
+
+        def is_alive(self):
+            return not self.cancelled
+
+    monkeypatch.setattr(app_module.threading, "Timer", FakeTimer)
+
+    controller.start_recording()
+    controller.stop_recording()
+    controller.set_state(Config.STATUS_IDLE)
+    controller.handle_system_wake()
+
+    assert recorder.cancelled is False
+    assert display_events == ["acquire"]
+    assert diagnostics_events == ["system_wake"]
+
+
+def test_system_power_event_logs_diagnostics_without_wake(monkeypatch):
+    """Не-wake системные события должны писать расширенную диагностику."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    diagnostics_events = install_system_diagnostics(controller)
+
+    controller.handle_system_power_event("screens_did_sleep")
+
+    assert diagnostics_events == ["system_event_screens_did_sleep"]
 
 
 def test_snapshot_reflects_initial_runtime_state(monkeypatch):
@@ -492,6 +569,128 @@ def test_open_recordings_directory_notifies_when_finder_open_fails(monkeypatch, 
 
     assert notifications
     assert "Не удалось открыть папку WAV-записей" in notifications[0][1]
+
+
+def test_recording_prevents_display_sleep_until_recorder_returns_idle(monkeypatch):
+    """Дисплей должен удерживаться от сна до завершения обработки после stop_recording()."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    display_events = install_display_sleep_prevention(controller)
+
+    controller.start_recording()
+    controller.stop_recording()
+
+    assert display_events == ["acquire"]
+
+    controller.set_state(Config.STATUS_IDLE)
+    controller.set_state(Config.STATUS_IDLE)
+
+    assert display_events == ["acquire", "release"]
+
+
+def test_recording_keeps_display_awake_for_grace_period_after_idle(monkeypatch):
+    """После успешной диктовки release должен откладываться на grace-паузу."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    controller.display_sleep_release_delay_seconds = 120
+    display_events = install_display_sleep_prevention(controller)
+    timers = []
+
+    class FakeTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.daemon = False
+            self.started = False
+            self.cancelled = False
+            timers.append(self)
+
+        def start(self):
+            self.started = True
+
+        def cancel(self):
+            self.cancelled = True
+
+        def is_alive(self):
+            return self.started and not self.cancelled
+
+    monkeypatch.setattr(app_module.threading, "Timer", FakeTimer)
+
+    controller.start_recording()
+    controller.stop_recording()
+    controller.set_state(Config.STATUS_IDLE)
+
+    assert display_events == ["acquire"]
+    assert len(timers) == 1
+    assert timers[0].delay == 120
+    assert timers[0].started is True
+
+    timers[0].callback()
+
+    assert display_events == ["acquire", "release"]
+
+
+def test_new_recording_cancels_pending_display_sleep_release(monkeypatch):
+    """Новая запись должна отменять отложенное отпускание старого assertion."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    controller.display_sleep_release_delay_seconds = 120
+    display_events = install_display_sleep_prevention(controller)
+    timers = []
+
+    class FakeTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.daemon = False
+            self.started = False
+            self.cancelled = False
+            timers.append(self)
+
+        def start(self):
+            self.started = True
+
+        def cancel(self):
+            self.cancelled = True
+
+        def is_alive(self):
+            return self.started and not self.cancelled
+
+    monkeypatch.setattr(app_module.threading, "Timer", FakeTimer)
+
+    controller.start_recording()
+    controller.stop_recording()
+    controller.set_state(Config.STATUS_IDLE)
+    controller.start_recording()
+
+    assert display_events == ["acquire"]
+    assert timers[0].cancelled is True
+
+
+def test_cancel_recording_releases_display_sleep_prevention(monkeypatch):
+    """Отмена записи должна сразу отпускать защиту дисплея от сна."""
+    controller, recorder, _transcriber = make_controller(monkeypatch)
+    display_events = install_display_sleep_prevention(controller)
+
+    controller.start_recording()
+    controller.cancel_recording()
+
+    assert recorder.cancelled is True
+    assert controller.state == Config.STATUS_IDLE
+    assert display_events == ["acquire", "release"]
+
+
+def test_llm_recording_prevents_display_sleep_until_idle(monkeypatch):
+    """LLM-сценарий должен удерживать дисплей от сна так же, как обычная диктовка."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    display_events = install_display_sleep_prevention(controller)
+
+    controller.toggle_llm()
+
+    assert controller.state == Config.STATUS_RECORDING
+    assert display_events == ["acquire"]
+
+    controller.stop_recording()
+    controller.set_state(Config.STATUS_IDLE)
+
+    assert display_events == ["acquire", "release"]
 
 
 def test_change_secondary_hotkey_updates_listener_and_snapshot(monkeypatch):

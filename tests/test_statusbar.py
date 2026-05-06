@@ -190,8 +190,7 @@ def make_clipboard_service(*, initial_text=None, written_texts=None):
 def make_microphone_profiles_service(*, profiles=None, saved_profiles=None):
     """Создаёт concrete persistence bundle профилей микрофона для тестов."""
     current_profiles = [
-        profile if isinstance(profile, MicrophoneProfile) else MicrophoneProfile.from_payload(profile)
-        for profile in (profiles or [])
+        profile if isinstance(profile, MicrophoneProfile) else MicrophoneProfile.from_payload(profile) for profile in (profiles or [])
     ]
     current_profiles = [profile for profile in current_profiles if profile is not None]
     sink = saved_profiles if saved_profiles is not None else []
@@ -329,6 +328,8 @@ def make_snapshot(**overrides):
         total_tokens=123,
         llm_download_title="✅ LLM-модель загружена",
         llm_download_interactive=False,
+        llm_model_name="gemma-4-26b-a4b-it-4bit",
+        llm_model_options=list(Config.LLM_MODEL_PRESETS),
     )
     return replace(base_snapshot, **overrides)
 
@@ -389,6 +390,8 @@ class FakeDictationController:
         self.llm_clipboard_enabled = snapshot.llm_clipboard_enabled
         self.history = list(snapshot.history)
         self.total_tokens = snapshot.total_tokens
+        self.llm_model_name = snapshot.llm_model_name
+        self.llm_model_options = list(snapshot.llm_model_options)
 
     def subscribe(self, callback):
         """Подписывает UI на обновления snapshot и сразу отправляет текущее состояние."""
@@ -420,6 +423,10 @@ class FakeDictationController:
     def change_language(self, language):
         """Запоминает команду смены языка."""
         self.calls.append(("change_language", language))
+
+    def change_llm_model(self, model_name):
+        """Запоминает команду смены LLM-модели."""
+        self.calls.append(("change_llm_model", model_name))
 
     def toggle_capitalize_first_letter(self):
         """Запоминает команду переключения правила заглавной буквы."""

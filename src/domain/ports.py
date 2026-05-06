@@ -71,6 +71,8 @@ class StatusBarControllerProtocol(Protocol):
     primary_key_combination: str
     secondary_key_combination: str
     llm_key_combination: str
+    llm_model_name: str
+    llm_model_options: list[str]
 
     def subscribe(self, callback: Callable[[AppSnapshot], None]) -> None:
         """Подписывает UI на обновления snapshot."""
@@ -254,6 +256,10 @@ class StatusBarControllerProtocol(Protocol):
 
     def change_llm_prompt(self, prompt_name: str) -> None:
         """Меняет активный LLM-промпт."""
+        ...
+
+    def change_llm_model(self, model_name: str) -> None:
+        """Меняет LLM-модель."""
         ...
 
 
@@ -544,10 +550,15 @@ class LlmGatewayProtocol(Protocol):
         system_prompt: str,
         *,
         context: str | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Обрабатывает текст через LLM."""
         ...
 
     def ensure_model_downloaded(self) -> None:
         """Скачивает модель при необходимости."""
+        ...
+
+    def change_model(self, model_name: str) -> None:
+        """Переключает LLM-модель."""
         ...

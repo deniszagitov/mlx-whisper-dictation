@@ -55,24 +55,20 @@ class Config:
     MAX_DEBUG_ARTIFACTS = 10
     LOG_DIR = Path.home() / "Library/Logs/whisper-dictation"
     ARTIFACT_TTL_SECONDS = 24 * 60 * 60
-    ACCESSIBILITY_SETTINGS_URL = (
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-    )
-    INPUT_MONITORING_SETTINGS_URL = (
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
-    )
+    DISPLAY_SLEEP_RELEASE_GRACE_SECONDS = 0
+    POWER_DIAGNOSTICS_COMMAND_TIMEOUT_SECONDS = 2.0
+    POWER_DIAGNOSTICS_ENV = "DICTATOR_POWER_DIAGNOSTICS"
+    SYSTEM_DIAGNOSTICS_ENV = "DICTATOR_SYSTEM_DIAGNOSTICS"
+    ACCESSIBILITY_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    INPUT_MONITORING_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     KEYCODE_COMMAND = 0x37
     KEYCODE_V = 0x09
     DEFAULTS_KEY_PASTE_CGEVENT = "paste_method_cgevent"
     DEFAULTS_KEY_PASTE_AX = "paste_method_ax"
     DEFAULTS_KEY_PASTE_CLIPBOARD = "paste_method_clipboard"
     DEFAULTS_KEY_CAPITALIZE_FIRST_LETTER = "capitalize_first_letter_enabled"
-    DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE = (
-        "remove_trailing_period_for_single_sentence_enabled"
-    )
-    DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION = (
-        "restore_trailing_period_on_next_dictation_enabled"
-    )
+    DEFAULTS_KEY_REMOVE_TRAILING_PERIOD_FOR_SINGLE_SENTENCE = "remove_trailing_period_for_single_sentence_enabled"
+    DEFAULTS_KEY_RESTORE_TRAILING_PERIOD_ON_NEXT_DICTATION = "restore_trailing_period_on_next_dictation_enabled"
     DEFAULTS_KEY_HISTORY = "transcription_history"
     DEFAULTS_KEY_PRIVATE_MODE = "private_mode"
     DEFAULTS_KEY_TOTAL_TOKENS = "total_token_usage"
@@ -82,12 +78,16 @@ class Config:
     CGEVENT_UNICODE_CHUNK_SIZE = 20
     CGEVENT_CHUNK_DELAY = 0.005
     CLIPBOARD_RESTORE_DELAY = 0.15
-    DEFAULT_LLM_MODEL_NAME = (
-        "mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-6bit"
-    )
+    DEFAULT_LLM_MODEL_NAME = "mlx-community/gemma-4-26b-a4b-it-4bit"
+    LLM_MODEL_PRESETS: ClassVar[list[str]] = [
+        "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-6bit",
+    ]
     LLM_MAX_TOKENS = 500
     LLM_RESPONSE_CHAR_LIMIT = 180
     LLM_NOTIFICATION_CHAR_LIMIT = 180
+    LLM_OBSIDIAN_MAX_TOKENS = 1000
+    LLM_OBSIDIAN_RESPONSE_CHAR_LIMIT = 2000
     DOWNLOAD_COMPLETE_PCT = 100
     DEFAULTS_KEY_MODEL = "selected_model"
     DEFAULTS_KEY_LANGUAGE = "selected_language"
@@ -99,6 +99,8 @@ class Config:
     DEFAULTS_KEY_LLM_HOTKEY = "llm_hotkey"
     DEFAULTS_KEY_LLM_PROMPT = "llm_prompt_preset"
     DEFAULTS_KEY_LLM_CLIPBOARD = "llm_clipboard_enabled"
+    DEFAULTS_KEY_LLM_MODEL = "llm_model"
+    DEFAULTS_KEY_OBSIDIAN_VAULT = "obsidian_vault_path"
     DEFAULTS_KEY_RECORDING_NOTIFICATION = "show_recording_notification"
     DEFAULTS_KEY_RECORDING_OVERLAY = "recording_overlay"
     DEFAULTS_KEY_PERFORMANCE_MODE = "performance_mode"
@@ -138,7 +140,30 @@ class Config:
             "ПРАВИЛА: сделай резюме ОДНИМ предложением, максимум 180 символов. "
             "БЕЗ markdown, БЕЗ списков, БЕЗ заголовков. Только plain text."
         ),
+        "📝 Obsidian: заметка": (
+            "Ты помощник для создания заметок в Obsidian. "
+            "Пользователь диктует голосом заметку или задачу. "
+            "Если это задача — верни её в формате '- [ ] описание задачи'. "
+            "Если это заметка — верни аккуратно отформатированный текст. "
+            "Добавь заголовок '# ' с кратким названием на первой строке. "
+            "НЕ добавляй объяснений, только саму заметку. "
+            "Используй markdown."
+        ),
+        "📝 Obsidian: напомни": (
+            "Ты помощник для поиска заметок в Obsidian. "
+            "Пользователь голосом описывает, что хочет вспомнить. "
+            "В контексте ты получишь содержимое релевантных заметок из хранилища. "
+            "Верни краткий ответ с ключевой информацией из найденных заметок. "
+            "Если ничего не найдено — скажи что заметок по этой теме нет. "
+            "Максимум 300 символов, plain text."
+        ),
     }
+    OBSIDIAN_PROMPT_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "📝 Obsidian: заметка",
+            "📝 Obsidian: напомни",
+        }
+    )
     DEFAULT_LLM_PROMPT_NAME = "Универсальный помощник"
     KNOWN_HALLUCINATIONS: ClassVar[set[str]] = {
         "thank you",

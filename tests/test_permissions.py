@@ -121,6 +121,68 @@ class TestWakeObserver:
         assert calls == [True]
 
 
+class TestSystemEventObserver:
+    """Тесты регистрации observer системных событий macOS."""
+
+    def test_register_system_event_observer_subscribes_known_notifications(self, app_module, monkeypatch):
+        """Observer системных событий должен подписаться на доступные NSWorkspace notifications."""
+        import src.infrastructure.permissions as permissions_module
+
+        added_calls = []
+
+        def shared_workspace():
+            return FakeWorkspace()
+
+        class FakeCenter:
+            def addObserver_selector_name_object_(self, observer, selector, name, obj):
+                added_calls.append((observer, selector, name, obj))
+
+        class FakeWorkspace:
+            def notificationCenter(self):
+                return FakeCenter()
+
+        monkeypatch.setattr(permissions_module.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(
+            permissions_module.AppKit,
+            "NSWorkspace",
+            type("WorkspaceStub", (), {"sharedWorkspace": staticmethod(shared_workspace)}),
+        )
+        for notification_name in (
+            "NSWorkspaceWillSleepNotification",
+            "NSWorkspaceDidWakeNotification",
+            "NSWorkspaceScreensDidSleepNotification",
+            "NSWorkspaceScreensDidWakeNotification",
+            "NSWorkspaceSessionDidResignActiveNotification",
+            "NSWorkspaceSessionDidBecomeActiveNotification",
+        ):
+            monkeypatch.setattr(permissions_module.AppKit, notification_name, notification_name, raising=False)
+
+        observer = permissions_module.register_system_event_observer(lambda _event: None)
+
+        assert observer is not None
+        assert len(added_calls) == 6
+        assert {call[2] for call in added_calls} == {
+            "NSWorkspaceWillSleepNotification",
+            "NSWorkspaceDidWakeNotification",
+            "NSWorkspaceScreensDidSleepNotification",
+            "NSWorkspaceScreensDidWakeNotification",
+            "NSWorkspaceSessionDidResignActiveNotification",
+            "NSWorkspaceSessionDidBecomeActiveNotification",
+        }
+
+    def test_system_event_observer_calls_python_callback(self, app_module):
+        """Objective-C observer должен пробрасывать имена системных событий."""
+        import src.infrastructure.permissions as permissions_module
+
+        calls: list[str] = []
+        observer = permissions_module._WorkspaceSystemEventObserver.observerWithCallback_(calls.append)
+
+        observer.handleScreensDidSleep_(None)
+        observer.handleSessionDidResignActive_(None)
+
+        assert calls == ["screens_did_sleep", "session_did_resign_active"]
+
+
 class TestApplicationActivationObserver:
     """Тесты регистрации observer смены активного приложения."""
 

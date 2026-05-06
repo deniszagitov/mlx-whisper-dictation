@@ -17,6 +17,20 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
+def _prevent_display_sleep(runtime: Any) -> None:
+    """Включает временную защиту дисплея от сна, если runtime её поддерживает."""
+    prevent = getattr(runtime, "prevent_display_sleep_for_active_session", None)
+    if callable(prevent):
+        prevent()
+
+
+def _release_display_sleep(runtime: Any) -> None:
+    """Отпускает временную защиту дисплея от сна, если runtime её поддерживает."""
+    release = getattr(runtime, "release_display_sleep_for_active_session", None)
+    if callable(release):
+        release(immediate=True, reason="llm_cancel_or_start_failure")
+
+
 class LlmPipelineUseCases:
     """Оркестрирует сценарий запись → Whisper → LLM."""
 
@@ -31,6 +45,7 @@ class LlmPipelineUseCases:
         recording_overlay: Any,
         stop_recording: Any,
         publish_snapshot: Any,
+        obsidian_service: Any | None = None,
     ) -> None:
         self.runtime = runtime
         self.recorder = recorder
@@ -41,6 +56,7 @@ class LlmPipelineUseCases:
         self.recording_overlay = recording_overlay
         self.stop_recording = stop_recording
         self.publish_snapshot = publish_snapshot
+        self.obsidian_service = obsidian_service
 
     def toggle_llm(self) -> None:
         """Переключает сценарий запись → Whisper → LLM."""
@@ -62,6 +78,7 @@ class LlmPipelineUseCases:
 
         LOGGER.info("🤖 Запуск LLM-пайплайна, промпт=%r", self.runtime.llm_prompt_name)
         self.runtime.state = Config.STATUS_RECORDING
+        _prevent_display_sleep(self.runtime)
         if self.runtime.show_recording_notification:
             self.runtime.system_integration_service.notify("MLX Whisper Dictation", "Запись для LLM. Говорите.")
         self.runtime.started = True
@@ -71,6 +88,9 @@ class LlmPipelineUseCases:
             Config.LLM_PROMPT_PRESETS[Config.DEFAULT_LLM_PROMPT_NAME],
         )
         llm_processor = self.llm_processor
+        is_obsidian = self.runtime.llm_prompt_name in Config.OBSIDIAN_PROMPT_NAMES
+        is_obsidian_remind = self.runtime.llm_prompt_name == "📝 Obsidian: напомни"
+        obsidian_service = self.obsidian_service
 
         def on_audio_ready(
             audio_data: npt.NDArray[np.float32],
@@ -84,14 +104,25 @@ class LlmPipelineUseCases:
 
             use_clipboard = getattr(self.transcriber, "llm_clipboard_enabled", True)
             context = None
-            if use_clipboard:
+
+            if is_obsidian_remind and obsidian_service is not None:
+                vault_context = obsidian_service.search_notes(whisper_text)
+                if vault_context:
+                    context = vault_context
+            elif use_clipboard:
                 clipboard_text = self.clipboard_service.read_text()
                 if should_use_clipboard_context(whisper_text, clipboard_text):
                     context = clipboard_text
 
             set_status(Config.STATUS_LLM_PROCESSING)
+            max_tokens = Config.LLM_OBSIDIAN_MAX_TOKENS if is_obsidian else None
             try:
-                llm_response = llm_processor.process_text(whisper_text, system_prompt, context=context)
+                llm_response = llm_processor.process_text(
+                    whisper_text,
+                    system_prompt,
+                    context=context,
+                    max_tokens=max_tokens,
+                )
             except Exception:
                 LOGGER.exception("❌ Ошибка LLM-обработки")
                 self.runtime.system_integration_service.notify(
@@ -108,6 +139,20 @@ class LlmPipelineUseCases:
                 return
 
             final_text = llm_response or whisper_text
+
+            if is_obsidian and not is_obsidian_remind and obsidian_service is not None:
+                try:
+                    note_path = obsidian_service.write_note(final_text)
+                except Exception:
+                    LOGGER.exception("❌ Ошибка записи в Obsidian vault")
+                else:
+                    self.transcriber.add_to_history(final_text)
+                    self.runtime.system_integration_service.notify(
+                        "MLX Whisper Dictation",
+                        f"📝 Заметка сохранена: {note_path.name}",
+                    )
+                    return
+
             self.transcriber.add_to_history(final_text)
             if use_clipboard:
                 self.clipboard_service.write_text(final_text)
@@ -120,7 +165,15 @@ class LlmPipelineUseCases:
                 LOGGER.info("🤖 LLM-ответ добавлен в историю (буфер обмена отключён)")
                 self.runtime.system_integration_service.notify("MLX Whisper Dictation", "LLM-ответ сохранён в историю.")
 
-        self.recorder.start(self.runtime.current_language, on_audio_ready=on_audio_ready)
+        try:
+            self.recorder.start(self.runtime.current_language, on_audio_ready=on_audio_ready)
+        except Exception:
+            LOGGER.exception("❌ Не удалось запустить запись для LLM")
+            self.runtime.started = False
+            self.runtime.state = Config.STATUS_IDLE
+            _release_display_sleep(self.runtime)
+            self.publish_snapshot()
+            raise
         self.runtime.start_time = time.time()
         self.runtime.elapsed_time = 0
         if self.runtime.show_recording_overlay:

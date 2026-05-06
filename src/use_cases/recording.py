@@ -13,6 +13,20 @@ LOGGER = logging.getLogger(__name__)
 _KEYCODE_ESCAPE = 53
 
 
+def _prevent_display_sleep(runtime: Any) -> None:
+    """Включает временную защиту дисплея от сна, если runtime её поддерживает."""
+    prevent = getattr(runtime, "prevent_display_sleep_for_active_session", None)
+    if callable(prevent):
+        prevent()
+
+
+def _release_display_sleep(runtime: Any) -> None:
+    """Отпускает временную защиту дисплея от сна, если runtime её поддерживает."""
+    release = getattr(runtime, "release_display_sleep_for_active_session", None)
+    if callable(release):
+        release(immediate=True, reason="recording_cancel_or_start_failure")
+
+
 class RecordingUseCases:
     """Управляет обычным сценарием записи и её жизненным циклом."""
 
@@ -39,13 +53,22 @@ class RecordingUseCases:
 
         LOGGER.info("🎙️ Запись началась")
         self.runtime.state = Config.STATUS_RECORDING
+        _prevent_display_sleep(self.runtime)
         if self.runtime.show_recording_notification:
             self.runtime.system_integration_service.notify(
                 "MLX Whisper Dictation",
                 "Запись началась. Говорите, пока в строке меню горит красный индикатор.",
             )
         self.runtime.started = True
-        self.recorder.start(self.runtime.current_language, on_audio_ready=self._on_audio_ready)
+        try:
+            self.recorder.start(self.runtime.current_language, on_audio_ready=self._on_audio_ready)
+        except Exception:
+            LOGGER.exception("❌ Не удалось запустить запись")
+            self.runtime.started = False
+            self.runtime.state = Config.STATUS_IDLE
+            _release_display_sleep(self.runtime)
+            self.publish_snapshot()
+            raise
         self.runtime.start_time = time.time()
         self.runtime.elapsed_time = 0
         if self.runtime.show_recording_overlay:
@@ -74,6 +97,7 @@ class RecordingUseCases:
         self.runtime.state = Config.STATUS_IDLE
         self.recorder.cancel()
         self.runtime.recording_overlay.hide()
+        _release_display_sleep(self.runtime)
         self.publish_snapshot()
 
     def on_status_tick(self) -> None:

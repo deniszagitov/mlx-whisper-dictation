@@ -17,6 +17,14 @@ LOGGER = logging.getLogger(__name__)
 PERFORMANCE_MODE_NORMAL = "normal"
 PERFORMANCE_MODE_FAST = "fast"
 
+_VLM_MODEL_INDICATORS = ("gemma-4", "gemma4", "-vlm", "vision")
+
+
+def _is_vlm_model(model_name: str) -> bool:
+    """Определяет, нужен ли mlx_vlm для данной модели."""
+    lower = model_name.lower()
+    return any(indicator in lower for indicator in _VLM_MODEL_INDICATORS)
+
 
 def load_llm_runtime_objects(model_name: str) -> tuple[Any, Any]:
     """Загружает MLX LLM-модель и токенизатор по имени модели."""
@@ -31,6 +39,21 @@ def generate_llm_text(model: Any, tokenizer: Any, prompt: str, max_tokens: int =
     from mlx_lm import generate
 
     return generate(model, tokenizer, prompt=prompt, max_tokens=max_tokens)
+
+
+def load_vlm_runtime_objects(model_name: str) -> tuple[Any, Any]:
+    """Загружает VLM-модель и процессор по имени модели."""
+    from mlx_vlm import load
+
+    model, processor = load(model_name)
+    return model, processor
+
+
+def generate_vlm_text(model: Any, processor: Any, prompt: str, max_tokens: int = Config.LLM_MAX_TOKENS) -> str:
+    """Генерирует текст через загруженные runtime-объекты MLX VLM."""
+    from mlx_vlm import generate
+
+    return str(generate(model, processor, prompt, max_tokens=max_tokens))
 
 
 def cleanup_llm_runtime_memory() -> None:
@@ -126,6 +149,8 @@ class LlmGateway:
         model_cache_checker: Callable[[str], bool] | None = None,
         model_downloader: Callable[[str, Callable[[str, float, int], None] | None], None] | None = None,
         memory_cleanup: Callable[[], None] | None = None,
+        vlm_runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
+        vlm_generation_runner: Callable[[Any, Any, str, int], str] | None = None,
     ) -> None:
         """Создаёт gateway к LLM runtime."""
         self.model_name = model_name
@@ -134,11 +159,23 @@ class LlmGateway:
         self.performance_mode: str = PERFORMANCE_MODE_NORMAL
         self._cached_model: Any | None = None
         self._cached_tokenizer: Any | None = None
-        self._runtime_loader = runtime_loader
-        self._generation_runner = generation_runner
+        self._lm_runtime_loader = runtime_loader
+        self._lm_generation_runner = generation_runner
+        self._vlm_runtime_loader = vlm_runtime_loader
+        self._vlm_generation_runner = vlm_generation_runner
         self._model_cache_checker = model_cache_checker
         self._model_downloader = model_downloader
         self._memory_cleanup = memory_cleanup
+        self._apply_backend_for_model(model_name)
+
+    def _apply_backend_for_model(self, model_name: str) -> None:
+        """Выбирает правильный backend (LM или VLM) для модели."""
+        if _is_vlm_model(model_name):
+            self._runtime_loader = self._vlm_runtime_loader
+            self._generation_runner = self._vlm_generation_runner
+        else:
+            self._runtime_loader = self._lm_runtime_loader
+            self._generation_runner = self._lm_generation_runner
 
     def set_performance_mode(self, performance_mode: str) -> None:
         """Переключает стратегию управления памятью для LLM."""
@@ -161,6 +198,15 @@ class LlmGateway:
         self._cached_model = model
         self._cached_tokenizer = tokenizer
         return model, tokenizer
+
+    def change_model(self, model_name: str) -> None:
+        """Переключает LLM-модель и автоматически выбирает backend."""
+        if model_name == self.model_name:
+            return
+        self._unload_cached_model()
+        self.model_name = model_name
+        self._apply_backend_for_model(model_name)
+        LOGGER.info("🤖 LLM-модель переключена: %s", model_name)
 
     def _unload_cached_model(self) -> None:
         """Выгружает LLM-модель и токенизатор из памяти."""
@@ -193,7 +239,8 @@ class LlmGateway:
         if not text:
             return 0
 
-        encoded = tokenizer.encode(text)
+        actual_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+        encoded = actual_tokenizer.encode(text)
         if isinstance(encoded, dict):
             input_ids = encoded.get("input_ids")
             return len(input_ids) if input_ids is not None else 0
@@ -205,36 +252,38 @@ class LlmGateway:
             return len(encoded)
         return 0
 
-    def process_text(self, text: str, system_prompt: str, *, context: str | None = None) -> str:
+    def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
         """Отправляет текст в LLM и возвращает очищенный ответ."""
+        effective_max_tokens = max_tokens if max_tokens is not None else Config.LLM_MAX_TOKENS
         self.last_token_usage = 0
         model, tokenizer = self._load_runtime_objects()
         if self._generation_runner is None:
             raise RuntimeError("LLM generation runtime не настроен")
         try:
-            if hasattr(tokenizer, "apply_chat_template"):
+            actual_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+            if hasattr(actual_tokenizer, "apply_chat_template"):
                 user_content = f"Контекст из буфера обмена:\n{context}\n\nЗапрос:\n{text}" if context else text
                 messages = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ]
                 try:
-                    prompt = tokenizer.apply_chat_template(
+                    prompt = actual_tokenizer.apply_chat_template(
                         messages,
                         tokenize=False,
                         add_generation_prompt=True,
                         enable_thinking=False,
                     )
                 except TypeError:
-                    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                    prompt = actual_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             elif context:
                 prompt = f"{system_prompt}\n\nКонтекст:\n{context}\n\nПользователь: {text}\nОтвет:"
             else:
                 prompt = f"{system_prompt}\n\nПользователь: {text}\nОтвет:"
 
             prompt_tokens = self._count_tokens(tokenizer, prompt)
-            LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", Config.LLM_MAX_TOKENS)
-            raw_response = self._generation_runner(model, tokenizer, prompt, Config.LLM_MAX_TOKENS)
+            LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", effective_max_tokens)
+            raw_response = self._generation_runner(model, tokenizer, prompt, effective_max_tokens)
             LOGGER.info("🤖 Сырой ответ LLM от модели: длина=%d, текст=%r", len(raw_response), raw_response)
             response = sanitize_llm_response(raw_response)
             response_tokens = self._count_tokens(tokenizer, response)

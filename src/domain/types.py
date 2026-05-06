@@ -154,11 +154,7 @@ def _coerce_languages(value: object) -> tuple[str, ...] | None:
     else:
         candidates = (value,)
 
-    normalized = tuple(
-        part
-        for item in candidates
-        if (part := str(item).strip())
-    )
+    normalized = tuple(part for item in candidates if (part := str(item).strip()))
     return normalized or None
 
 
@@ -216,9 +212,7 @@ class HotkeyConfig:
     def active_key_combinations(self) -> tuple[str, ...]:
         """Возвращает все включённые комбинации основных хоткеев."""
         return tuple(
-            combination
-            for combination in (self.primary_key_combination, self.secondary_key_combination)
-            if combination is not None
+            combination for combination in (self.primary_key_combination, self.secondary_key_combination) if combination is not None
         )
 
     @property
@@ -338,6 +332,11 @@ class LaunchConfig:
             and settings_store.contains_key(Config.DEFAULTS_KEY_LLM_HOTKEY)
         ):
             llm_key_combination = settings_store.load_str(Config.DEFAULTS_KEY_LLM_HOTKEY, fallback="")
+
+        if settings_store is not None and "--llm_model" not in cli_overrides:
+            saved_llm_model = settings_store.load_str(Config.DEFAULTS_KEY_LLM_MODEL, fallback=None)
+            if saved_llm_model:
+                llm_model = saved_llm_model
 
         normalized_model = _coerce_model_name(model, fallback=Config.DEFAULT_MODEL_NAME)
         normalized_languages = _coerce_languages(language)
@@ -822,3 +821,5 @@ class AppSnapshot:
     total_tokens: int
     llm_download_title: str
     llm_download_interactive: bool
+    llm_model_name: str
+    llm_model_options: list[str]

@@ -18,10 +18,13 @@ from src.app import (  # noqa: F401
     AppSnapshot,
     ClipboardService,
     DictationApp,
+    DisplaySleepPreventionService,
     HotkeyCaptureService,
     HotkeyListenerFactoryService,
     InputDeviceCatalogService,
     MicrophoneProfilesService,
+    ObsidianService,
+    SystemDiagnosticsService,
     SystemIntegrationService,
 )
 from src.domain.audio import microphone_menu_title  # noqa: F401
@@ -60,8 +63,15 @@ from src.infrastructure.llm_runtime import (
     cleanup_llm_runtime_memory,
     ensure_llm_model_downloaded,
     generate_llm_text,
+    generate_vlm_text,
     is_llm_model_cached,
     load_llm_runtime_objects,
+    load_vlm_runtime_objects,
+)
+from src.infrastructure.obsidian import (
+    get_default_vault_path,
+    search_obsidian_notes,
+    write_obsidian_note,
 )
 from src.infrastructure.permissions import (
     frontmost_application_info,
@@ -73,7 +83,7 @@ from src.infrastructure.permissions import (
     permission_label,  # noqa: F401
     permission_preflight_status,  # noqa: F401
     register_application_activation_observer,
-    register_wake_observer,
+    register_system_event_observer,
     request_accessibility_permission,
     request_input_monitoring_permission,
     warn_missing_accessibility_permission,
@@ -83,6 +93,8 @@ from src.infrastructure.persistence.defaults import Defaults
 from src.infrastructure.persistence.diagnostics import DiagnosticsStore, setup_logging
 from src.infrastructure.persistence.history import load_history_items, save_history_records
 from src.infrastructure.persistence.microphone_profiles import _load_microphone_profiles, _save_microphone_profiles
+from src.infrastructure.power import MacOSDisplaySleepAssertion
+from src.infrastructure.system_diagnostics import capture_system_diagnostics
 from src.infrastructure.text_input import (
     copy_to_clipboard,
     insert_text_via_ax,
@@ -289,6 +301,14 @@ def main() -> None:
         model_cache_checker=is_llm_model_cached,
         model_downloader=ensure_llm_model_downloaded,
         memory_cleanup=cleanup_llm_runtime_memory,
+        vlm_runtime_loader=load_vlm_runtime_objects,
+        vlm_generation_runner=generate_vlm_text,
+    )
+
+    obsidian_vault_path = defaults.load_str(Config.DEFAULTS_KEY_OBSIDIAN_VAULT, fallback=None) or str(get_default_vault_path())
+    obsidian_service = ObsidianService(
+        write_note=lambda content: write_obsidian_note(obsidian_vault_path, content),
+        search_notes=lambda query: search_obsidian_notes(obsidian_vault_path, query),
     )
     clipboard_service = ClipboardService(
         read_text=read_clipboard,
@@ -308,6 +328,12 @@ def main() -> None:
         warn_missing_input_monitoring_permission=warn_missing_input_monitoring_permission,
         open_path=open_path,
     )
+    display_sleep_assertion = MacOSDisplaySleepAssertion()
+    display_sleep_prevention_service = DisplaySleepPreventionService(
+        acquire=display_sleep_assertion.acquire,
+        release=display_sleep_assertion.release,
+    )
+    system_diagnostics_service = SystemDiagnosticsService(capture=capture_system_diagnostics)
     input_device_catalog = InputDeviceCatalogService(list_input_devices=list_input_devices)
     hotkey_capture_service = HotkeyCaptureService(capture_combination=capture_hotkey_combination)
     hotkey_listener_factory = HotkeyListenerFactoryService(
@@ -323,7 +349,10 @@ def main() -> None:
         app_preferences,
         clipboard_service=clipboard_service,
         microphone_profiles_service=microphone_profiles_service,
+        obsidian_service=obsidian_service,
         system_integration_service=system_integration_service,
+        display_sleep_prevention_service=display_sleep_prevention_service,
+        system_diagnostics_service=system_diagnostics_service,
         input_device_catalog=input_device_catalog,
         hotkey_capture_service=hotkey_capture_service,
         hotkey_listener_factory=hotkey_listener_factory,
@@ -334,7 +363,8 @@ def main() -> None:
     key_listener = hotkey_listener_factory.create_listener(app_controller)
     key_listener.start()
     app_controller.key_listener = key_listener
-    app_controller.wake_observer = register_wake_observer(app_controller.handle_system_wake)
+    app_controller.system_event_observer = register_system_event_observer(app_controller.handle_system_power_event)
+    app_controller.wake_observer = app_controller.system_event_observer
     app_controller.application_activation_observer = register_application_activation_observer(
         transcriber.handle_frontmost_application_change
     )

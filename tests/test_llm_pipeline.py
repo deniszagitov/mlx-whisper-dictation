@@ -74,12 +74,16 @@ class FakeLlmProcessor:
         """Сообщает, скачана ли модель."""
         return self.cached
 
-    def process_text(self, text: str, system_prompt: str, *, context: str | None = None) -> str:
+    def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
         """Возвращает заготовленный ответ или бросает ошибку."""
         self.process_calls.append((text, system_prompt, context))
         if self.process_error is not None:
             raise self.process_error
         return self.response
+
+    def change_model(self, model_name: str) -> None:
+        """Эмулирует смену модели."""
+        self.model_name = model_name
 
     def ensure_model_downloaded(self) -> None:
         """Эмулирует загрузку модели с callback прогресса."""

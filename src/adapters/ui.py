@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -77,6 +78,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         )
 
         self.llm_hotkey_item = rumps.MenuItem(f"🤖 LLM-хоткей: {self.llm_hotkey_status}", callback=self.change_llm_hotkey)
+        self.llm_model_menu = rumps.MenuItem(f"🤖 LLM-модель: {self.llm_model_name}")
+        for llm_model in self.llm_model_options:
+            item = rumps.MenuItem(self._llm_model_menu_title(llm_model), callback=self._change_llm_model)
+            item.state = int(llm_model.rsplit("/", maxsplit=1)[-1] == self.llm_model_name)
+            self.llm_model_menu.add(item)
         self.llm_prompt_menu = rumps.MenuItem("🤖 Системный промпт LLM")
         for prompt_name in Config.LLM_PROMPT_PRESETS:
             item = rumps.MenuItem(prompt_name, callback=self._change_llm_prompt)
@@ -139,10 +145,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             callback=self.toggle_remove_trailing_period_for_single_sentence,
         )
         self.restore_trailing_period_on_next_dictation_item = rumps.MenuItem(
-            (
-                "После снятой точки связывать следующие диктовки "
-                "в цепочку предложений"
-            ),
+            ("После снятой точки связывать следующие диктовки в цепочку предложений"),
             callback=self.toggle_restore_trailing_period_on_next_dictation,
         )
         self.postprocessing_menu.add(self.capitalize_first_letter_item)
@@ -180,6 +183,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.token_usage_item.set_callback(None)
 
         self.llm_menu = rumps.MenuItem("🤖 LLM")
+        self.llm_menu.add(self.llm_model_menu)
         self.llm_menu.add(self.llm_prompt_menu)
         self.llm_menu.add(self.llm_clipboard_item)
         self.llm_menu.add(self.llm_download_item)
@@ -280,6 +284,16 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def llm_prompt_name(self) -> str:
         """Возвращает имя активного LLM-промпта."""
         return self.app.llm_prompt_name
+
+    @property
+    def llm_model_name(self) -> str:
+        """Возвращает краткое имя текущей LLM-модели."""
+        return self.app.llm_model_name
+
+    @property
+    def llm_model_options(self) -> list[str]:
+        """Возвращает список доступных LLM-моделей."""
+        return self.app.llm_model_options
 
     @property
     def performance_mode(self) -> str:
@@ -539,6 +553,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Возвращает подпись пункта меню модели."""
         return f"Модель: {model_repo.rsplit('/', maxsplit=1)[-1]}"
 
+    def _llm_model_menu_title(self, model_repo: str) -> str:
+        """Возвращает подпись пункта меню LLM-модели."""
+        return f"LLM: {model_repo.rsplit('/', maxsplit=1)[-1]}"
+
     def _max_time_menu_title(self, max_time_value: float | None) -> str:
         """Возвращает подпись пункта меню лимита записи."""
         return f"Лимит: {Config.format_max_time_status(max_time_value)}"
@@ -613,6 +631,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         for prompt_name in Config.LLM_PROMPT_PRESETS:
             self.llm_prompt_menu[prompt_name].state = int(prompt_name == self.llm_prompt_name)
 
+        for llm_model in self.llm_model_options:
+            title = self._llm_model_menu_title(llm_model)
+            with contextlib.suppress(KeyError):
+                self._menu_item(title).state = int(llm_model.rsplit("/", maxsplit=1)[-1] == self.llm_model_name)
+
     def _refresh_input_device_menu(self) -> None:
         """Пересобирает подменю выбора микрофона."""
         if getattr(self.input_device_menu, "_menu", None) is not None:
@@ -682,7 +705,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Форматирует текст для отображения в подменю истории."""
         single_line = text.replace("\n", " ").replace("\r", " ")
         if len(single_line) > Config.HISTORY_DISPLAY_LENGTH:
-            return single_line[:Config.HISTORY_DISPLAY_LENGTH] + "…"
+            return single_line[: Config.HISTORY_DISPLAY_LENGTH] + "…"
         return single_line
 
     def _refresh_history_menu(self) -> None:
@@ -729,14 +752,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.paste_ax_item.state = int(snapshot.paste_ax_enabled)
         self.paste_clipboard_item.state = int(snapshot.paste_clipboard_enabled)
         self.capitalize_first_letter_item.state = int(snapshot.capitalize_first_letter_enabled)
-        self.remove_trailing_period_for_single_sentence_item.state = int(
-            snapshot.remove_trailing_period_for_single_sentence_enabled
-        )
-        self.restore_trailing_period_on_next_dictation_item.state = int(
-            snapshot.restore_trailing_period_on_next_dictation_enabled
-        )
+        self.remove_trailing_period_for_single_sentence_item.state = int(snapshot.remove_trailing_period_for_single_sentence_enabled)
+        self.restore_trailing_period_on_next_dictation_item.state = int(snapshot.restore_trailing_period_on_next_dictation_enabled)
         self.llm_download_item.title = snapshot.llm_download_title
         self.llm_download_item.set_callback(self._download_llm_model if snapshot.llm_download_interactive else None)
+        self.llm_model_menu.title = f"🤖 LLM-модель: {snapshot.llm_model_name}"
 
         self._refresh_hotkey_items()
         self._refresh_permission_items()
@@ -966,3 +986,12 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def _change_llm_prompt(self, sender: rumps.MenuItem) -> None:
         """Переключает текущий пресет системного промпта LLM."""
         self.app.change_llm_prompt(sender.title)
+
+    def _change_llm_model(self, sender: rumps.MenuItem) -> None:
+        """Переключает LLM-модель."""
+        selected = next(
+            (m for m in self.llm_model_options if self._llm_model_menu_title(m) == sender.title),
+            None,
+        )
+        if selected is not None:
+            self.app.change_llm_model(selected)

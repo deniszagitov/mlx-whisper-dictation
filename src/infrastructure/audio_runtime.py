@@ -464,9 +464,13 @@ class Recorder:
             return self._is_request_current(request_id)
 
         set_status(Config.STATUS_TRANSCRIBING)
-        if on_audio_ready is not None:
-            on_audio_ready(recorded_audio, language, set_status, is_current)
-        set_status(Config.STATUS_IDLE)
+        try:
+            if on_audio_ready is not None:
+                on_audio_ready(recorded_audio, language, set_status, is_current)
+        except Exception:
+            LOGGER.exception("❌ Ошибка обработки записанного аудио")
+        finally:
+            set_status(Config.STATUS_IDLE)
 
 
 def list_input_devices() -> list[AudioDeviceInfo]:

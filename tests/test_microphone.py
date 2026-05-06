@@ -463,6 +463,50 @@ class TestRecorderRecovery:
         assert recorder.input_device_name == "системный по умолчанию"
         assert status_updates[-2:] == [app_module.Config.STATUS_TRANSCRIBING, app_module.Config.STATUS_IDLE]
 
+    def test_record_impl_restores_idle_when_audio_processing_fails(self, app_module, monkeypatch):
+        """Ошибка обработки аудио не должна оставлять приложение в статусе распознавания."""
+        status_updates: list[object] = []
+
+        class FakeStream:
+            def __init__(self, recorder):
+                self._recorder = recorder
+
+            def read(self, _frames_per_buffer, exception_on_overflow=False):
+                self._recorder.recording = False
+                return (b"\x00\x00") * 4
+
+            def stop_stream(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakePyAudio:
+            def is_format_supported(self, *args, **kwargs):
+                return True
+
+            def open(self, **kwargs):
+                return FakeStream(recorder)
+
+            def terminate(self):
+                return None
+
+        def failing_audio_processing(*_args):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(audio_runtime.pyaudio, "PyAudio", FakePyAudio)  # type: ignore[attr-defined]
+
+        recorder = app_module.Recorder()
+        recorder.set_status_callback(status_updates.append)
+
+        recorder._record_impl(
+            language="ru",
+            request_id=recorder._begin_request(),
+            on_audio_ready=failing_audio_processing,
+        )
+
+        assert status_updates[-2:] == [app_module.Config.STATUS_TRANSCRIBING, app_module.Config.STATUS_IDLE]
+
     def test_record_impl_notifies_runtime_error_without_marking_permission_denied_for_retryable_error(self, app_module, monkeypatch):
         """Retryable audio error после sleep не должен маскироваться под отказ Microphone-разрешения."""
         permission_updates: list[tuple[str, bool]] = []

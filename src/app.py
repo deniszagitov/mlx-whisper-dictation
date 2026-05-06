@@ -8,6 +8,7 @@ runtime-state, управляет записью и LLM-сценарием, си
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +56,14 @@ class MicrophoneProfilesService:
 
 
 @dataclass(frozen=True, slots=True)
+class ObsidianService:
+    """Concrete bundle для чтения и записи заметок в Obsidian vault."""
+
+    write_note: Callable[[str], Any]
+    search_notes: Callable[[str], str]
+
+
+@dataclass(frozen=True, slots=True)
 class SystemIntegrationService:
     """Concrete bundle для уведомлений и статусов системных разрешений."""
 
@@ -66,6 +75,21 @@ class SystemIntegrationService:
     warn_missing_accessibility_permission: Callable[[], None]
     warn_missing_input_monitoring_permission: Callable[[], None]
     open_path: Callable[[str], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class DisplaySleepPreventionService:
+    """Concrete bundle для временного запрета сна дисплея."""
+
+    acquire: Callable[[], bool]
+    release: Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
+class SystemDiagnosticsService:
+    """Concrete bundle для расширенной диагностики macOS runtime."""
+
+    capture: Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +157,21 @@ def _null_permission_warning() -> None:
 def _null_open_path(_path: str) -> bool:
     """Возвращает отрицательный результат открытия пути без integration-сервиса."""
     return False
+
+
+def _null_display_sleep_prevention_acquire() -> bool:
+    """Не создаёт power assertion в сценариях без macOS integration-сервиса."""
+    return False
+
+
+def _null_display_sleep_prevention_release() -> None:
+    """Игнорирует отпускание power assertion в headless-сценариях."""
+    return None
+
+
+def _null_system_diagnostics_capture(_label: str) -> None:
+    """Игнорирует сбор системной диагностики в headless-сценариях."""
+    return None
 
 
 def _empty_input_devices() -> list[AudioDeviceInfo]:
@@ -267,7 +306,10 @@ class DictationApp:
         app_preferences: AppPreferences | None = None,
         clipboard_service: ClipboardService | None = None,
         microphone_profiles_service: MicrophoneProfilesService | None = None,
+        obsidian_service: ObsidianService | None = None,
         system_integration_service: SystemIntegrationService | None = None,
+        display_sleep_prevention_service: DisplaySleepPreventionService | None = None,
+        system_diagnostics_service: SystemDiagnosticsService | None = None,
         input_device_catalog: InputDeviceCatalogService | None = None,
         hotkey_capture_service: HotkeyCaptureService | None = None,
         hotkey_listener_factory: HotkeyListenerFactoryService | None = None,
@@ -288,6 +330,7 @@ class DictationApp:
             load_profiles=lambda: [],
             save_profiles=lambda _profiles: None,
         )
+        self.obsidian_service = obsidian_service
         self.system_integration_service = system_integration_service or SystemIntegrationService(
             notify=_null_system_notify,
             get_accessibility_status=_null_permission_status,
@@ -297,6 +340,13 @@ class DictationApp:
             warn_missing_accessibility_permission=_null_permission_warning,
             warn_missing_input_monitoring_permission=_null_permission_warning,
             open_path=_null_open_path,
+        )
+        self.display_sleep_prevention_service = display_sleep_prevention_service or DisplaySleepPreventionService(
+            acquire=_null_display_sleep_prevention_acquire,
+            release=_null_display_sleep_prevention_release,
+        )
+        self.system_diagnostics_service = system_diagnostics_service or SystemDiagnosticsService(
+            capture=_null_system_diagnostics_capture,
         )
         self.input_device_catalog = input_device_catalog or InputDeviceCatalogService(list_input_devices=_empty_input_devices)
         self.hotkey_capture_service = hotkey_capture_service or HotkeyCaptureService(capture_combination=_noop_capture_combination)
@@ -308,6 +358,10 @@ class DictationApp:
         self.model_options = list(Config.MODEL_PRESETS)
         if self.launch_config.model not in self.model_options:
             self.model_options.insert(0, self.launch_config.model)
+        self.llm_model_options = list(Config.LLM_MODEL_PRESETS)
+        if self.launch_config.llm_model not in self.llm_model_options:
+            self.llm_model_options.insert(0, self.launch_config.llm_model)
+        self.llm_model_name = self.launch_config.llm_model.rsplit("/", maxsplit=1)[-1]
         self.max_time_options: list[float | None] = list(Config.MAX_TIME_PRESETS)
         if self.launch_config.max_time not in self.max_time_options:
             self.max_time_options.insert(0, self.launch_config.max_time)
@@ -340,10 +394,14 @@ class DictationApp:
         self.elapsed_time = 0
         self.key_listener: Any = None
         self.wake_observer: Any = None
+        self.system_event_observer: Any = None
         self.application_activation_observer: Any = None
         self._llm_downloading = False
         self._preferred_input_device_unavailable = False
         self._preferred_input_device_notified = False
+        self._display_sleep_prevention_active = False
+        self._display_sleep_release_timer: threading.Timer | None = None
+        self.display_sleep_release_delay_seconds = Config.DISPLAY_SLEEP_RELEASE_GRACE_SECONDS
 
         llm_cached = self.llm_processor.is_model_cached() if self.llm_processor is not None else False
         self._llm_download_title = "✅ LLM-модель загружена" if llm_cached else "📥 Скачать LLM-модель…"
@@ -386,6 +444,7 @@ class DictationApp:
             recording_overlay=self.recording_overlay,
             stop_recording=self.stop_recording,
             publish_snapshot=self._notify_subscribers,
+            obsidian_service=self.obsidian_service,
         )
         self.hotkey_management_use_cases = HotkeyManagementUseCases(
             runtime=self,
@@ -482,12 +541,9 @@ class DictationApp:
         self._select_runtime_input_device(resolved_device)
 
         has_saved_preference = (
-            self.app_preferences.selected_input_device_index is not None
-            or self.app_preferences.selected_input_device_name is not None
+            self.app_preferences.selected_input_device_index is not None or self.app_preferences.selected_input_device_name is not None
         )
-        self._preferred_input_device_unavailable = bool(
-            has_saved_preference and resolution in {"default", "first", "none"}
-        )
+        self._preferred_input_device_unavailable = bool(has_saved_preference and resolution in {"default", "first", "none"})
         if not self._preferred_input_device_unavailable:
             self._preferred_input_device_notified = False
 
@@ -522,11 +578,7 @@ class DictationApp:
                     "MLX Whisper Dictation",
                     "После пробуждения не найден ни один доступный микрофон. Проверьте подключение устройства и доступ к Microphone.",
                 )
-            elif (
-                device_changed
-                and has_saved_preference
-                and resolution in {"default", "first"}
-            ):
+            elif device_changed and has_saved_preference and resolution in {"default", "first"}:
                 self.system_integration_service.notify(
                     "MLX Whisper Dictation",
                     f"Выбранный микрофон временно недоступен. Переключаюсь на: {resolved_device['name']}",
@@ -540,11 +592,7 @@ class DictationApp:
     def prepare_recording(self) -> bool:
         """Проверяет и обновляет аудиоустройства перед стартом новой записи."""
         self.refresh_input_devices(publish_snapshot=False, notify=True)
-        if (
-            self.current_input_device is not None
-            and self._preferred_input_device_unavailable
-            and not self._preferred_input_device_notified
-        ):
+        if self.current_input_device is not None and self._preferred_input_device_unavailable and not self._preferred_input_device_notified:
             self.system_integration_service.notify(
                 "MLX Whisper Dictation",
                 f"Выбранный микрофон временно недоступен. Переключаюсь на: {self.current_input_device['name']}",
@@ -570,18 +618,29 @@ class DictationApp:
         self.started = False
         self.state = Config.STATUS_IDLE
         self.recording_overlay.hide()
+        self.release_display_sleep_for_active_session(immediate=True, reason="recording_runtime_error")
         self.refresh_input_devices(publish_snapshot=False)
         self._notify_subscribers()
 
     def handle_system_wake(self) -> None:
         """Восстанавливает аудио и хоткеи после выхода macOS из sleep."""
         LOGGER.info("💤 macOS вышла из сна, обновляю аудио- и hotkey-runtime")
+        self.capture_system_diagnostics("system_wake")
+        was_recording = self.started
         if self.started:
             LOGGER.warning("🎙️ Активная запись прервана после sleep/wake, отменяю текущую сессию")
             self.recorder.cancel()
             self.started = False
             self.state = Config.STATUS_IDLE
             self.recording_overlay.hide()
+        if was_recording:
+            self.release_display_sleep_for_active_session(immediate=True, reason="system_wake_active_recording")
+        elif self._display_sleep_prevention_active:
+            LOGGER.warning(
+                "💤 Wake пришёл во время post-dictation grace-паузы; оставляю защиту дисплея активной: state=%s",
+                self.state,
+            )
+            self.release_display_sleep_for_active_session(reason="system_wake_grace")
 
         self.permission_status["accessibility"] = self.system_integration_service.get_accessibility_status()
         self.permission_status["input_monitoring"] = self.system_integration_service.get_input_monitoring_status()
@@ -601,6 +660,35 @@ class DictationApp:
                 LOGGER.exception("⌨️ Не удалось перезапустить hotkey-listener после wake")
 
         self._notify_subscribers()
+
+    def handle_system_power_event(self, event_name: str) -> None:
+        """Логирует системные события экранов, сна и пользовательской сессии."""
+        LOGGER.info(
+            "🖥️ Системное событие macOS: event=%s, state=%s, started=%s, display_assertion_active=%s",
+            event_name,
+            self.state,
+            self.started,
+            self._display_sleep_prevention_active,
+        )
+        if event_name == "did_wake":
+            self.handle_system_wake()
+            return
+        self.capture_system_diagnostics(f"system_event_{event_name}")
+
+    def capture_system_diagnostics(self, label: str) -> None:
+        """Запускает расширенный снимок состояния macOS для расследования мерцаний/lock."""
+        LOGGER.info(
+            "🧪 System diagnostics requested: label=%s, state=%s, started=%s, active_display_assertion=%s, input_device=%s",
+            label,
+            self.state,
+            self.started,
+            self._display_sleep_prevention_active,
+            None if self.current_input_device is None else self.current_input_device.get("name"),
+        )
+        try:
+            self.system_diagnostics_service.capture(label)
+        except Exception:
+            LOGGER.exception("🧪 Не удалось запустить расширенную системную диагностику: label=%s", label)
 
     @property
     def paste_cgevent_enabled(self) -> bool:
@@ -859,6 +947,8 @@ class DictationApp:
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
             llm_download_title=self._llm_download_title,
             llm_download_interactive=not self._llm_downloading and not self._is_llm_model_cached(),
+            llm_model_name=self.llm_model_name,
+            llm_model_options=list(self.llm_model_options),
         )
 
     def _notify_subscribers(self) -> None:
@@ -881,7 +971,67 @@ class DictationApp:
     def set_state(self, state: str) -> None:
         """Сохраняет новое состояние приложения и уведомляет подписчиков."""
         self.state = state
+        if state == Config.STATUS_IDLE and not self.started:
+            self.release_display_sleep_for_active_session(reason="idle")
         self._notify_subscribers()
+
+    def _cancel_pending_display_sleep_release(self) -> None:
+        """Отменяет отложенное отпускание power assertion, если оно было запланировано."""
+        timer = self._display_sleep_release_timer
+        self._display_sleep_release_timer = None
+        if timer is not None and timer.is_alive() and threading.current_thread() is not timer:
+            timer.cancel()
+
+    def _release_display_sleep_after_grace(self) -> None:
+        """Отпускает display assertion после короткой паузы после успешной диктовки."""
+        self._display_sleep_release_timer = None
+        if self.started or self.state != Config.STATUS_IDLE:
+            LOGGER.info(
+                "💡 Не отпускаю защиту дисплея после grace-паузы: state=%s, started=%s",
+                self.state,
+                self.started,
+            )
+            return
+        self.release_display_sleep_for_active_session(immediate=True, reason="grace_elapsed")
+
+    def prevent_display_sleep_for_active_session(self) -> None:
+        """Удерживает дисплей от сна до завершения текущей диктовки."""
+        self._cancel_pending_display_sleep_release()
+        if self._display_sleep_prevention_active:
+            return
+        try:
+            acquired = self.display_sleep_prevention_service.acquire()
+        except Exception:
+            LOGGER.exception("💡 Не удалось включить защиту дисплея от сна")
+            return
+        self._display_sleep_prevention_active = bool(acquired)
+
+    def release_display_sleep_for_active_session(self, *, immediate: bool = False, reason: str = "unknown") -> None:
+        """Отпускает удержание дисплея после завершения диктовки."""
+        if not self._display_sleep_prevention_active:
+            return
+        delay = float(self.display_sleep_release_delay_seconds)
+        if not immediate and delay > 0:
+            if self._display_sleep_release_timer is None:
+                LOGGER.info(
+                    "💡 Дисплей останется активным ещё %.0f с после диктовки: reason=%s",
+                    delay,
+                    reason,
+                )
+                timer = threading.Timer(delay, self._release_display_sleep_after_grace)
+                timer.daemon = True
+                self._display_sleep_release_timer = timer
+                timer.start()
+            return
+
+        self._cancel_pending_display_sleep_release()
+        try:
+            LOGGER.info("💡 Отпускаю защиту дисплея: reason=%s", reason)
+            self.display_sleep_prevention_service.release()
+        except Exception:
+            LOGGER.exception("💡 Не удалось выключить защиту дисплея от сна")
+        finally:
+            self._display_sleep_prevention_active = False
 
     def set_permission_status(self, permission_name: str, status: bool | None) -> None:
         """Сохраняет новый статус разрешения и уведомляет подписчиков."""
@@ -1139,3 +1289,7 @@ class DictationApp:
     def change_llm_prompt(self, prompt_name: str) -> None:
         """Переключает текущий пресет системного промпта LLM."""
         self.settings_use_cases.change_llm_prompt(prompt_name)
+
+    def change_llm_model(self, model_name: str) -> None:
+        """Переключает LLM-модель."""
+        self.settings_use_cases.change_llm_model(model_name)

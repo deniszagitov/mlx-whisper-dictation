@@ -36,6 +36,16 @@ _CLIPBOARD_CONTEXT_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 
+_OBSIDIAN_WRITE_RE = re.compile(
+    r"(запиши|записать|сохрани|добав|создай|заметк|задач|напиши|todo|note)",
+    re.IGNORECASE,
+)
+
+_OBSIDIAN_REMIND_RE = re.compile(
+    r"(напомни|вспомни|покажи|найди|что.*делать|что.*нужно|remind|search|find)",
+    re.IGNORECASE,
+)
+
 
 def should_use_clipboard_context(request_text: object, clipboard_text: object) -> bool:
     """Решает, нужно ли передавать буфер обмена как контекст для LLM."""
@@ -47,6 +57,21 @@ def should_use_clipboard_context(request_text: object, clipboard_text: object) -
         return False
 
     return _CLIPBOARD_CONTEXT_HINT_RE.search(normalized_request) is not None
+
+
+def detect_obsidian_action(text: str) -> str | None:
+    """Определяет Obsidian-действие по тексту запроса.
+
+    Возвращает 'write', 'remind' или None.
+    """
+    normalized = str(text or "").strip()
+    if not normalized:
+        return None
+    if _OBSIDIAN_WRITE_RE.search(normalized):
+        return "write"
+    if _OBSIDIAN_REMIND_RE.search(normalized):
+        return "remind"
+    return "write"
 
 
 def strip_think_blocks(text: str) -> str:

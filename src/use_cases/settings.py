@@ -284,9 +284,7 @@ class SettingsUseCases:
         )
         LOGGER.info(
             "✨ Удаление точки в конце одного предложения: %s",
-            "включено"
-            if self.transcriber.remove_trailing_period_for_single_sentence_enabled
-            else "выключено",
+            "включено" if self.transcriber.remove_trailing_period_for_single_sentence_enabled else "выключено",
         )
         self.publish_snapshot()
 
@@ -315,6 +313,26 @@ class SettingsUseCases:
         self.runtime.llm_prompt_name = prompt_name
         self.settings_store.save_str(Config.DEFAULTS_KEY_LLM_PROMPT, self.runtime.llm_prompt_name)
         LOGGER.info("🤖 Выбран промпт LLM: %s", self.runtime.llm_prompt_name)
+        self.publish_snapshot()
+
+    def change_llm_model(self, model_name: str) -> None:
+        """Переключает LLM-модель."""
+        if model_name not in self.runtime.llm_model_options:
+            return
+        if self.llm_processor is None:
+            return
+        current_model = getattr(self.llm_processor, "model_name", None)
+        if model_name == current_model:
+            return
+
+        self.llm_processor.change_model(model_name)
+        self.runtime.llm_model_name = model_name.rsplit("/", maxsplit=1)[-1]
+        self.settings_store.save_str(Config.DEFAULTS_KEY_LLM_MODEL, model_name)
+        LOGGER.info("🤖 LLM-модель переключена: %s", model_name)
+        self.runtime.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            f"LLM-модель переключена: {self.runtime.llm_model_name}",
+        )
         self.publish_snapshot()
 
     def prune_expired_history(self) -> None:

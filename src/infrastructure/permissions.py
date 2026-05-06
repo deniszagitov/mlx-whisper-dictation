@@ -45,6 +45,52 @@ class _WorkspaceWakeObserver(AppKit.NSObject):  # type: ignore[misc]
             LOGGER.exception("❌ Ошибка в обработчике пробуждения системы")
 
 
+class _WorkspaceSystemEventObserver(AppKit.NSObject):  # type: ignore[misc]
+    """Observer системных событий сна, экранов и пользовательской сессии."""
+
+    callback = objc.ivar()
+
+    @classmethod
+    def observerWithCallback_(cls, callback: Callable[[str], None]) -> Any:  # noqa: N802
+        """Создаёт observer и удерживает Python-callback."""
+        observer = cast("Any", cls.alloc().init())
+        observer.callback = callback
+        return observer
+
+    def _emit_event(self, event_name: str) -> None:
+        callback = cast("Callable[[str], None] | None", getattr(self, "callback", None))
+        if callback is None:
+            return
+        try:
+            callback(event_name)
+        except Exception:
+            LOGGER.exception("❌ Ошибка в обработчике системного события macOS: %s", event_name)
+
+    def handleWillSleep_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает событие ухода системы в sleep."""
+        self._emit_event("will_sleep")
+
+    def handleDidWake_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает событие пробуждения системы."""
+        self._emit_event("did_wake")
+
+    def handleScreensDidSleep_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает событие сна экранов."""
+        self._emit_event("screens_did_sleep")
+
+    def handleScreensDidWake_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает событие пробуждения экранов."""
+        self._emit_event("screens_did_wake")
+
+    def handleSessionDidResignActive_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает событие деактивации пользовательской сессии."""
+        self._emit_event("session_did_resign_active")
+
+    def handleSessionDidBecomeActive_(self, _notification: Any) -> None:  # noqa: N802
+        """Пробрасывает событие возврата пользовательской сессии."""
+        self._emit_event("session_did_become_active")
+
+
 class _WorkspaceApplicationObserver(AppKit.NSObject):  # type: ignore[misc]
     """Observer NSWorkspaceDidActivateApplicationNotification для Python-callback."""
 
@@ -134,6 +180,49 @@ def register_wake_observer(on_wake_callback: Callable[[], None]) -> Any:
         LOGGER.exception("❌ Не удалось зарегистрировать observer пробуждения системы")
         return None
     LOGGER.info("💤 Зарегистрирован observer пробуждения системы")
+    return observer
+
+
+def register_system_event_observer(on_event_callback: Callable[[str], None]) -> Any:
+    """Регистрирует observer событий sleep/wake экранов и пользовательской сессии."""
+    if platform.system() != "Darwin":
+        return None
+
+    notifications: tuple[tuple[str, bytes, str], ...] = (
+        ("NSWorkspaceWillSleepNotification", b"handleWillSleep:", "will_sleep"),
+        ("NSWorkspaceDidWakeNotification", b"handleDidWake:", "did_wake"),
+        ("NSWorkspaceScreensDidSleepNotification", b"handleScreensDidSleep:", "screens_did_sleep"),
+        ("NSWorkspaceScreensDidWakeNotification", b"handleScreensDidWake:", "screens_did_wake"),
+        ("NSWorkspaceSessionDidResignActiveNotification", b"handleSessionDidResignActive:", "session_did_resign_active"),
+        ("NSWorkspaceSessionDidBecomeActiveNotification", b"handleSessionDidBecomeActive:", "session_did_become_active"),
+    )
+
+    try:
+        workspace = AppKit.NSWorkspace.sharedWorkspace()
+        notification_center = workspace.notificationCenter()
+        if notification_center is None:
+            LOGGER.warning("⚠️ NSWorkspace notificationCenter недоступен")
+            return None
+
+        observer = _WorkspaceSystemEventObserver.observerWithCallback_(on_event_callback)
+        registered_events: list[str] = []
+        for notification_attribute, selector, event_name in notifications:
+            notification_name = getattr(AppKit, notification_attribute, None)
+            if notification_name is None:
+                LOGGER.warning("⚠️ %s недоступно", notification_attribute)
+                continue
+            notification_center.addObserver_selector_name_object_(
+                observer,
+                selector,
+                notification_name,
+                None,
+            )
+            registered_events.append(event_name)
+    except Exception:
+        LOGGER.exception("❌ Не удалось зарегистрировать observer системных событий macOS")
+        return None
+
+    LOGGER.info("🖥️ Зарегистрирован observer системных событий macOS: %s", ", ".join(registered_events))
     return observer
 
 
