@@ -21,6 +21,7 @@ dependencies = [
 	"pyaudio>=0.2.13",
 	"pynput>=1.7.6",
 	"rumps>=0.4.0",
+	"pyobjc-framework-avfoundation>=12.1",
 	"soxr>=1.0.0",
 	"webrtcvad-wheels>=2.0.14",
 ]
@@ -126,6 +127,7 @@ implicit_reexport = true
 [[tool.mypy.overrides]]
 module = [
     "AppKit.*",
+    "AVFoundation.*",
     "Foundation.*",
     "Quartz.*",
     "HIServices.*",

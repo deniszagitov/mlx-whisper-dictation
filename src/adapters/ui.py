@@ -15,6 +15,15 @@ import rumps
 from PyObjCTools.AppHelper import callAfter  # type: ignore[import-untyped]
 
 from ..domain.constants import Config
+from ..domain.reader_constants import (
+    RSVP_CHUNK_SIZE_OPTIONS,
+    RSVP_FONT_SIZE_OPTIONS,
+    RSVP_WPM_OPTIONS,
+    TTS_ENGINE_LABELS,
+    TTS_MAX_MINUTES_OPTIONS,
+    TTS_MLX_MODEL_OPTIONS,
+    TTS_RATE_MULTIPLIER_STEP,
+)
 
 if TYPE_CHECKING:
     from ..domain.ports import StatusBarControllerProtocol
@@ -32,18 +41,27 @@ def _call_on_main_thread(callback: Any, *args: Any) -> None:
 
 
 def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
-    """Открывает простое окно ввода текста и возвращает введённое значение."""
-    response = rumps.Window(
-        title=title,
-        message=message,
-        default_text=default_text,
-        ok="Сохранить",
-        cancel=True,
-        dimensions=(320, 120),
-    ).run()
-    if not getattr(response, "clicked", False):
+    """Открывает простое AppKit-окно ввода текста и возвращает введённое значение."""
+    AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+    input_field = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 420, 24))
+    input_field.setStringValue_(default_text)
+    input_field.setEditable_(True)
+    input_field.setSelectable_(True)
+    input_field.setBezeled_(True)
+    input_field.setDrawsBackground_(True)
+
+    alert = AppKit.NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.setInformativeText_(message)
+    alert.addButtonWithTitle_("Сохранить")
+    alert.addButtonWithTitle_("Отмена")
+    alert.setAccessoryView_(input_field)
+    alert.window().setInitialFirstResponder_(input_field)
+    input_field.selectText_(None)
+
+    if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
         return None
-    return str(getattr(response, "text", "")).strip()
+    return str(input_field.stringValue()).strip()
 
 
 class StatusBarApp(rumps.App):  # type: ignore[misc]
@@ -78,6 +96,8 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         )
 
         self.llm_hotkey_item = rumps.MenuItem(f"🤖 LLM-хоткей: {self.llm_hotkey_status}", callback=self.change_llm_hotkey)
+        self.rsvp_hotkey_item = rumps.MenuItem(f"📖 Reader: {self.rsvp_hotkey_status}", callback=self.change_rsvp_hotkey)
+        self.tts_hotkey_item = rumps.MenuItem(f"🔈 Speaker: {self.tts_hotkey_status}", callback=self.change_tts_hotkey)
         self.llm_model_menu = rumps.MenuItem(f"🤖 LLM-модель: {self.llm_model_name}")
         for llm_model in self.llm_model_options:
             item = rumps.MenuItem(self._llm_model_menu_title(llm_model), callback=self._change_llm_model)
@@ -158,10 +178,74 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.recognition_menu.add(self.max_time_item)
         self.recognition_menu.add(self.performance_menu)
 
+        self.reader_rsvp_item = rumps.MenuItem(f"👀 Запустить RSVP    {self.rsvp_hotkey_status}", callback=self.start_rsvp)
+        self.reader_tts_item = rumps.MenuItem(f"🔊 Запустить TTS    {self.tts_hotkey_status}", callback=self.start_tts)
+        self.reader_preprocess_item = rumps.MenuItem("🤖 LLM-предобработка reader", callback=self.toggle_reader_preprocess)
+        self.reader_rsvp_settings_menu = rumps.MenuItem("⚙️ Настройки RSVP")
+        self.reader_rsvp_wpm_menu = rumps.MenuItem(f"Скорость: {self.reader_rsvp_wpm} wpm")
+        for wpm in RSVP_WPM_OPTIONS:
+            self.reader_rsvp_wpm_menu.add(rumps.MenuItem(f"{wpm} wpm", callback=self.change_reader_rsvp_wpm))
+        self.reader_rsvp_chunk_menu = rumps.MenuItem(f"Размер chunk: {self.reader_rsvp_chunk_size}")
+        for chunk_size in RSVP_CHUNK_SIZE_OPTIONS:
+            self.reader_rsvp_chunk_menu.add(rumps.MenuItem(f"{chunk_size} слов", callback=self.change_reader_rsvp_chunk_size))
+        self.reader_rsvp_font_menu = rumps.MenuItem(f"Размер шрифта: {self.reader_rsvp_font_size}")
+        for font_size in RSVP_FONT_SIZE_OPTIONS:
+            self.reader_rsvp_font_menu.add(rumps.MenuItem(f"{font_size} pt", callback=self.change_reader_rsvp_font_size))
+        self.reader_rsvp_settings_menu.add(self.reader_rsvp_wpm_menu)
+        self.reader_rsvp_settings_menu.add(self.reader_rsvp_chunk_menu)
+        self.reader_rsvp_settings_menu.add(self.reader_rsvp_font_menu)
+
+        self.reader_tts_settings_menu = rumps.MenuItem("⚙️ Настройки TTS")
+        self.reader_tts_engine_menu = rumps.MenuItem(f"Backend: {self._format_tts_engine(self.reader_tts_engine)}")
+        for title in TTS_ENGINE_LABELS.values():
+            self.reader_tts_engine_menu.add(rumps.MenuItem(title, callback=self.change_reader_tts_engine))
+        self.reader_tts_mlx_model_menu = rumps.MenuItem(f"MLX-модель: {self._short_model_name(self.reader_tts_mlx_model)}")
+        for model_name in TTS_MLX_MODEL_OPTIONS:
+            self.reader_tts_mlx_model_menu.add(
+                rumps.MenuItem(self._short_model_name(model_name), callback=self.change_reader_tts_mlx_model)
+            )
+        self.reader_tts_mlx_model_menu.add(None)
+        self.reader_tts_mlx_model_menu.add(rumps.MenuItem("Задать модель...", callback=self.prompt_reader_tts_mlx_model))
+        self.reader_tts_mlx_voice_description_item = rumps.MenuItem(
+            "Описание MLX-голоса...",
+            callback=self.prompt_reader_tts_mlx_voice_description,
+        )
+        self.reader_tts_rate_menu = rumps.MenuItem(f"Скорость речи: {self._format_tts_rate(self.reader_tts_rate_multiplier)}")
+        self.reader_tts_rate_down_item = rumps.MenuItem("− медленнее", callback=self.decrease_reader_tts_rate_multiplier)
+        self.reader_tts_rate_value_item = rumps.MenuItem(f"Скорость: {self._format_tts_rate(self.reader_tts_rate_multiplier)}")
+        self.reader_tts_rate_value_item.set_callback(None)
+        self.reader_tts_rate_up_item = rumps.MenuItem("+ быстрее", callback=self.increase_reader_tts_rate_multiplier)
+        self.reader_tts_rate_menu.add(self.reader_tts_rate_down_item)
+        self.reader_tts_rate_menu.add(self.reader_tts_rate_value_item)
+        self.reader_tts_rate_menu.add(self.reader_tts_rate_up_item)
+        self.reader_tts_voice_menu = rumps.MenuItem("Голос")
+        self._refresh_reader_tts_voice_menu()
+        self.reader_tts_max_minutes_menu = rumps.MenuItem(f"Макс. длина аудио: {self._format_tts_max_minutes(self.reader_tts_max_minutes)}")
+        for max_minutes in TTS_MAX_MINUTES_OPTIONS:
+            self.reader_tts_max_minutes_menu.add(
+                rumps.MenuItem(self._format_tts_max_minutes(max_minutes), callback=self.change_reader_tts_max_minutes)
+            )
+        self.reader_tts_settings_menu.add(self.reader_tts_engine_menu)
+        self.reader_tts_settings_menu.add(self.reader_tts_mlx_model_menu)
+        self.reader_tts_settings_menu.add(self.reader_tts_mlx_voice_description_item)
+        self.reader_tts_settings_menu.add(self.reader_tts_rate_menu)
+        self.reader_tts_settings_menu.add(self.reader_tts_voice_menu)
+        self.reader_tts_settings_menu.add(self.reader_tts_max_minutes_menu)
+
+        self.reader_menu = rumps.MenuItem("📖 Reader")
+        self.reader_menu.add(self.reader_rsvp_item)
+        self.reader_menu.add(self.reader_tts_item)
+        self.reader_menu.add(None)
+        self.reader_menu.add(self.reader_rsvp_settings_menu)
+        self.reader_menu.add(self.reader_tts_settings_menu)
+        self.reader_menu.add(self.reader_preprocess_item)
+
         self.hotkeys_menu = rumps.MenuItem("⌨️ Хоткеи")
         self.hotkeys_menu.add(self.hotkey_item)
         self.hotkeys_menu.add(self.secondary_hotkey_item)
         self.hotkeys_menu.add(self.llm_hotkey_item)
+        self.hotkeys_menu.add(self.rsvp_hotkey_item)
+        self.hotkeys_menu.add(self.tts_hotkey_item)
 
         self.paste_method_menu = rumps.MenuItem("📝 Метод ввода")
         self.private_mode_item = rumps.MenuItem("🕶 Приватный режим", callback=self.toggle_private_mode)
@@ -213,6 +297,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self.recognition_menu,
             self.postprocessing_menu,
             self.hotkeys_menu,
+            self.reader_menu,
             self.private_mode_item,
             self.behavior_menu,
             self.llm_menu,
@@ -281,6 +366,16 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         return self.app.llm_hotkey_status
 
     @property
+    def rsvp_hotkey_status(self) -> str:
+        """Возвращает display-строку RSVP-хоткея."""
+        return getattr(self.app, "rsvp_hotkey_status", "не задан")
+
+    @property
+    def tts_hotkey_status(self) -> str:
+        """Возвращает display-строку TTS-хоткея."""
+        return getattr(self.app, "tts_hotkey_status", "не задан")
+
+    @property
     def llm_prompt_name(self) -> str:
         """Возвращает имя активного LLM-промпта."""
         return self.app.llm_prompt_name
@@ -294,6 +389,56 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def llm_model_options(self) -> list[str]:
         """Возвращает список доступных LLM-моделей."""
         return self.app.llm_model_options
+
+    @property
+    def reader_rsvp_wpm(self) -> int:
+        """Возвращает скорость RSVP."""
+        return int(getattr(self.app, "reader_rsvp_wpm", 400))
+
+    @property
+    def reader_rsvp_chunk_size(self) -> int:
+        """Возвращает размер RSVP chunk-а."""
+        return int(getattr(self.app, "reader_rsvp_chunk_size", 2))
+
+    @property
+    def reader_rsvp_font_size(self) -> int:
+        """Возвращает размер шрифта RSVP."""
+        return int(getattr(self.app, "reader_rsvp_font_size", 64))
+
+    @property
+    def reader_tts_rate_multiplier(self) -> float:
+        """Возвращает множитель скорости TTS."""
+        return float(getattr(self.app, "reader_tts_rate_multiplier", 1.0))
+
+    @property
+    def reader_tts_voice_id(self) -> str | None:
+        """Возвращает идентификатор выбранного голоса TTS."""
+        return getattr(self.app, "reader_tts_voice_id", None)
+
+    @property
+    def reader_tts_max_minutes(self) -> int:
+        """Возвращает лимит длительности TTS."""
+        return int(getattr(self.app, "reader_tts_max_minutes", 5))
+
+    @property
+    def reader_tts_engine(self) -> str:
+        """Возвращает выбранный backend TTS."""
+        return str(getattr(self.app, "reader_tts_engine", "apple"))
+
+    @property
+    def reader_tts_mlx_model(self) -> str:
+        """Возвращает выбранную MLX TTS-модель."""
+        return str(getattr(self.app, "reader_tts_mlx_model", "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit"))
+
+    @property
+    def reader_tts_mlx_voice_description(self) -> str:
+        """Возвращает описание MLX-голоса."""
+        return str(getattr(self.app, "reader_tts_mlx_voice_description", ""))
+
+    @property
+    def reader_preprocess_enabled(self) -> bool:
+        """Возвращает флаг LLM-предобработки reader."""
+        return bool(getattr(self.app, "reader_preprocess_enabled", True))
 
     @property
     def performance_mode(self) -> str:
@@ -588,6 +733,28 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Возвращает заголовок пункта меню со счётчиком токенов."""
         return f"🔢 Токены: {self._format_total_tokens(self.total_tokens)}"
 
+    def _format_tts_rate(self, rate_multiplier: float) -> str:
+        """Форматирует множитель скорости TTS."""
+        normalized = round(float(rate_multiplier), 2)
+        if normalized.is_integer():
+            return f"{int(normalized)}×"
+        formatted = f"{normalized:.2f}".rstrip("0").rstrip(".")
+        return f"{formatted}×"
+
+    def _format_tts_engine(self, engine: str) -> str:
+        """Форматирует backend TTS для меню."""
+        return TTS_ENGINE_LABELS.get(engine, TTS_ENGINE_LABELS["apple"])
+
+    def _short_model_name(self, model_name: str) -> str:
+        """Возвращает короткое имя модели для меню."""
+        return model_name.rsplit("/", maxsplit=1)[-1]
+
+    def _format_tts_max_minutes(self, max_minutes: int) -> str:
+        """Форматирует лимит длительности TTS."""
+        if max_minutes <= 0:
+            return "без лимита"
+        return f"{max_minutes} мин"
+
     def _refresh_token_usage_item(self) -> None:
         """Обновляет пункт меню со счётчиком токенов."""
         self.token_usage_item.title = self._token_usage_title()
@@ -604,6 +771,40 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.hotkey_item.title = f"⌨️ Основной хоткей: {self.hotkey_status}"
         self.secondary_hotkey_item.title = f"⌨️ Доп. хоткей: {self.secondary_hotkey_status}"
         self.llm_hotkey_item.title = f"🤖 LLM-хоткей: {self.llm_hotkey_status}"
+        self.rsvp_hotkey_item.title = f"📖 Reader: {self.rsvp_hotkey_status}"
+        self.tts_hotkey_item.title = f"🔈 Speaker: {self.tts_hotkey_status}"
+        self.reader_rsvp_item.title = f"👀 Запустить RSVP    {self.rsvp_hotkey_status}"
+        self.reader_tts_item.title = f"🔊 Запустить TTS    {self.tts_hotkey_status}"
+
+    def _refresh_reader_tts_voice_menu(self) -> None:
+        """Пересобирает подменю системных голосов TTS."""
+        if getattr(self.reader_tts_voice_menu, "_menu", None) is not None:
+            self.reader_tts_voice_menu.clear()
+
+        auto_item = rumps.MenuItem("Авто: русский голос", callback=self.change_reader_tts_voice)
+        auto_item.state = int(self.reader_tts_voice_id is None)
+        self.reader_tts_voice_menu.add(auto_item)
+
+        voices = self.app.reader_available_tts_voices() if hasattr(self.app, "reader_available_tts_voices") else []
+        if voices:
+            self.reader_tts_voice_menu.add(None)
+        for voice in voices:
+            item = rumps.MenuItem(voice.menu_title, callback=self.change_reader_tts_voice)
+            item.state = int(voice.identifier == self.reader_tts_voice_id)
+            self.reader_tts_voice_menu.add(item)
+
+    def _refresh_reader_items(self) -> None:
+        """Обновляет пункты меню reader-настроек."""
+        self.reader_preprocess_item.state = int(self.reader_preprocess_enabled)
+        self.reader_rsvp_wpm_menu.title = f"Скорость: {self.reader_rsvp_wpm} wpm"
+        self.reader_rsvp_chunk_menu.title = f"Размер chunk: {self.reader_rsvp_chunk_size}"
+        self.reader_rsvp_font_menu.title = f"Размер шрифта: {self.reader_rsvp_font_size}"
+        self.reader_tts_engine_menu.title = f"Backend: {self._format_tts_engine(self.reader_tts_engine)}"
+        self.reader_tts_mlx_model_menu.title = f"MLX-модель: {self._short_model_name(self.reader_tts_mlx_model)}"
+        self.reader_tts_rate_menu.title = f"Скорость речи: {self._format_tts_rate(self.reader_tts_rate_multiplier)}"
+        self.reader_tts_rate_value_item.title = f"Скорость: {self._format_tts_rate(self.reader_tts_rate_multiplier)}"
+        self.reader_tts_max_minutes_menu.title = f"Макс. длина аудио: {self._format_tts_max_minutes(self.reader_tts_max_minutes)}"
+        self._refresh_reader_tts_voice_menu()
 
     def _refresh_selection_states(self) -> None:
         """Обновляет отметки выбранных пунктов меню."""
@@ -635,6 +836,27 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             title = self._llm_model_menu_title(llm_model)
             with contextlib.suppress(KeyError):
                 self._menu_item(title).state = int(llm_model.rsplit("/", maxsplit=1)[-1] == self.llm_model_name)
+
+        for wpm in RSVP_WPM_OPTIONS:
+            self.reader_rsvp_wpm_menu[f"{wpm} wpm"].state = int(wpm == self.reader_rsvp_wpm)
+
+        for chunk_size in RSVP_CHUNK_SIZE_OPTIONS:
+            self.reader_rsvp_chunk_menu[f"{chunk_size} слов"].state = int(chunk_size == self.reader_rsvp_chunk_size)
+
+        for font_size in RSVP_FONT_SIZE_OPTIONS:
+            self.reader_rsvp_font_menu[f"{font_size} pt"].state = int(font_size == self.reader_rsvp_font_size)
+
+        for engine, title in TTS_ENGINE_LABELS.items():
+            self.reader_tts_engine_menu[title].state = int(engine == self.reader_tts_engine)
+
+        for model_name in TTS_MLX_MODEL_OPTIONS:
+            title = self._short_model_name(model_name)
+            self.reader_tts_mlx_model_menu[title].state = int(model_name == self.reader_tts_mlx_model)
+        self.reader_tts_mlx_model_menu["Задать модель..."].state = int(self.reader_tts_mlx_model not in TTS_MLX_MODEL_OPTIONS)
+
+        for max_minutes in TTS_MAX_MINUTES_OPTIONS:
+            title = self._format_tts_max_minutes(max_minutes)
+            self.reader_tts_max_minutes_menu[title].state = int(max_minutes == self.reader_tts_max_minutes)
 
     def _refresh_input_device_menu(self) -> None:
         """Пересобирает подменю выбора микрофона."""
@@ -759,6 +981,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.llm_model_menu.title = f"🤖 LLM-модель: {snapshot.llm_model_name}"
 
         self._refresh_hotkey_items()
+        self._refresh_reader_items()
         self._refresh_permission_items()
         self._refresh_token_usage_item()
         self._refresh_input_device_menu()
@@ -847,6 +1070,14 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Изменяет LLM-хоткей через DictationApp."""
         self.app.change_llm_hotkey()
 
+    def change_rsvp_hotkey(self, _: object) -> None:
+        """Изменяет RSVP-хоткей через DictationApp."""
+        self.app.change_rsvp_hotkey()
+
+    def change_tts_hotkey(self, _: object) -> None:
+        """Изменяет TTS-хоткей через DictationApp."""
+        self.app.change_tts_hotkey()
+
     def request_accessibility_access(self, _: object) -> None:
         """Повторно запрашивает Accessibility."""
         self.app.request_accessibility_access()
@@ -911,6 +1142,101 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def toggle_llm_clipboard(self, _sender: rumps.MenuItem) -> None:
         """Переключает использование буфера обмена для LLM."""
         self.app.toggle_llm_clipboard()
+
+    def start_rsvp(self, _sender: rumps.MenuItem) -> None:
+        """Запускает RSVP из буфера обмена."""
+        self.app.toggle_rsvp()
+
+    def start_tts(self, _sender: rumps.MenuItem) -> None:
+        """Запускает TTS из буфера обмена."""
+        self.app.toggle_tts()
+
+    def change_reader_rsvp_wpm(self, sender: rumps.MenuItem) -> None:
+        """Меняет скорость RSVP."""
+        try:
+            self.app.change_reader_rsvp_wpm(int(sender.title.split()[0]))
+        except (ValueError, IndexError):
+            LOGGER.warning("📖 Некорректный пункт скорости RSVP: %s", sender.title)
+
+    def change_reader_rsvp_chunk_size(self, sender: rumps.MenuItem) -> None:
+        """Меняет размер chunk-а RSVP."""
+        try:
+            self.app.change_reader_rsvp_chunk_size(int(sender.title.split()[0]))
+        except (ValueError, IndexError):
+            LOGGER.warning("📖 Некорректный пункт chunk RSVP: %s", sender.title)
+
+    def change_reader_rsvp_font_size(self, sender: rumps.MenuItem) -> None:
+        """Меняет размер шрифта RSVP."""
+        try:
+            self.app.change_reader_rsvp_font_size(int(sender.title.split()[0]))
+        except (ValueError, IndexError):
+            LOGGER.warning("📖 Некорректный пункт шрифта RSVP: %s", sender.title)
+
+    def decrease_reader_tts_rate_multiplier(self, _sender: rumps.MenuItem) -> None:
+        """Уменьшает скорость TTS на один шаг."""
+        self.app.change_reader_tts_rate_multiplier(self.reader_tts_rate_multiplier - TTS_RATE_MULTIPLIER_STEP)
+
+    def increase_reader_tts_rate_multiplier(self, _sender: rumps.MenuItem) -> None:
+        """Увеличивает скорость TTS на один шаг."""
+        self.app.change_reader_tts_rate_multiplier(self.reader_tts_rate_multiplier + TTS_RATE_MULTIPLIER_STEP)
+
+    def change_reader_tts_engine(self, sender: rumps.MenuItem) -> None:
+        """Меняет backend TTS."""
+        selected = next((engine for engine, title in TTS_ENGINE_LABELS.items() if title == sender.title), None)
+        if selected is not None:
+            self.app.change_reader_tts_engine(selected)
+
+    def change_reader_tts_mlx_model(self, sender: rumps.MenuItem) -> None:
+        """Меняет MLX TTS-модель."""
+        selected = next((model_name for model_name in TTS_MLX_MODEL_OPTIONS if self._short_model_name(model_name) == sender.title), None)
+        if selected is not None:
+            self.app.change_reader_tts_mlx_model(selected)
+
+    def prompt_reader_tts_mlx_model(self, _sender: rumps.MenuItem) -> None:
+        """Открывает диалог точного имени MLX TTS-модели."""
+        model_name = prompt_text(
+            "MLX TTS-модель",
+            "Введите имя локальной MLX TTS-модели или repo id.",
+            default_text=self.reader_tts_mlx_model,
+        )
+        if model_name is None:
+            return
+        self.app.change_reader_tts_mlx_model(model_name)
+
+    def prompt_reader_tts_mlx_voice_description(self, _sender: rumps.MenuItem) -> None:
+        """Открывает диалог описания голоса MLX VoiceDesign."""
+        description = prompt_text(
+            "Описание MLX-голоса",
+            "Опишите голос для Qwen3-TTS VoiceDesign.",
+            default_text=self.reader_tts_mlx_voice_description,
+        )
+        if description is None:
+            return
+        self.app.change_reader_tts_mlx_voice_description(description)
+
+    def change_reader_tts_voice(self, sender: rumps.MenuItem) -> None:
+        """Меняет системный голос TTS."""
+        if sender.title.startswith("Авто:"):
+            self.app.change_reader_tts_voice(None)
+            return
+        voices = self.app.reader_available_tts_voices() if hasattr(self.app, "reader_available_tts_voices") else []
+        selected = next((voice for voice in voices if voice.menu_title == sender.title), None)
+        if selected is not None:
+            self.app.change_reader_tts_voice(selected.identifier)
+
+    def change_reader_tts_max_minutes(self, sender: rumps.MenuItem) -> None:
+        """Меняет максимальную длительность TTS."""
+        if sender.title == "без лимита":
+            self.app.change_reader_tts_max_minutes(0)
+            return
+        try:
+            self.app.change_reader_tts_max_minutes(int(sender.title.split()[0]))
+        except (ValueError, IndexError):
+            LOGGER.warning("🔈 Некорректный пункт лимита TTS: %s", sender.title)
+
+    def toggle_reader_preprocess(self, _sender: rumps.MenuItem) -> None:
+        """Переключает LLM-предобработку reader."""
+        self.app.toggle_reader_preprocess()
 
     def toggle_capitalize_first_letter(self, _sender: rumps.MenuItem) -> None:
         """Переключает правило заглавной буквы после распознавания."""

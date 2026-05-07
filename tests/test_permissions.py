@@ -5,6 +5,8 @@
 значения разрешений.
 """
 
+import logging
+
 
 class TestPermissionLabel:
     """Тесты преобразования статуса разрешения в строку для меню."""
@@ -237,3 +239,22 @@ class TestApplicationActivationObserver:
         observer.handleApplicationActivate_(None)
 
         assert calls == [{"name": "Notes", "bundle_id": "com.apple.Notes", "pid": 42}]
+
+
+class TestNotifications:
+    """Тесты системных уведомлений macOS."""
+
+    def test_notify_user_logs_error_without_traceback(self, monkeypatch, caplog):
+        """Ошибка rumps.notification должна давать одну ERROR-запись без traceback."""
+        import src.infrastructure.permissions as permissions_module
+
+        def fail_notification(_title, _subtitle, _message):
+            raise RuntimeError("нет Info.plist")
+
+        monkeypatch.setattr(permissions_module.rumps, "notification", fail_notification)
+
+        with caplog.at_level(logging.ERROR, logger="src.infrastructure.permissions"):
+            permissions_module.notify_user("Dictator", "Запись началась")
+
+        assert "❌ Не удалось показать системное уведомление macOS: нет Info.plist" in caplog.text
+        assert all(record.exc_info is None for record in caplog.records)

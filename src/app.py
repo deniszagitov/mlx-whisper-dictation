@@ -22,10 +22,25 @@ from .domain.audio import (
     microphone_menu_title as format_microphone_menu_title,
 )
 from .domain.constants import Config
+from .domain.reader_constants import DEFAULT_TTS_RATE_MULTIPLIER
+from .domain.reader_types import (
+    ClipboardContent,
+    ReaderClipboardPort,
+    ReaderPreferences,
+    RSVPConfig,
+    RSVPDisplayPort,
+    RSVPFrame,
+    TTSConfig,
+    TTSPort,
+    TTSVoice,
+)
 from .domain.types import AppPreferences, AppSnapshot, LaunchConfig, MicrophoneProfile
 from .use_cases.hotkey_management import HotkeyManagementUseCases
 from .use_cases.llm_pipeline import LlmPipelineUseCases
 from .use_cases.microphone_profiles import MicrophoneProfilesUseCases
+from .use_cases.play_rsvp import PlayRSVPUseCase
+from .use_cases.play_tts import PlayTTSUseCase
+from .use_cases.preprocess_text import PreprocessTextUseCase
 from .use_cases.recording import RecordingUseCases
 from .use_cases.settings import SettingsUseCases
 
@@ -200,8 +215,60 @@ class _NullHotkeyListener:
         """Игнорирует остановку listener'а."""
         return None
 
-    def update_hotkeys(self, _primary: str, _secondary: str, _llm: str) -> None:
+    def update_hotkeys(self, _primary: str, _secondary: str, _llm: str, _rsvp: str = "", _tts: str = "") -> None:
         """Игнорирует обновление набора горячих клавиш."""
+        return None
+
+
+class _NullReaderClipboard:
+    """Null-object read-only буфера обмена для reader-сценариев."""
+
+    def read_content(self) -> ClipboardContent:
+        """Возвращает отсутствие текстового содержимого."""
+        return ClipboardContent(text=None, has_text_type=False)
+
+
+class _NullRSVPDisplay:
+    """Null-object RSVP overlay для headless-сценариев."""
+
+    def show_frames(self, _frames: list[RSVPFrame], _config: RSVPConfig) -> None:
+        """Игнорирует показ RSVP."""
+        return None
+
+    def close(self) -> None:
+        """Игнорирует закрытие RSVP."""
+        return None
+
+    def is_running(self) -> bool:
+        """Сообщает, что RSVP overlay не активен."""
+        return False
+
+    def handle_key(self, _key_name: str) -> bool:
+        """Не обрабатывает клавиатуру."""
+        return False
+
+
+class _NullTTS:
+    """Null-object TTS speaker для headless-сценариев."""
+
+    def speak(self, _text: str, _config: TTSConfig) -> None:
+        """Игнорирует запуск озвучивания."""
+        return None
+
+    def stop(self) -> None:
+        """Игнорирует остановку озвучивания."""
+        return None
+
+    def is_speaking(self) -> bool:
+        """Сообщает, что TTS не воспроизводится."""
+        return False
+
+    def available_voices(self) -> list[TTSVoice]:
+        """Возвращает пустой список голосов."""
+        return []
+
+    def set_keep_model_loaded(self, _enabled: bool) -> None:
+        """Игнорирует режим удержания MLX TTS-модели."""
         return None
 
 
@@ -314,6 +381,9 @@ class DictationApp:
         hotkey_capture_service: HotkeyCaptureService | None = None,
         hotkey_listener_factory: HotkeyListenerFactoryService | None = None,
         recording_overlay: Any | None = None,
+        reader_clipboard: ReaderClipboardPort | None = None,
+        rsvp_display: RSVPDisplayPort | None = None,
+        tts_speaker: TTSPort | None = None,
         settings_store: SettingsStoreProtocol | None = None,
     ) -> None:
         self.settings_store = settings_store or _InMemorySettingsStore()
@@ -322,9 +392,13 @@ class DictationApp:
         self.llm_processor = llm_processor
         self.launch_config = launch_config
         self.app_preferences = app_preferences or AppPreferences.from_store(self.settings_store)
+        self._migrate_reader_tts_rate_default()
+        self.reader_preferences = ReaderPreferences.from_store(self.settings_store, llm_model=self.launch_config.llm_model)
         self.hotkey_status = self.launch_config.hotkeys.hotkey_status
         self.secondary_hotkey_status = self.launch_config.hotkeys.secondary_hotkey_status
         self.llm_hotkey_status = self.launch_config.hotkeys.llm_hotkey_status
+        self.rsvp_hotkey_status = self.reader_preferences.rsvp_hotkey_status
+        self.tts_hotkey_status = self.reader_preferences.tts_hotkey_status
         self.clipboard_service = clipboard_service or ClipboardService(read_text=lambda: None, write_text=lambda _text: None)
         self.microphone_profiles_service = microphone_profiles_service or MicrophoneProfilesService(
             load_profiles=lambda: [],
@@ -354,6 +428,9 @@ class DictationApp:
             create_listener=_create_null_hotkey_listener,
         )
         self.recording_overlay = recording_overlay or _NullRecordingOverlay()
+        self.reader_clipboard = reader_clipboard or _NullReaderClipboard()
+        self.rsvp_display = rsvp_display or _NullRSVPDisplay()
+        self.tts_speaker = tts_speaker or _NullTTS()
 
         self.model_options = list(Config.MODEL_PRESETS)
         if self.launch_config.model not in self.model_options:
@@ -386,6 +463,7 @@ class DictationApp:
         self.llm_prompt_name = self.app_preferences.llm_prompt_name
         self.performance_mode = self.app_preferences.performance_mode
         self.high_quality_mac_builtin_enabled = self.app_preferences.high_quality_mac_builtin_enabled
+        self.tts_speaker.set_keep_model_loaded(self.performance_mode == Config.PERFORMANCE_MODE_FAST)
         self.show_recording_notification = self.app_preferences.show_recording_notification
         self.show_recording_overlay = self.app_preferences.show_recording_overlay
         self.show_recording_time_in_menu_bar = self.app_preferences.show_recording_time_in_menu_bar
@@ -402,6 +480,7 @@ class DictationApp:
         self._display_sleep_prevention_active = False
         self._display_sleep_release_timer: threading.Timer | None = None
         self.display_sleep_release_delay_seconds = Config.DISPLAY_SLEEP_RELEASE_GRACE_SECONDS
+        self._reader_worker: threading.Thread | None = None
 
         llm_cached = self.llm_processor.is_model_cached() if self.llm_processor is not None else False
         self._llm_download_title = "✅ LLM-модель загружена" if llm_cached else "📥 Скачать LLM-модель…"
@@ -446,6 +525,19 @@ class DictationApp:
             publish_snapshot=self._notify_subscribers,
             obsidian_service=self.obsidian_service,
         )
+        self.reader_preprocess_use_case = PreprocessTextUseCase(self.llm_processor)
+        self.play_rsvp_use_case = PlayRSVPUseCase(
+            clipboard=self.reader_clipboard,
+            preprocessor=self.reader_preprocess_use_case,
+            display=self.rsvp_display,
+            notify=self.system_integration_service.notify,
+        )
+        self.play_tts_use_case = PlayTTSUseCase(
+            clipboard=self.reader_clipboard,
+            preprocessor=self.reader_preprocess_use_case,
+            speaker=self.tts_speaker,
+            notify=self.system_integration_service.notify,
+        )
         self.hotkey_management_use_cases = HotkeyManagementUseCases(
             runtime=self,
             settings_store=self.settings_store,
@@ -469,6 +561,13 @@ class DictationApp:
         self.transcriber.history_callback = self._notify_subscribers
         self.transcriber.token_usage_callback = self._notify_subscribers
         self._refresh_hotkey_statuses()
+
+    def _migrate_reader_tts_rate_default(self) -> None:
+        """Одноразово сбрасывает старый дефолт скорости TTS на 1×."""
+        if self.settings_store.contains_key(Config.DEFAULTS_KEY_READER_TTS_RATE_DEFAULT_V2):
+            return
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_RATE_MULTIPLIER, DEFAULT_TTS_RATE_MULTIPLIER)
+        self.settings_store.save_bool(Config.DEFAULTS_KEY_READER_TTS_RATE_DEFAULT_V2, True)
 
     def _save_input_device_name_preference(self, device_name: str | None) -> None:
         """Сохраняет предпочитаемое имя микрофона в настройках."""
@@ -877,6 +976,74 @@ class DictationApp:
         self.launch_config = self.launch_config.with_hotkeys(self.launch_config.hotkeys.with_llm(value))
 
     @property
+    def rsvp_key_combination(self) -> str:
+        """Возвращает RSVP-хоткей во внутреннем формате."""
+        return self.reader_preferences.rsvp_hotkey
+
+    @rsvp_key_combination.setter
+    def rsvp_key_combination(self, value: str) -> None:
+        self.reader_preferences = self.reader_preferences.with_rsvp_hotkey(value)
+
+    @property
+    def tts_key_combination(self) -> str:
+        """Возвращает TTS-хоткей во внутреннем формате."""
+        return self.reader_preferences.tts_hotkey
+
+    @tts_key_combination.setter
+    def tts_key_combination(self, value: str) -> None:
+        self.reader_preferences = self.reader_preferences.with_tts_hotkey(value)
+
+    @property
+    def reader_rsvp_wpm(self) -> int:
+        """Возвращает скорость RSVP в словах в минуту."""
+        return self.reader_preferences.rsvp_config.wpm
+
+    @property
+    def reader_rsvp_chunk_size(self) -> int:
+        """Возвращает размер RSVP chunk-а."""
+        return self.reader_preferences.rsvp_config.chunk_size
+
+    @property
+    def reader_rsvp_font_size(self) -> int:
+        """Возвращает размер шрифта RSVP."""
+        return self.reader_preferences.rsvp_config.font_size
+
+    @property
+    def reader_tts_rate_multiplier(self) -> float:
+        """Возвращает множитель скорости TTS."""
+        return self.reader_preferences.tts_config.rate_multiplier
+
+    @property
+    def reader_tts_voice_id(self) -> str | None:
+        """Возвращает идентификатор выбранного TTS-голоса."""
+        return self.reader_preferences.tts_config.voice_id
+
+    @property
+    def reader_tts_max_minutes(self) -> int:
+        """Возвращает лимит длительности TTS в минутах; 0 означает без лимита."""
+        return self.reader_preferences.tts_config.max_minutes
+
+    @property
+    def reader_tts_engine(self) -> str:
+        """Возвращает выбранный backend TTS."""
+        return self.reader_preferences.tts_config.engine
+
+    @property
+    def reader_tts_mlx_model(self) -> str:
+        """Возвращает выбранную MLX TTS-модель."""
+        return self.reader_preferences.tts_config.mlx_model
+
+    @property
+    def reader_tts_mlx_voice_description(self) -> str:
+        """Возвращает описание голоса для MLX VoiceDesign."""
+        return self.reader_preferences.tts_config.mlx_voice_description
+
+    @property
+    def reader_preprocess_enabled(self) -> bool:
+        """Возвращает флаг LLM-предобработки reader."""
+        return self.reader_preferences.preprocess_enabled
+
+    @property
     def llm_downloading(self) -> bool:
         """Возвращает флаг активной загрузки LLM-модели."""
         return self._llm_downloading
@@ -1046,6 +1213,8 @@ class DictationApp:
         """Сохраняет текущие хоткеи в NSUserDefaults."""
         self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self.launch_config.hotkeys.primary_store_value)
         self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self.launch_config.hotkeys.secondary_store_value)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_RSVP_HOTKEY, self.reader_preferences.rsvp_hotkey)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_HOTKEY, self.reader_preferences.tts_hotkey)
 
     def _active_key_combinations(self) -> list[str]:
         """Возвращает все включённые комбинации для основного listener-а."""
@@ -1062,11 +1231,20 @@ class DictationApp:
         self._notify_subscribers()
         if self._can_update_hotkeys_runtime():
             listener = self.key_listener
-            listener.update_hotkeys(
-                self.primary_key_combination,
-                self.secondary_key_combination,
-                self.llm_key_combination,
-            )
+            try:
+                listener.update_hotkeys(
+                    self.primary_key_combination,
+                    self.secondary_key_combination,
+                    self.llm_key_combination,
+                    self.rsvp_key_combination,
+                    self.tts_key_combination,
+                )
+            except TypeError:
+                listener.update_hotkeys(
+                    self.primary_key_combination,
+                    self.secondary_key_combination,
+                    self.llm_key_combination,
+                )
             return True
         return False
 
@@ -1168,6 +1346,14 @@ class DictationApp:
         """Открывает диалог и меняет LLM-хоткей."""
         self.hotkey_management_use_cases.change_llm_hotkey()
 
+    def change_rsvp_hotkey(self) -> None:
+        """Открывает диалог и меняет RSVP-хоткей."""
+        self.hotkey_management_use_cases.change_rsvp_hotkey()
+
+    def change_tts_hotkey(self) -> None:
+        """Открывает диалог и меняет TTS-хоткей."""
+        self.hotkey_management_use_cases.change_tts_hotkey()
+
     def request_accessibility_access(self) -> None:
         """Повторно запрашивает Accessibility."""
         self.hotkey_management_use_cases.request_accessibility_access()
@@ -1207,6 +1393,7 @@ class DictationApp:
     def change_performance_mode(self, performance_mode: object) -> None:
         """Меняет баланс между задержкой и ресурсами."""
         self.settings_use_cases.change_performance_mode(performance_mode)
+        self.tts_speaker.set_keep_model_loaded(self.performance_mode == Config.PERFORMANCE_MODE_FAST)
 
     def toggle_private_mode(self) -> None:
         """Переключает private mode для истории."""
@@ -1272,6 +1459,8 @@ class DictationApp:
 
     def handle_escape_keycode(self, keycode: int) -> None:
         """Отменяет запись при нажатии Escape."""
+        if self.handle_reader_key("esc"):
+            return
         self.recording_use_cases.handle_escape_keycode(keycode)
 
     def cancel_recording(self) -> None:
@@ -1293,3 +1482,229 @@ class DictationApp:
     def change_llm_model(self, model_name: str) -> None:
         """Переключает LLM-модель."""
         self.settings_use_cases.change_llm_model(model_name)
+        self.reader_preferences = self.reader_preferences.with_preprocess_model(model_name)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_PREPROCESS_MODEL, self.reader_preferences.preprocess_model)
+
+    def change_reader_rsvp_wpm(self, wpm: int) -> None:
+        """Меняет скорость RSVP."""
+        self.reader_preferences = self.reader_preferences.with_rsvp_config(
+            RSVPConfig.from_values(
+                wpm=wpm,
+                chunk_size=self.reader_rsvp_chunk_size,
+                font_size=self.reader_rsvp_font_size,
+            )
+        )
+        self.settings_store.save_int(Config.DEFAULTS_KEY_READER_RSVP_WPM, self.reader_rsvp_wpm)
+        LOGGER.info("📖 RSVP скорость сохранена: %d wpm", self.reader_rsvp_wpm)
+        self._notify_subscribers()
+
+    def change_reader_rsvp_chunk_size(self, chunk_size: int) -> None:
+        """Меняет размер chunk-а RSVP."""
+        self.reader_preferences = self.reader_preferences.with_rsvp_config(
+            RSVPConfig.from_values(
+                wpm=self.reader_rsvp_wpm,
+                chunk_size=chunk_size,
+                font_size=self.reader_rsvp_font_size,
+            )
+        )
+        self.settings_store.save_int(Config.DEFAULTS_KEY_READER_RSVP_CHUNK_SIZE, self.reader_rsvp_chunk_size)
+        LOGGER.info("📖 RSVP chunk сохранён: %d", self.reader_rsvp_chunk_size)
+        self._notify_subscribers()
+
+    def change_reader_rsvp_font_size(self, font_size: int) -> None:
+        """Меняет размер шрифта RSVP."""
+        self.reader_preferences = self.reader_preferences.with_rsvp_config(
+            RSVPConfig.from_values(
+                wpm=self.reader_rsvp_wpm,
+                chunk_size=self.reader_rsvp_chunk_size,
+                font_size=font_size,
+            )
+        )
+        self.settings_store.save_int(Config.DEFAULTS_KEY_READER_RSVP_FONT_SIZE, self.reader_rsvp_font_size)
+        LOGGER.info("📖 RSVP размер шрифта сохранён: %d", self.reader_rsvp_font_size)
+        self._notify_subscribers()
+
+    def change_reader_tts_rate_multiplier(self, rate_multiplier: float) -> None:
+        """Меняет множитель скорости TTS."""
+        self.reader_preferences = self.reader_preferences.with_tts_config(
+            TTSConfig.from_values(
+                rate_multiplier=rate_multiplier,
+                voice_id=self.reader_tts_voice_id,
+                max_minutes=self.reader_tts_max_minutes,
+                engine=self.reader_tts_engine,
+                mlx_model=self.reader_tts_mlx_model,
+                mlx_voice_description=self.reader_tts_mlx_voice_description,
+            )
+        )
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_RATE_MULTIPLIER, self.reader_tts_rate_multiplier)
+        LOGGER.info("🔈 TTS скорость сохранена: %.2f×", self.reader_tts_rate_multiplier)
+        self._notify_subscribers()
+
+    def change_reader_tts_voice(self, voice_id: str | None) -> None:
+        """Меняет системный голос TTS."""
+        self.reader_preferences = self.reader_preferences.with_tts_config(
+            TTSConfig.from_values(
+                rate_multiplier=self.reader_tts_rate_multiplier,
+                voice_id=voice_id,
+                max_minutes=self.reader_tts_max_minutes,
+                engine=self.reader_tts_engine,
+                mlx_model=self.reader_tts_mlx_model,
+                mlx_voice_description=self.reader_tts_mlx_voice_description,
+            )
+        )
+        if self.reader_tts_voice_id is None:
+            self.settings_store.remove_key(Config.DEFAULTS_KEY_READER_TTS_VOICE_ID)
+        else:
+            self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_VOICE_ID, self.reader_tts_voice_id)
+        LOGGER.info("🔈 TTS голос сохранён: %s", self.reader_tts_voice_id or "auto")
+        self._notify_subscribers()
+
+    def change_reader_tts_max_minutes(self, max_minutes: int) -> None:
+        """Меняет максимальную длительность TTS."""
+        self.reader_preferences = self.reader_preferences.with_tts_config(
+            TTSConfig.from_values(
+                rate_multiplier=self.reader_tts_rate_multiplier,
+                voice_id=self.reader_tts_voice_id,
+                max_minutes=max_minutes,
+                engine=self.reader_tts_engine,
+                mlx_model=self.reader_tts_mlx_model,
+                mlx_voice_description=self.reader_tts_mlx_voice_description,
+            )
+        )
+        self.settings_store.save_int(Config.DEFAULTS_KEY_READER_TTS_MAX_MINUTES, self.reader_tts_max_minutes)
+        LOGGER.info("🔈 TTS лимит длительности сохранён: %s", self.reader_tts_max_minutes or "без лимита")
+        self._notify_subscribers()
+
+    def change_reader_tts_engine(self, engine: str) -> None:
+        """Меняет backend TTS."""
+        self.reader_preferences = self.reader_preferences.with_tts_config(
+            TTSConfig.from_values(
+                rate_multiplier=self.reader_tts_rate_multiplier,
+                voice_id=self.reader_tts_voice_id,
+                max_minutes=self.reader_tts_max_minutes,
+                engine=engine,
+                mlx_model=self.reader_tts_mlx_model,
+                mlx_voice_description=self.reader_tts_mlx_voice_description,
+            )
+        )
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_ENGINE, self.reader_tts_engine)
+        LOGGER.info("🔈 TTS backend сохранён: %s", self.reader_tts_engine)
+        self._notify_subscribers()
+
+    def change_reader_tts_mlx_model(self, model_name: str) -> None:
+        """Меняет MLX TTS-модель."""
+        self.reader_preferences = self.reader_preferences.with_tts_config(
+            TTSConfig.from_values(
+                rate_multiplier=self.reader_tts_rate_multiplier,
+                voice_id=self.reader_tts_voice_id,
+                max_minutes=self.reader_tts_max_minutes,
+                engine=self.reader_tts_engine,
+                mlx_model=model_name,
+                mlx_voice_description=self.reader_tts_mlx_voice_description,
+            )
+        )
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_MLX_MODEL, self.reader_tts_mlx_model)
+        LOGGER.info("🔈 MLX TTS-модель сохранена: %s", self.reader_tts_mlx_model)
+        self._notify_subscribers()
+
+    def change_reader_tts_mlx_voice_description(self, description: str) -> None:
+        """Меняет описание голоса для MLX VoiceDesign."""
+        self.reader_preferences = self.reader_preferences.with_tts_config(
+            TTSConfig.from_values(
+                rate_multiplier=self.reader_tts_rate_multiplier,
+                voice_id=self.reader_tts_voice_id,
+                max_minutes=self.reader_tts_max_minutes,
+                engine=self.reader_tts_engine,
+                mlx_model=self.reader_tts_mlx_model,
+                mlx_voice_description=description,
+            )
+        )
+        self.settings_store.save_str(
+            Config.DEFAULTS_KEY_READER_TTS_MLX_VOICE_DESCRIPTION,
+            self.reader_tts_mlx_voice_description,
+        )
+        LOGGER.info("🔈 Описание MLX-голоса сохранено")
+        self._notify_subscribers()
+
+    def toggle_reader_preprocess(self) -> None:
+        """Переключает LLM-предобработку reader."""
+        self.reader_preferences = self.reader_preferences.with_preprocess_enabled(not self.reader_preprocess_enabled)
+        self.settings_store.save_bool(Config.DEFAULTS_KEY_READER_PREPROCESS_ENABLED, self.reader_preprocess_enabled)
+        LOGGER.info(
+            "🤖 Reader LLM-предобработка: %s",
+            "включена" if self.reader_preprocess_enabled else "выключена",
+        )
+        self._notify_subscribers()
+
+    def reader_available_tts_voices(self) -> list[TTSVoice]:
+        """Возвращает доступные системные голоса TTS."""
+        try:
+            return self.tts_speaker.available_voices()
+        except Exception:
+            LOGGER.exception("🔈 Не удалось получить список системных голосов")
+            return []
+
+    def toggle_rsvp(self) -> None:
+        """Запускает или закрывает RSVP-сценарий reader."""
+        if self.rsvp_display.is_running():
+            self.rsvp_display.close()
+            return
+        self._start_reader_worker(
+            "rsvp",
+            lambda: self.play_rsvp_use_case.play(
+                self.reader_preferences.rsvp_config,
+                preprocess_enabled=self.reader_preprocess_enabled,
+            ),
+        )
+
+    def toggle_tts(self) -> None:
+        """Запускает или останавливает TTS-сценарий reader."""
+        if self.tts_speaker.is_speaking():
+            self.tts_speaker.stop()
+            return
+        self._start_reader_worker(
+            "tts",
+            lambda: self.play_tts_use_case.play(
+                self.reader_preferences.tts_config,
+                preprocess_enabled=self.reader_preprocess_enabled,
+            ),
+        )
+
+    def _start_reader_worker(self, label: str, target: Callable[[], None]) -> None:
+        """Запускает reader-сценарий в background thread."""
+        if self._reader_worker is not None and self._reader_worker.is_alive():
+            self.system_integration_service.notify("MLX Whisper Dictation", "Reader уже обрабатывает текст.")
+            return
+
+        def run() -> None:
+            try:
+                LOGGER.info("📖 Reader worker стартовал: %s", label)
+                self.state = Config.STATUS_LLM_PROCESSING
+                self._notify_subscribers()
+                target()
+            except Exception:
+                LOGGER.exception("❌ Ошибка reader-сценария: %s", label)
+                self.system_integration_service.notify("MLX Whisper Dictation", "Ошибка reader. Подробности в логе.")
+            finally:
+                if not self.started and self.state == Config.STATUS_LLM_PROCESSING:
+                    self.state = Config.STATUS_IDLE
+                    self._notify_subscribers()
+                LOGGER.info("📖 Reader worker завершён: %s", label)
+
+        thread = threading.Thread(target=run, daemon=True)
+        self._reader_worker = thread
+        thread.start()
+
+    def is_reader_active(self) -> bool:
+        """Сообщает, активен ли RSVP/TTS reader или его worker."""
+        worker_active = self._reader_worker is not None and self._reader_worker.is_alive()
+        return bool(worker_active or self.rsvp_display.is_running() or self.tts_speaker.is_speaking())
+
+    def handle_reader_key(self, key_name: str) -> bool:
+        """Обрабатывает клавиши управления reader-сценариями."""
+        if self.rsvp_display.is_running() and self.rsvp_display.handle_key(key_name):
+            return True
+        if key_name == "esc" and self.tts_speaker.is_speaking():
+            self.tts_speaker.stop()
+            return True
+        return False

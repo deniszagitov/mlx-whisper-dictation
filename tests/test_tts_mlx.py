@@ -1,0 +1,178 @@
+"""Тесты MLX TTS backend-а без реальной модели."""
+
+from types import SimpleNamespace
+
+import numpy as np
+from src.domain.reader_constants import TTS_ENGINE_MLX
+from src.domain.reader_types import TTSConfig
+from src.infrastructure.tts_mlx import MlxStreamingTTSController
+from src.infrastructure.tts_router import ReaderTTSRouter
+
+
+class FakeModel:
+    """Фейковая потоковая TTS-модель."""
+
+    sample_rate = 24_000
+
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        yield SimpleNamespace(audio=np.array([0.1, 0.2], dtype=np.float32))
+        yield SimpleNamespace(audio=np.array([0.3], dtype=np.float32))
+
+
+class FakePlayer:
+    """Фейковый потоковый audio player."""
+
+    def __init__(self, sample_rate):
+        self.sample_rate = sample_rate
+        self.chunks = []
+        self.playing = False
+        self.started = 0
+        self.stopped = 0
+        self.flushed = 0
+
+    def queue_audio(self, samples):
+        self.chunks.append(np.asarray(samples))
+
+    def buffered_samples(self):
+        return sum(len(chunk) for chunk in self.chunks)
+
+    def start_stream(self):
+        self.started += 1
+        self.playing = True
+
+    def stop(self):
+        self.stopped += 1
+        self.playing = False
+
+    def flush(self):
+        self.flushed += 1
+        self.chunks.clear()
+        self.playing = False
+
+
+class FakeMx:
+    """Фейковый MLX runtime."""
+
+    def __init__(self):
+        self.clear_calls = 0
+
+    def clear_cache(self):
+        self.clear_calls += 1
+
+
+class FakeSpeaker:
+    """Фейковый TTSPort для router-тестов."""
+
+    def __init__(self):
+        self.spoken = []
+        self.stopped = 0
+        self.keep_loaded = None
+        self.speaking = False
+
+    def speak(self, text, config):
+        self.spoken.append((text, config))
+        self.speaking = True
+
+    def stop(self):
+        self.stopped += 1
+        self.speaking = False
+
+    def is_speaking(self):
+        return self.speaking
+
+    def available_voices(self):
+        return ["голос"]
+
+    def set_keep_model_loaded(self, enabled):
+        self.keep_loaded = enabled
+
+
+def test_mlx_streaming_tts_generates_and_queues_audio_chunks():
+    model = FakeModel()
+    players = []
+    mx = FakeMx()
+
+    def create_player(sample_rate):
+        player = FakePlayer(sample_rate)
+        players.append(player)
+        return player
+
+    controller = MlxStreamingTTSController(
+        model_loader=lambda _model_name: model,
+        player_factory=create_player,
+        mx_module=mx,
+    )
+
+    controller.speak(
+        "Привет",
+        TTSConfig.from_values(
+            rate_multiplier=2.35,
+            voice_id=None,
+            engine=TTS_ENGINE_MLX,
+            mlx_model="mlx-community/Qwen3-TTS-test",
+            mlx_voice_description="Спокойный голос",
+        ),
+    )
+
+    assert model.calls[0]["stream"] is True
+    assert model.calls[0]["streaming_interval"] == 0.32
+    assert model.calls[0]["instruct"] == "Спокойный голос"
+    assert model.calls[0]["speed"] == 2.35
+    np.testing.assert_allclose(players[0].chunks[0], np.array([0.1, 0.2], dtype=np.float32))
+    np.testing.assert_allclose(players[0].chunks[1], np.array([0.3], dtype=np.float32))
+    assert players[0].started == 1
+    assert players[0].stopped == 1
+    assert mx.clear_calls >= 1
+
+
+def test_mlx_streaming_tts_keeps_model_only_in_fast_mode():
+    loader_calls = []
+    model = FakeModel()
+
+    def load_model(model_name):
+        loader_calls.append(model_name)
+        return model
+
+    controller = MlxStreamingTTSController(
+        model_loader=load_model,
+        player_factory=FakePlayer,
+        mx_module=FakeMx(),
+    )
+    config = TTSConfig.from_values(
+        rate_multiplier=1,
+        voice_id=None,
+        engine=TTS_ENGINE_MLX,
+        mlx_model="model",
+        mlx_voice_description="голос",
+    )
+
+    controller.set_keep_model_loaded(True)
+    controller.speak("раз", config)
+    controller.speak("два", config)
+    assert loader_calls == ["model"]
+
+    controller.set_keep_model_loaded(False)
+    controller.speak("три", config)
+    assert loader_calls == ["model", "model"]
+
+
+def test_tts_router_uses_mlx_backend_when_selected():
+    apple = FakeSpeaker()
+    mlx = FakeSpeaker()
+    router = ReaderTTSRouter(apple_speaker=apple, mlx_speaker=mlx)
+    config = TTSConfig.from_values(rate_multiplier=1, voice_id=None, engine=TTS_ENGINE_MLX)
+
+    router.speak("текст", config)
+    router.set_keep_model_loaded(True)
+    router.stop()
+
+    assert apple.spoken == []
+    assert mlx.spoken == [("текст", config)]
+    assert apple.keep_loaded is True
+    assert mlx.keep_loaded is True
+    assert apple.stopped == 1
+    assert mlx.stopped == 1

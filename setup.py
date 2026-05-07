@@ -78,6 +78,7 @@ _PY2APP_PACKAGES = [
     "pyaudio",
     "pynput",
     "rumps",
+    "sounddevice",
     "soxr",
     "src",
     "tqdm",
@@ -117,6 +118,7 @@ OPTIONS = {
     "packages": _PY2APP_PACKAGES,
     "includes": [
         "AppKit",
+        "AVFoundation",
         "Foundation",
         "PyObjCTools",
         "Quartz",

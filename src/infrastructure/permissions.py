@@ -126,8 +126,8 @@ def notify_user(title: str, message: str) -> None:
     """
     try:
         rumps.notification(title, "", message)
-    except Exception:
-        LOGGER.exception("❌ Не удалось показать системное уведомление macOS")
+    except Exception as exc:
+        LOGGER.log(logging.ERROR, "❌ Не удалось показать системное уведомление macOS: %s", exc)
 
 
 def open_system_settings(url: str) -> bool:

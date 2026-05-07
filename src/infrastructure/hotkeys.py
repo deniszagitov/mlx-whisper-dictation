@@ -54,6 +54,10 @@ NAMED_KEYCODES_MAP = {
     49: "space",
     51: "backspace",
     _KEYCODE_ESCAPE: "esc",
+    123: "left",
+    124: "right",
+    125: "down",
+    126: "up",
 }
 
 try:
@@ -218,10 +222,13 @@ class HotkeyDispatcher:
         self._tap_source: Any = None
         self._tap_run_loop: Any = None
         self._escape_key_up_suppressed = False
+        self._pending_modifier_only_binding: _HotkeyBinding | None = None
         self.update_hotkeys(
             getattr(app, "primary_key_combination", ""),
             getattr(app, "secondary_key_combination", ""),
             getattr(app, "llm_key_combination", ""),
+            getattr(app, "rsvp_key_combination", ""),
+            getattr(app, "tts_key_combination", ""),
         )
 
     def start(self) -> None:
@@ -289,7 +296,7 @@ class HotkeyDispatcher:
             self.stop()
             self.start()
 
-    def update_hotkeys(self, primary: str, secondary: str, llm: str) -> None:
+    def update_hotkeys(self, primary: str, secondary: str, llm: str, rsvp: str = "", tts: str = "") -> None:
         """Обновляет набор активных хоткеев без пересоздания dispatcher-а."""
         self._bindings = []
         if primary:
@@ -298,6 +305,10 @@ class HotkeyDispatcher:
             self._bindings.append(_HotkeyBinding.from_combination("secondary", secondary, self.app.toggle))
         if llm:
             self._bindings.append(_HotkeyBinding.from_combination("llm", llm, self.app.toggle_llm))
+        if rsvp:
+            self._bindings.append(_HotkeyBinding.from_combination("rsvp", rsvp, self.app.toggle_rsvp))
+        if tts:
+            self._bindings.append(_HotkeyBinding.from_combination("tts", tts, self.app.toggle_tts))
         self._bindings.sort(
             key=lambda binding: (
                 len(binding.required_modifiers),
@@ -311,9 +322,25 @@ class HotkeyDispatcher:
     def _reset_runtime_state(self) -> None:
         self.pressed_modifier_names.clear()
         self._escape_key_up_suppressed = False
+        self._pending_modifier_only_binding = None
         for binding in self._bindings:
             binding.triggered = False
             binding.suppress_key_up = False
+
+    def _has_regular_extension(self, modifier_binding: _HotkeyBinding) -> bool:
+        """Проверяет, есть ли обычный хоткей с теми же модификаторами."""
+        if not modifier_binding.modifier_only:
+            return False
+        return any(
+            not binding.modifier_only
+            and binding.required_key is not None
+            and len(binding.required_modifiers) == len(modifier_binding.required_modifiers)
+            and all(
+                any(hotkey_name_matches(expected, actual) for actual in binding.required_modifiers)
+                for expected in modifier_binding.required_modifiers
+            )
+            for binding in self._bindings
+        )
 
     def _required_modifiers_are_pressed(self, required_modifiers: tuple[str, ...]) -> bool:
         return all(
@@ -359,6 +386,10 @@ class HotkeyDispatcher:
             if binding.modifier_only:
                 if required_pressed:
                     if not binding.triggered:
+                        if self._has_regular_extension(binding):
+                            self._pending_modifier_only_binding = binding
+                            should_suppress = True
+                            continue
                         LOGGER.info("⌨️ Сработал глобальный хоткей: %s", binding.key_combination)
                         binding.triggered = True
                         binding.callback()
@@ -369,6 +400,12 @@ class HotkeyDispatcher:
                         for expected_name in binding.required_modifiers
                     ):
                         should_suppress = True
+                    elif self._pending_modifier_only_binding is binding:
+                        LOGGER.info("⌨️ Сработал modifier-only хоткей после отпускания: %s", binding.key_combination)
+                        binding.triggered = True
+                        binding.callback()
+                        should_suppress = True
+                        self._pending_modifier_only_binding = None
                     binding.triggered = False
             elif not required_pressed:
                 binding.triggered = False
@@ -378,7 +415,17 @@ class HotkeyDispatcher:
     def _handle_key_down(self, event: Any) -> bool:
         self._sync_modifier_state_from_event(event)
         event_key_name = _event_key_name_static(event)
-        if event_key_name == "esc" and getattr(self.app, "started", False):
+        reader_key_handler = getattr(self.app, "handle_reader_key", None)
+        if (
+            callable(reader_key_handler)
+            and event_key_name in {"space", "esc", "left", "right", "up", "down"}
+            and reader_key_handler(event_key_name)
+        ):
+            if event_key_name == "esc":
+                self._escape_key_up_suppressed = True
+            return True
+
+        if event_key_name == "esc" and (getattr(self.app, "started", False) or getattr(self.app, "is_reader_active", lambda: False)()):
             LOGGER.info("⌨️ Escape перехвачен dispatcher-ом — отменяю запись")
             self._escape_key_up_suppressed = True
             self.app.handle_escape_keycode(_KEYCODE_ESCAPE)
@@ -391,6 +438,7 @@ class HotkeyDispatcher:
                 binding.triggered = False
                 continue
             if hotkey_name_matches(binding.required_key, event_key_name) and not binding.triggered:
+                self._pending_modifier_only_binding = None
                 LOGGER.info("⌨️ Сработал глобальный хоткей: %s", binding.key_combination)
                 binding.triggered = True
                 binding.suppress_key_up = True
@@ -398,6 +446,8 @@ class HotkeyDispatcher:
                 return True
             if event_key_name != binding.required_key:
                 binding.triggered = False
+
+        self._pending_modifier_only_binding = None
 
         if getattr(self.app, "state", None) != Config.STATUS_TRANSCRIBING:
             transcriber = getattr(self.app, "transcriber", None)

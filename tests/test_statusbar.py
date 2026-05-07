@@ -911,6 +911,97 @@ class TestStatusBarSetState:
 class TestStatusBarMenuSelections:
     """Тесты выбора параметров через пункты меню."""
 
+    def test_prompt_text_uses_editable_appkit_text_field(self, monkeypatch):
+        """Диалог ручного ввода должен создавать редактируемое однострочное поле AppKit."""
+        calls = {}
+
+        class FakeApplication:
+            @staticmethod
+            def sharedApplication():
+                class App:
+                    def activateIgnoringOtherApps_(self, enabled):
+                        calls["activated"] = enabled
+
+                return App()
+
+        class FakeField:
+            @classmethod
+            def alloc(cls):
+                return cls()
+
+            def initWithFrame_(self, frame):
+                calls["frame"] = frame
+                self.value = ""
+                return self
+
+            def setStringValue_(self, value):
+                self.value = value
+
+            def setEditable_(self, enabled):
+                calls["editable"] = enabled
+
+            def setSelectable_(self, enabled):
+                calls["selectable"] = enabled
+
+            def setBezeled_(self, enabled):
+                calls["bezeled"] = enabled
+
+            def setDrawsBackground_(self, enabled):
+                calls["background"] = enabled
+
+            def selectText_(self, _sender):
+                calls["selected"] = True
+
+            def stringValue(self):
+                return "2.35"
+
+        class FakeWindow:
+            def setInitialFirstResponder_(self, responder):
+                calls["first_responder"] = responder
+
+        class FakeAlert:
+            @classmethod
+            def alloc(cls):
+                return cls()
+
+            def init(self):
+                self.buttons = []
+                return self
+
+            def setMessageText_(self, value):
+                calls["title"] = value
+
+            def setInformativeText_(self, value):
+                calls["message"] = value
+
+            def addButtonWithTitle_(self, value):
+                self.buttons.append(value)
+
+            def setAccessoryView_(self, value):
+                calls["accessory"] = value
+
+            def window(self):
+                return FakeWindow()
+
+            def runModal(self):
+                calls["buttons"] = list(self.buttons)
+                return 1000
+
+        monkeypatch.setattr(ui_module.AppKit, "NSApplication", FakeApplication)
+        monkeypatch.setattr(ui_module.AppKit, "NSTextField", FakeField)
+        monkeypatch.setattr(ui_module.AppKit, "NSAlert", FakeAlert)
+        monkeypatch.setattr(ui_module.AppKit, "NSAlertFirstButtonReturn", 1000)
+        monkeypatch.setattr(ui_module.AppKit, "NSMakeRect", lambda *args: args)
+
+        result = ui_module.prompt_text("Название профиля", "Введите название.", default_text="Звонки")
+
+        assert result == "2.35"
+        assert calls["activated"] is True
+        assert calls["editable"] is True
+        assert calls["selectable"] is True
+        assert calls["buttons"] == ["Сохранить", "Отмена"]
+        assert calls["accessory"] is calls["first_responder"]
+
     def test_change_max_time_from_menu_updates_state(self, make_app):
         """Выбор лимита записи из меню должен обновлять max_time и заголовок."""
         app, *_ = make_app(languages=["ru"], max_time=30)
@@ -1014,6 +1105,64 @@ class TestStatusBarMenuSelections:
         assert saved_profiles[-1][0]["remove_trailing_period_for_single_sentence"] is False
         assert saved_profiles[-1][0]["restore_trailing_period_on_next_dictation"] is False
         assert saved_profiles[-1][0]["llm_clipboard"] is False
+
+    def test_reader_tts_rate_multiplier_changes_with_plus_minus_items(self, make_app, monkeypatch):
+        """Скорость TTS меняется только пунктами плюс/минус без ручного ввода."""
+        saved_values = []
+        app, _recorder, _transcriber = make_app(languages=["ru"], max_time=30)
+        monkeypatch.setattr(app.app.settings_store, "save_str", lambda key, value: saved_values.append((key, value)))
+
+        assert app.reader_tts_rate_multiplier == pytest.approx(1.0)
+        assert app.reader_tts_rate_menu.title == "Скорость речи: 1×"
+
+        app.increase_reader_tts_rate_multiplier(app.reader_tts_rate_up_item)
+        assert app.reader_tts_rate_multiplier == pytest.approx(1.1)
+        assert (Config.DEFAULTS_KEY_READER_TTS_RATE_MULTIPLIER, 1.1) in saved_values
+        assert app.reader_tts_rate_value_item.title == "Скорость: 1.1×"
+
+        app.decrease_reader_tts_rate_multiplier(app.reader_tts_rate_down_item)
+        assert app.reader_tts_rate_multiplier == pytest.approx(1.0)
+        assert saved_values[-1] == (Config.DEFAULTS_KEY_READER_TTS_RATE_MULTIPLIER, 1.0)
+        with pytest.raises(KeyError):
+            app.reader_tts_rate_menu["Задать точно..."]
+
+    def test_change_reader_tts_engine_updates_speaker_backend(self, make_app, monkeypatch):
+        """Speaker backend можно переключить на MLX Qwen3-TTS."""
+        saved_values = []
+        app, _recorder, _transcriber = make_app(languages=["ru"], max_time=30)
+        monkeypatch.setattr(app.app.settings_store, "save_str", lambda key, value: saved_values.append((key, value)))
+
+        app.change_reader_tts_engine(app.reader_tts_engine_menu["MLX Qwen3-TTS"])
+
+        assert app.reader_tts_engine == "mlx"
+        assert (Config.DEFAULTS_KEY_READER_TTS_ENGINE, "mlx") in saved_values
+        assert app.reader_tts_engine_menu.title == "Backend: MLX Qwen3-TTS"
+        assert app.reader_tts_engine_menu["MLX Qwen3-TTS"].state == 1
+
+    def test_prompt_reader_tts_mlx_voice_description_persists_value(self, make_app, monkeypatch):
+        """Описание голоса MLX VoiceDesign сохраняется через меню."""
+        saved_values = []
+        monkeypatch.setattr(ui_module, "prompt_text", lambda *args, **kwargs: "Низкий спокойный голос")
+        app, _recorder, _transcriber = make_app(languages=["ru"], max_time=30)
+        monkeypatch.setattr(app.app.settings_store, "save_str", lambda key, value: saved_values.append((key, value)))
+
+        app.prompt_reader_tts_mlx_voice_description(None)
+
+        assert app.reader_tts_mlx_voice_description == "Низкий спокойный голос"
+        assert (Config.DEFAULTS_KEY_READER_TTS_MLX_VOICE_DESCRIPTION, "Низкий спокойный голос") in saved_values
+
+    def test_prompt_reader_tts_mlx_model_accepts_custom_streaming_model(self, make_app, monkeypatch):
+        """MLX TTS-модель можно задать точной строкой."""
+        saved_values = []
+        monkeypatch.setattr(ui_module, "prompt_text", lambda *args, **kwargs: "mlx-community/custom-streaming-tts")
+        app, _recorder, _transcriber = make_app(languages=["ru"], max_time=30)
+        monkeypatch.setattr(app.app.settings_store, "save_str", lambda key, value: saved_values.append((key, value)))
+
+        app.prompt_reader_tts_mlx_model(None)
+
+        assert app.reader_tts_mlx_model == "mlx-community/custom-streaming-tts"
+        assert (Config.DEFAULTS_KEY_READER_TTS_MLX_MODEL, "mlx-community/custom-streaming-tts") in saved_values
+        assert app.reader_tts_mlx_model_menu["Задать модель..."].state == 1
 
     def test_apply_microphone_profile_updates_basic_settings(self, patched_app_module, monkeypatch):
         """Профиль микрофона должен применять устройство и базовые настройки."""

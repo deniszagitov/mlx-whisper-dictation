@@ -13,6 +13,7 @@ from typing import Any, cast
 import Quartz  # noqa: F401
 from src.adapters.hotkey_dialog import capture_hotkey_combination
 from src.adapters.overlay import RecordingOverlay
+from src.adapters.rsvp_overlay import RSVPOverlay
 from src.adapters.ui import StatusBarApp
 from src.app import (  # noqa: F401
     AppSnapshot,
@@ -47,6 +48,7 @@ from src.domain.types import (  # noqa: F401
 from src.infrastructure.asr_runtime import run_asr_transcription
 from src.infrastructure.audio_preprocessing import preprocess_recorded_audio, resample_to_16k  # noqa: F401
 from src.infrastructure.audio_runtime import Recorder, list_input_devices
+from src.infrastructure.clipboard_reader import PasteboardReader
 from src.infrastructure.hotkeys import (
     MODIFIER_FLAG_MASKS,  # noqa: F401
     MODIFIER_KEYCODES_MAP,  # noqa: F401
@@ -102,6 +104,9 @@ from src.infrastructure.text_input import (
     send_cmd_v,
     type_text_via_cgevent,
 )
+from src.infrastructure.tts_macos import MacOSTTSController
+from src.infrastructure.tts_mlx import MlxStreamingTTSController
+from src.infrastructure.tts_router import ReaderTTSRouter
 from src.use_cases.transcription import TranscriptionUseCases as SpeechTranscriber
 
 defaults = Defaults()
@@ -247,6 +252,7 @@ def _log_startup_configuration(args: LaunchConfig) -> None:
         LOGGER.info("Дополнительный хоткей: %s", args.secondary_key_combination)
     if args.llm_key_combination:
         LOGGER.info("LLM-хоткей: %s", args.llm_key_combination)
+    LOGGER.info("Reader RSVP/TTS хоткеи читаются из NSUserDefaults с безопасными дефолтами")
 
 
 def main() -> None:
@@ -340,6 +346,12 @@ def main() -> None:
         create_listener=_create_hotkey_dispatcher,
     )
     recording_overlay = RecordingOverlay()
+    reader_clipboard = PasteboardReader()
+    rsvp_display = RSVPOverlay()
+    tts_speaker = ReaderTTSRouter(
+        apple_speaker=MacOSTTSController(),
+        mlx_speaker=MlxStreamingTTSController(),
+    )
 
     app_controller = DictationApp(
         recorder,
@@ -357,6 +369,9 @@ def main() -> None:
         hotkey_capture_service=hotkey_capture_service,
         hotkey_listener_factory=hotkey_listener_factory,
         recording_overlay=recording_overlay,
+        reader_clipboard=reader_clipboard,
+        rsvp_display=rsvp_display,
+        tts_speaker=tts_speaker,
         settings_store=defaults,
     )
     app = StatusBarApp(cast("Any", app_controller))

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .reader_types import TTSVoice
     from .types import (
         AppSnapshot,
         AudioDeviceInfo,
@@ -37,6 +38,8 @@ class StatusBarControllerProtocol(Protocol):
     hotkey_status: str
     secondary_hotkey_status: str
     llm_hotkey_status: str
+    rsvp_hotkey_status: str
+    tts_hotkey_status: str
     llm_prompt_name: str
     performance_mode: str
     max_time: float | None
@@ -71,8 +74,20 @@ class StatusBarControllerProtocol(Protocol):
     primary_key_combination: str
     secondary_key_combination: str
     llm_key_combination: str
+    rsvp_key_combination: str
+    tts_key_combination: str
     llm_model_name: str
     llm_model_options: list[str]
+    reader_rsvp_wpm: int
+    reader_rsvp_chunk_size: int
+    reader_rsvp_font_size: int
+    reader_tts_rate_multiplier: float
+    reader_tts_voice_id: str | None
+    reader_tts_max_minutes: int
+    reader_tts_engine: str
+    reader_tts_mlx_model: str
+    reader_tts_mlx_voice_description: str
+    reader_preprocess_enabled: bool
 
     def subscribe(self, callback: Callable[[AppSnapshot], None]) -> None:
         """Подписывает UI на обновления snapshot."""
@@ -146,6 +161,14 @@ class StatusBarControllerProtocol(Protocol):
         """Меняет LLM-хоткей."""
         ...
 
+    def change_rsvp_hotkey(self) -> None:
+        """Меняет RSVP-хоткей."""
+        ...
+
+    def change_tts_hotkey(self) -> None:
+        """Меняет TTS-хоткей."""
+        ...
+
     def request_accessibility_access(self) -> None:
         """Повторно запрашивает Accessibility."""
         ...
@@ -204,6 +227,58 @@ class StatusBarControllerProtocol(Protocol):
 
     def toggle_llm_clipboard(self) -> None:
         """Переключает использование буфера обмена для LLM."""
+        ...
+
+    def toggle_rsvp(self) -> None:
+        """Запускает или закрывает RSVP reader."""
+        ...
+
+    def toggle_tts(self) -> None:
+        """Запускает или останавливает TTS reader."""
+        ...
+
+    def change_reader_rsvp_wpm(self, wpm: int) -> None:
+        """Меняет скорость RSVP."""
+        ...
+
+    def change_reader_rsvp_chunk_size(self, chunk_size: int) -> None:
+        """Меняет размер RSVP chunk-а."""
+        ...
+
+    def change_reader_rsvp_font_size(self, font_size: int) -> None:
+        """Меняет размер шрифта RSVP."""
+        ...
+
+    def change_reader_tts_rate_multiplier(self, rate_multiplier: float) -> None:
+        """Меняет множитель скорости TTS."""
+        ...
+
+    def change_reader_tts_voice(self, voice_id: str | None) -> None:
+        """Меняет системный голос TTS."""
+        ...
+
+    def change_reader_tts_max_minutes(self, max_minutes: int) -> None:
+        """Меняет лимит длительности TTS."""
+        ...
+
+    def change_reader_tts_engine(self, engine: str) -> None:
+        """Меняет backend TTS."""
+        ...
+
+    def change_reader_tts_mlx_model(self, model_name: str) -> None:
+        """Меняет MLX TTS-модель."""
+        ...
+
+    def change_reader_tts_mlx_voice_description(self, description: str) -> None:
+        """Меняет описание голоса MLX TTS."""
+        ...
+
+    def toggle_reader_preprocess(self) -> None:
+        """Переключает LLM-предобработку reader."""
+        ...
+
+    def reader_available_tts_voices(self) -> list[TTSVoice]:
+        """Возвращает доступные системные голоса."""
         ...
 
     def toggle_capitalize_first_letter(self) -> None:
@@ -512,7 +587,7 @@ class HotkeyRuntimePort(Protocol):
         """Останавливает listener."""
         ...
 
-    def update_hotkeys(self, primary: str, secondary: str, llm: str) -> None:
+    def update_hotkeys(self, primary: str, secondary: str, llm: str, rsvp: str = "", tts: str = "") -> None:
         """Обновляет активные хоткеи без пересоздания runtime-объекта."""
         ...
 

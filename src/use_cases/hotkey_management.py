@@ -93,6 +93,8 @@ class HotkeyManagementUseCases:
 
         try:
             normalized = normalize_key_combination(result) if result else ""
+            if normalized and normalized in (self.runtime.rsvp_key_combination, self.runtime.tts_key_combination):
+                raise ValueError("LLM-хоткей должен отличаться от reader-хоткеев.")
         except ValueError as error:
             self.runtime.system_integration_service.notify("MLX Whisper Dictation", f"Ошибка: {error}")
             return
@@ -112,6 +114,58 @@ class HotkeyManagementUseCases:
             LOGGER.info("🤖 LLM-хоткей отключён (был: %s)", old_combination)
             self.runtime.system_integration_service.notify("MLX Whisper Dictation", "LLM-хоткей отключён.")
         self.publish_snapshot()
+
+    def change_rsvp_hotkey(self) -> None:
+        """Открывает диалог и меняет RSVP-хоткей."""
+        result = self.capture_hotkey_combination(
+            "Изменить RSVP-хоткей",
+            "Нажмите комбинацию для чтения буфера через RSVP.\nОставьте пустым и нажмите Применить, чтобы отключить.",
+            current_combination=self.runtime.rsvp_key_combination,
+        )
+        if result is None:
+            return
+
+        try:
+            normalized = normalize_key_combination(result) if result else ""
+            self._ensure_unique_reader_hotkey(normalized, current_name="rsvp")
+        except ValueError as error:
+            self.runtime.system_integration_service.notify("MLX Whisper Dictation", f"Ошибка: {error}")
+            return
+
+        self.runtime.rsvp_key_combination = normalized
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_RSVP_HOTKEY, self.runtime.rsvp_key_combination)
+        self._apply_hotkey_changes()
+        LOGGER.info("📖 RSVP-хоткей изменён на: %s", normalized or "не задан")
+        self.runtime.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            f"RSVP-хоткей изменён: {self.runtime.rsvp_hotkey_status}",
+        )
+
+    def change_tts_hotkey(self) -> None:
+        """Открывает диалог и меняет TTS-хоткей."""
+        result = self.capture_hotkey_combination(
+            "Изменить TTS-хоткей",
+            "Нажмите комбинацию для озвучивания буфера.\nОставьте пустым и нажмите Применить, чтобы отключить.",
+            current_combination=self.runtime.tts_key_combination,
+        )
+        if result is None:
+            return
+
+        try:
+            normalized = normalize_key_combination(result) if result else ""
+            self._ensure_unique_reader_hotkey(normalized, current_name="tts")
+        except ValueError as error:
+            self.runtime.system_integration_service.notify("MLX Whisper Dictation", f"Ошибка: {error}")
+            return
+
+        self.runtime.tts_key_combination = normalized
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_HOTKEY, self.runtime.tts_key_combination)
+        self._apply_hotkey_changes()
+        LOGGER.info("🔈 TTS-хоткей изменён на: %s", normalized or "не задан")
+        self.runtime.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            f"TTS-хоткей изменён: {self.runtime.tts_hotkey_status}",
+        )
 
     def request_accessibility_access(self) -> None:
         """Повторно запрашивает Accessibility."""
@@ -147,10 +201,14 @@ class HotkeyManagementUseCases:
         self.runtime.hotkey_status = self.runtime.launch_config.hotkeys.hotkey_status
         self.runtime.secondary_hotkey_status = self.runtime.launch_config.hotkeys.secondary_hotkey_status
         self.runtime.llm_hotkey_status = self.runtime.launch_config.hotkeys.llm_hotkey_status
+        self.runtime.rsvp_hotkey_status = self.runtime.reader_preferences.rsvp_hotkey_status
+        self.runtime.tts_hotkey_status = self.runtime.reader_preferences.tts_hotkey_status
 
     def _persist_hotkey_settings(self) -> None:
         self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self.runtime.launch_config.hotkeys.primary_store_value)
         self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self.runtime.launch_config.hotkeys.secondary_store_value)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_RSVP_HOTKEY, self.runtime.rsvp_key_combination)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_HOTKEY, self.runtime.tts_key_combination)
 
     def _can_update_hotkeys_runtime(self) -> bool:
         return hasattr(self.runtime.key_listener, "update_hotkeys")
@@ -160,13 +218,26 @@ class HotkeyManagementUseCases:
         self._persist_hotkey_settings()
         self.publish_snapshot()
         if self._can_update_hotkeys_runtime():
+            self._update_runtime_listener_hotkeys()
+            return True
+        return False
+
+    def _update_runtime_listener_hotkeys(self) -> None:
+        """Обновляет listener, сохраняя совместимость со старыми тестовыми stub-ами."""
+        try:
+            self.runtime.key_listener.update_hotkeys(
+                self.runtime.primary_key_combination,
+                self.runtime.secondary_key_combination,
+                self.runtime.llm_key_combination,
+                self.runtime.rsvp_key_combination,
+                self.runtime.tts_key_combination,
+            )
+        except TypeError:
             self.runtime.key_listener.update_hotkeys(
                 self.runtime.primary_key_combination,
                 self.runtime.secondary_key_combination,
                 self.runtime.llm_key_combination,
             )
-            return True
-        return False
 
     def _update_hotkey_value(self, *, is_secondary: bool, new_combination: str) -> None:
         if is_secondary:
@@ -174,6 +245,8 @@ class HotkeyManagementUseCases:
                 raise ValueError("Дополнительный хоткей должен отличаться от основного.")
             if new_combination and new_combination == self.runtime.llm_key_combination:
                 raise ValueError("Дополнительный хоткей должен отличаться от LLM-хоткея.")
+            if new_combination and new_combination in (self.runtime.rsvp_key_combination, self.runtime.tts_key_combination):
+                raise ValueError("Дополнительный хоткей должен отличаться от reader-хоткеев.")
             self.runtime.secondary_key_combination = new_combination
             return
 
@@ -181,4 +254,21 @@ class HotkeyManagementUseCases:
             raise ValueError("Основной хоткей должен отличаться от дополнительного.")
         if new_combination == self.runtime.llm_key_combination:
             raise ValueError("Основной хоткей должен отличаться от LLM-хоткея.")
+        if new_combination and new_combination in (self.runtime.rsvp_key_combination, self.runtime.tts_key_combination):
+            raise ValueError("Основной хоткей должен отличаться от reader-хоткеев.")
         self.runtime.primary_key_combination = new_combination
+
+    def _ensure_unique_reader_hotkey(self, new_combination: str, *, current_name: str) -> None:
+        """Проверяет, что reader-хоткей не дублирует другие активные комбинации."""
+        if not new_combination:
+            return
+        conflicts = {
+            "основного хоткея": self.runtime.primary_key_combination,
+            "доп. хоткея": self.runtime.secondary_key_combination,
+            "LLM-хоткея": self.runtime.llm_key_combination,
+            "RSVP-хоткея": "" if current_name == "rsvp" else self.runtime.rsvp_key_combination,
+            "TTS-хоткея": "" if current_name == "tts" else self.runtime.tts_key_combination,
+        }
+        for title, combination in conflicts.items():
+            if combination and new_combination == combination:
+                raise ValueError(f"Reader-хоткей должен отличаться от {title}.")
