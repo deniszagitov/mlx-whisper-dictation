@@ -130,7 +130,7 @@ flowchart TD
     Record --> ASR["transcribe_to_text()<br/>без автовставки"]
     ASR --> AgentInput["agent_input event<br/>команда + память + инструменты"]
     AgentInput --> Tools["Сбор инструментов:<br/>built-in, CLI allowlist, custom, MCP"]
-    Tools --> Agent["LangChain ReAct agent<br/>локальная MLX LLM"]
+    Tools --> Agent["Агентский runtime<br/>локальная MLX LLM"]
     Agent --> ToolCall{"Нужен инструмент?"}
     ToolCall -->|clipboard| Clipboard["get/set clipboard"]
     ToolCall -->|URL| URL["open_url http/https"]
@@ -170,4 +170,3 @@ flowchart TD
     Slow -->|нет| Ready["Модель скачана"]
     Ready --> Retry["Пользователь повторяет действие"]
 ```
-

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -20,11 +19,6 @@ from ..domain.zipper import (
 LOGGER = logging.getLogger(__name__)
 
 
-def example_config_path() -> Path:
-    """Возвращает путь к закоммиченному примеру конфига Zipper."""
-    return Path(__file__).resolve().parents[2] / "docs" / "zipper" / "zipper.example.toml"
-
-
 def local_config_path() -> Path:
     """Возвращает путь к локальному dev-конфигу для запуска через uv."""
     return Path.cwd() / "zipper.local.toml"
@@ -33,6 +27,15 @@ def local_config_path() -> Path:
 def user_config_path() -> Path:
     """Возвращает путь к пользовательскому конфигу установленного приложения."""
     return Path.home() / "Library" / "Application Support" / "Dictator" / "zipper.toml"
+
+
+def default_user_config_text() -> str:
+    """Возвращает стартовый пользовательский конфиг без prompt-текстов агента."""
+    return (
+        "# Конфиг Zipper для Dictator.\n"
+        "# Агент, system prompt и внутренние prompt-тексты определены в инфраструктурном runtime.\n"
+        "# Добавляйте здесь только runtime-настройки, инструменты, MCP и allowlist CLI.\n"
+    )
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -175,7 +178,6 @@ def normalize_config(raw: dict[str, Any]) -> ZipperConfig:
     debug = ZipperDebugConfig(enabled=_as_bool(debug_raw.get("enabled"), False))
     return ZipperConfig(
         enabled=_as_bool(raw.get("enabled"), True),
-        system_message=str(raw.get("system_message") or ZipperConfig().system_message),
         context=context,
         debug=debug,
         cli_commands=_normalize_cli_commands(raw.get("cli_commands")),
@@ -185,17 +187,15 @@ def normalize_config(raw: dict[str, Any]) -> ZipperConfig:
 
 
 class ZipperConfigProvider:
-    """Читает конфиг Zipper из example/local/user TOML-файлов."""
+    """Читает конфиг Zipper из local/user TOML-файлов."""
 
     def __init__(
         self,
         *,
-        example_path: Path | None = None,
         local_path: Path | None = None,
         user_path: Path | None = None,
         open_path: Any | None = None,
     ) -> None:
-        self.example_path = example_path or example_config_path()
         self.local_path = local_path or local_config_path()
         self.user_path = user_path or user_config_path()
         self._open_path = open_path
@@ -206,20 +206,17 @@ class ZipperConfigProvider:
         if self.user_path.exists():
             return
         self.user_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.example_path.exists():
-            shutil.copyfile(self.example_path, self.user_path)
-        else:
-            self.user_path.write_text("# Конфиг Zipper\nenabled = true\n", encoding="utf-8")
+        self.user_path.write_text(default_user_config_text(), encoding="utf-8")
 
     def config_path(self) -> str:
         """Возвращает путь пользовательского конфига."""
         return str(self.user_path)
 
     def load_config(self) -> ZipperConfig:
-        """Загружает конфиг с приоритетом user > local > example."""
+        """Загружает конфиг с приоритетом user > local."""
         raw: dict[str, Any] = {}
         loaded_paths: list[str] = []
-        for path in (self.example_path, self.local_path, self.user_path):
+        for path in (self.local_path, self.user_path):
             if path.exists():
                 loaded_paths.append(str(path))
                 raw = _deep_merge(raw, _read_toml(path))

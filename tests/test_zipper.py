@@ -10,12 +10,10 @@ from src.domain.zipper import (
     ZipperAgentResult,
     ZipperCliCommand,
     ZipperConfig,
-    ZipperCustomTool,
     ZipperMemorySnapshot,
-    ZipperToolSpec,
 )
 from src.infrastructure.llm_runtime import LlmGateway
-from src.infrastructure.zipper_config import ZipperConfigProvider
+from src.infrastructure.zipper_config import ZipperConfigProvider, normalize_config
 from src.infrastructure.zipper_runtime import LangChainZipperAgent
 from src.use_cases.zipper import ZipperUseCases
 
@@ -192,6 +190,11 @@ class FakeAgent:
         self.calls.append({"request": request, **kwargs})
         return self.result
 
+    def summarize_memory(self, events_text: str, *, memory: str = "") -> str:
+        """Возвращает краткое резюме для тестов памяти."""
+        self.calls.append({"summary_events": events_text, "memory": memory})
+        return "пользователь часто просит дату"
+
 
 class FakeClipboard:
     """Фейковый системный буфер обмена."""
@@ -249,34 +252,6 @@ class FakeVoiceOutput:
         self.spoken.append(text)
 
 
-class FakeCommandRunner:
-    """Фейковый runner разрешённых CLI-команд."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[ZipperCliCommand, str]] = []
-
-    def run(self, command: ZipperCliCommand, argument: str) -> str:
-        """Запоминает разрешённую команду."""
-        self.calls.append((command, argument))
-        return "cli output"
-
-
-class FakeCustomToolRunner:
-    """Фейковый runner пользовательских инструментов."""
-
-    def run(self, tool: ZipperCustomTool, argument: str) -> str:
-        """Возвращает результат пользовательского инструмента."""
-        return f"{tool.value}:{argument}"
-
-
-class FakeMCPProvider:
-    """Фейковый MCP provider."""
-
-    def tools_for_config(self, config: ZipperConfig) -> tuple[list[Any], list[str]]:
-        """Возвращает отсутствие MCP-инструментов."""
-        return [], []
-
-
 class FakeNotify:
     """Фейковая системная интеграция."""
 
@@ -304,23 +279,12 @@ class FakeOverlay:
         return None
 
 
-class FakeUrlOpener:
-    """Фейковое открытие URL."""
-
-    def __init__(self) -> None:
-        self.urls: list[str] = []
-
-    def open_url(self, url: str) -> bool:
-        """Запоминает URL."""
-        self.urls.append(url)
-        return True
-
-
 def make_use_case(config: ZipperConfig | None = None, agent: FakeAgent | None = None, llm_cached: bool = True):
     """Создаёт ZipperUseCases с фейковыми зависимостями."""
     runtime = FakeRuntime()
     recorder = FakeRecorder()
     text_output = FakeTextOutput()
+    voice_output = FakeVoiceOutput()
     memory = FakeMemoryStore()
     use_case = ZipperUseCases(
         runtime=runtime,
@@ -330,18 +294,36 @@ def make_use_case(config: ZipperConfig | None = None, agent: FakeAgent | None = 
         config_provider=FakeConfigProvider(config),
         memory_store=memory,
         agent_service=agent or FakeAgent(),
-        clipboard_service=FakeClipboard(),
         text_output=text_output,
-        voice_output=FakeVoiceOutput(),
-        url_opener=FakeUrlOpener(),
-        command_runner=FakeCommandRunner(),
-        custom_tool_runner=FakeCustomToolRunner(),
-        mcp_tool_provider=FakeMCPProvider(),
+        voice_output=voice_output,
         system_integration_service=FakeNotify(),
         recording_overlay=FakeOverlay(),
         publish_snapshot=lambda: setattr(runtime, "snapshots", runtime.snapshots + 1),
     )
     return use_case, runtime, recorder, text_output, memory
+
+
+def test_zipper_agent_runtime_keeps_prompts_and_tools_together():
+    """Инфраструктурный runtime хранит prompt-контракт и tools в одном объекте."""
+    agent = LangChainZipperAgent(FakeLLM(), clipboard_service=FakeClipboard())
+
+    assert agent._system_message("").startswith("Ты Zipper")
+    system_message = agent._system_message("пользователь часто просит дату")
+    assert "Постоянная память Zipper" in system_message
+    assert "пользователь часто просит дату" in system_message
+
+    def ignore_event(_kind: str, _message: str, _payload: dict[str, Any] | None = None) -> None:
+        return None
+
+    tools = agent._build_tools(ZipperConfig(), ignore_event)
+    assert [tool.name for tool in tools[:6]] == [
+        "get_clipboard",
+        "set_clipboard",
+        "current_datetime",
+        "open_url",
+        "show_text",
+        "speak_text",
+    ]
 
 
 def test_zipper_records_voice_command_without_regular_insertion():
@@ -362,6 +344,8 @@ def test_zipper_records_voice_command_without_regular_insertion():
     assert use_case.transcriber.transcribe_called is False
     assert use_case.transcriber.transcribe_to_text_called is True
     assert agent.calls[0]["request"] == "скажи дату"
+    assert agent.calls[0]["memory"] == ""
+    assert "tools" not in agent.calls[0]
     assert text_output.messages[-1] == ("Zipper", "Показал результат")
     assert runtime.state == Config.STATUS_IDLE
     assert len(memory.snapshot.events) > 0
@@ -456,15 +440,17 @@ def test_zipper_builtin_tools_keep_clipboard_and_cli_explicitly_configured():
     command = ZipperCliCommand(
         name="date",
         description="Показать дату",
-        command=("/bin/date",),
+        command=("/bin/echo", "cli output"),
         require_confirmation=False,
     )
-    use_case, *_ = make_use_case(ZipperConfig(cli_commands=(command,)))
+    clipboard = FakeClipboard()
+    agent = LangChainZipperAgent(FakeLLM(), clipboard_service=clipboard, text_output=FakeTextOutput())
 
-    tools = {tool.name: tool for tool in use_case._build_tools()}
-    assert tools["get_clipboard"].run("") == "из буфера"
-    assert tools["set_clipboard"].run("новый текст") == "Текст положен в буфер обмена."
-    assert tools["cli_date"].run("") == "cli output"
+    tools = {tool.name: tool for tool in agent._build_tools(ZipperConfig(cli_commands=(command,)), lambda *_args: None)}
+    assert tools["get_clipboard"].invoke("") == "из буфера"
+    assert tools["set_clipboard"].invoke("новый текст") == "Текст положен в буфер обмена."
+    assert clipboard.text == "новый текст"
+    assert tools["cli_date"].invoke("") == "cli output"
     assert "write_note" not in tools
 
 
@@ -472,17 +458,20 @@ def test_zipper_fallback_no_longer_handles_note_command_as_tool():
     """Фраза про заметку больше не вызывает локальный writer Zipper."""
     agent = LangChainZipperAgent(FakeLLM())
 
-    result = agent._invoke_fallback("запиши заметку тест", system_message="Ты тестовый Zipper.", tools=[])
+    result = agent._invoke_fallback(
+        "запиши заметку тест",
+        memory="",
+        tools=[],
+    )
 
     assert result == ZipperAgentResult(text="пользователь часто просит дату", output_mode="window")
 
 
-def test_zipper_config_provider_merges_example_local_and_user(tmp_path, caplog):
-    """Конфиг Zipper поддерживает example/local/user с ожидаемым приоритетом."""
-    example = tmp_path / "example.toml"
+def test_zipper_config_provider_merges_local_and_user(tmp_path, caplog):
+    """Конфиг Zipper поддерживает local/user с ожидаемым приоритетом."""
     local = tmp_path / "zipper.local.toml"
     user = tmp_path / "Application Support" / "Dictator" / "zipper.toml"
-    example.write_text(
+    local.write_text(
         """
 enabled = false
 
@@ -492,17 +481,18 @@ max_events = 3
 """,
         encoding="utf-8",
     )
-    local.write_text("enabled = true\n", encoding="utf-8")
     user.parent.mkdir(parents=True)
     user.write_text(
         """
+enabled = true
+
 [debug]
 enabled = true
 """,
         encoding="utf-8",
     )
 
-    provider = ZipperConfigProvider(example_path=example, local_path=local, user_path=user, open_path=lambda path: True)
+    provider = ZipperConfigProvider(local_path=local, user_path=user, open_path=lambda path: True)
     caplog.set_level("INFO", logger="src.infrastructure.zipper_config")
     config = provider.load_config()
 
@@ -511,9 +501,28 @@ enabled = true
     assert config.context.max_events == 3
     assert config.debug.enabled is True
     assert "Конфиг Zipper загружен: enabled=True, debug=True" in caplog.text
-    assert str(example) in caplog.text
     assert str(local) in caplog.text
     assert str(user) in caplog.text
+
+
+def test_zipper_user_config_template_does_not_store_agent_prompts(tmp_path):
+    """Стартовый пользовательский конфиг не должен содержать prompt-тексты агента."""
+    local = tmp_path / "zipper.local.toml"
+    user = tmp_path / "Application Support" / "Dictator" / "zipper.toml"
+
+    ZipperConfigProvider(local_path=local, user_path=user, open_path=lambda path: True)
+
+    text = user.read_text(encoding="utf-8")
+    assert "Ты Zipper" not in text
+    assert "system_message" not in text
+
+
+def test_zipper_config_ignores_agent_prompt_fields_from_toml():
+    """Prompt-поля не должны быть частью TOML-конфига Zipper."""
+    config = normalize_config({"system_message": "Внешний prompt не используется.", "enabled": False})
+
+    assert config.enabled is False
+    assert not hasattr(config, "system_message")
 
 
 def test_zipper_summarizes_context_to_persistent_memory():
@@ -535,7 +544,6 @@ def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool()
     load_calls: list[str] = []
     cleanup_calls: list[bool] = []
     generation_prompts: list[str] = []
-    tool_calls: list[str] = []
     responses = iter(
         (
             "Thought: нужно узнать дату\nAction: current_datetime\nAction Input: сейчас",
@@ -552,10 +560,6 @@ def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool()
         assert max_tokens == 1000
         return next(responses)
 
-    def tool(argument: str) -> str:
-        tool_calls.append(argument)
-        return "2026-05-08T15:00:00+03:00"
-
     processor = LlmGateway(
         "fake-agent-model",
         runtime_loader=load_runtime,
@@ -566,15 +570,12 @@ def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool()
 
     result = agent.invoke(
         "скажи дату",
-        system_message="Ты тестовый Zipper.",
         memory="",
         events=(),
-        tools=[ZipperToolSpec("current_datetime", "Получить текущие дату и время.", tool)],
         config=ZipperConfig(),
     )
 
     assert result == ZipperAgentResult(text="Сейчас 2026-05-08.", output_mode="window")
-    assert tool_calls == ["сейчас"]
     assert load_calls == ["fake-agent-model"]
     assert len(generation_prompts) == 2
     assert processor._cached_model is not None
@@ -608,22 +609,17 @@ def test_zipper_langchain_keeps_loaded_model_between_agent_invocations():
         memory_cleanup=lambda: cleanup_calls.append(True),
     )
     agent = LangChainZipperAgent(processor)
-    tools = [ZipperToolSpec("current_datetime", "Получить текущие дату и время.", lambda _argument: "2026-05-08")]
 
     first = agent.invoke(
         "первая команда",
-        system_message="Ты тестовый Zipper.",
         memory="",
         events=(),
-        tools=tools,
         config=ZipperConfig(),
     )
     second = agent.invoke(
         "вторая команда",
-        system_message="Ты тестовый Zipper.",
         memory="",
         events=(),
-        tools=tools,
         config=ZipperConfig(),
     )
 
@@ -665,6 +661,7 @@ def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
     runtime = FakeRuntime()
     recorder = FakeRecorder()
     text_output = FakeTextOutput()
+    voice_output = FakeVoiceOutput()
     memory = FakeMemoryStore()
     use_case = ZipperUseCases(
         runtime=runtime,
@@ -673,14 +670,14 @@ def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
         llm_processor=processor,
         config_provider=FakeConfigProvider(ZipperConfig()),
         memory_store=memory,
-        agent_service=LangChainZipperAgent(processor),
-        clipboard_service=FakeClipboard(),
+        agent_service=LangChainZipperAgent(
+            processor,
+            clipboard_service=FakeClipboard(),
+            text_output=text_output,
+            voice_output=voice_output,
+        ),
         text_output=text_output,
-        voice_output=FakeVoiceOutput(),
-        url_opener=FakeUrlOpener(),
-        command_runner=FakeCommandRunner(),
-        custom_tool_runner=FakeCustomToolRunner(),
-        mcp_tool_provider=FakeMCPProvider(),
+        voice_output=voice_output,
         system_integration_service=FakeNotify(),
         recording_overlay=FakeOverlay(),
         publish_snapshot=lambda: setattr(runtime, "snapshots", runtime.snapshots + 1),

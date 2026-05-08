@@ -1,13 +1,9 @@
-"""Доменные типы Zipper: конфиг, события, инструменты и ответы агента."""
+"""Доменные типы Zipper: конфиг, события и ответы."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
+from typing import Any, Literal
 
 ZipperOutputMode = Literal["voice", "window", "both"]
 
@@ -64,11 +60,6 @@ class ZipperConfig:
     """Нормализованный конфиг Zipper."""
 
     enabled: bool = True
-    system_message: str = (
-        "Ты Zipper, локальный голосовой агент Dictator. "
-        "Выполняй только безопасные действия через доступные инструменты. "
-        "Отвечай по-русски, кратко и практично."
-    )
     context: ZipperContextConfig = field(default_factory=ZipperContextConfig)
     debug: ZipperDebugConfig = field(default_factory=ZipperDebugConfig)
     cli_commands: tuple[ZipperCliCommand, ...] = ()
@@ -91,15 +82,6 @@ class ZipperMemorySnapshot:
 
     memory: str
     events: tuple[ZipperEvent, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ZipperToolSpec:
-    """Tool spec, который use case отдаёт LangChain-агенту."""
-
-    name: str
-    description: str
-    run: Callable[[str], str]
 
 
 @dataclass(frozen=True, slots=True)

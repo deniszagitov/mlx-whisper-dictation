@@ -8,7 +8,7 @@
 - domain-правила, настройки и типы;
 - запись звука, ASR/LLM/TTS runtime, hotkey runtime, разрешения macOS и menu bar UI;
 - use case-сценарии распознавания, истории, Reader, LLM-пайплайна и Zipper;
-- инфраструктуру Zipper: конфиг, память, allowlist CLI, MCP и LangChain agent.
+- инфраструктуру Zipper: конфиг, память, allowlist CLI, MCP и агентский runtime.
 
 ## Карта runtime-модулей
 

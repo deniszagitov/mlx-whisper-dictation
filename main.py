@@ -34,13 +34,9 @@ from src.app import (  # noqa: F401
     SystemDiagnosticsService,
     SystemIntegrationService,
     ZipperAgentService,
-    ZipperCommandRunnerService,
     ZipperConfigProviderService,
-    ZipperCustomToolRunnerService,
-    ZipperMCPToolProviderService,
     ZipperMemoryStoreService,
     ZipperTextOutputService,
-    ZipperUrlOpenerService,
     ZipperVoiceOutputService,
 )
 from src.domain.audio import microphone_menu_title  # noqa: F401
@@ -123,10 +119,6 @@ from src.infrastructure.zipper_config import ZipperConfigProvider
 from src.infrastructure.zipper_runtime import (
     FileZipperMemoryStore,
     LangChainZipperAgent,
-    ZipperCommandRunner,
-    ZipperCustomToolRunner,
-    ZipperMCPToolProvider,
-    ZipperUrlOpener,
 )
 from src.use_cases.transcription import TranscriptionUseCases as SpeechTranscriber
 
@@ -232,7 +224,7 @@ def parse_args() -> LaunchConfig:
         default="ctrl+shift+alt+z",
         help=(
             "Комбинация клавиш для голосового агента Zipper: "
-            "голос → Whisper → локальный LangChain-агент. "
+            "голос → Whisper → локальный агентский runtime. "
             "По умолчанию: ctrl+shift+alt+z. Укажите пустую строку, чтобы отключить."
         ),
     )
@@ -576,6 +568,12 @@ def main() -> None:
         tts_speaker,
         config_factory=_zipper_tts_config,
     )
+    zipper_agent_runtime = LangChainZipperAgent(
+        zipper_llm_processor,
+        clipboard_service=clipboard_service,
+        text_output=zipper_text_output_adapter,
+        voice_output=zipper_voice_output_adapter,
+    )
 
     app_controller = DictationApp(
         recorder,
@@ -608,7 +606,10 @@ def main() -> None:
             load=zipper_memory_store.load,
             save=zipper_memory_store.save,
         ),
-        zipper_agent_service=ZipperAgentService(invoke=LangChainZipperAgent(zipper_llm_processor).invoke),
+        zipper_agent_service=ZipperAgentService(
+            invoke=zipper_agent_runtime.invoke,
+            summarize_memory=zipper_agent_runtime.summarize_memory,
+        ),
         zipper_text_output=ZipperTextOutputService(
             show_text=zipper_text_output_adapter.show_text,
             confirm=zipper_text_output_adapter.confirm,
@@ -617,10 +618,6 @@ def main() -> None:
             debug_events=zipper_text_output_adapter.debug_events,
         ),
         zipper_voice_output=ZipperVoiceOutputService(speak=zipper_voice_output_adapter.speak),
-        zipper_url_opener=ZipperUrlOpenerService(open_url=ZipperUrlOpener().open_url),
-        zipper_command_runner=ZipperCommandRunnerService(run=ZipperCommandRunner().run),
-        zipper_custom_tool_runner=ZipperCustomToolRunnerService(run=ZipperCustomToolRunner().run),
-        zipper_mcp_tool_provider=ZipperMCPToolProviderService(tools_for_config=ZipperMCPToolProvider().tools_for_config),
     )
     model_manager.set_progress_callback(app_controller.handle_model_download_progress)
     app_controller_holder["controller"] = app_controller

@@ -12,14 +12,14 @@
 
 ## `ZipperConfigProvider`
 
-Читает конфиг Zipper из example/local/user TOML-файлов.
+Читает конфиг Zipper из local/user TOML-файлов.
 
 ### Методы
 
 #### `__init__`
 
 ```python
-__init__(*, example_path: Path | None = None, local_path: Path | None = None, user_path: Path | None = None, open_path: Any | None = None) -> None
+__init__(*, local_path: Path | None = None, user_path: Path | None = None, open_path: Any | None = None) -> None
 ```
 
 Конструктор класса.
@@ -46,7 +46,7 @@ config_path() -> str
 load_config() -> ZipperConfig
 ```
 
-Загружает конфиг с приоритетом user > local > example.
+Загружает конфиг с приоритетом user > local.
 
 #### `open_config`
 
@@ -57,14 +57,6 @@ open_config() -> bool
 Открывает пользовательский конфиг через системную интеграцию.
 
 ## Публичные функции
-
-### `example_config_path`
-
-```python
-example_config_path() -> Path
-```
-
-Возвращает путь к закоммиченному примеру конфига Zipper.
 
 ### `local_config_path`
 
@@ -81,6 +73,14 @@ user_config_path() -> Path
 ```
 
 Возвращает путь к пользовательскому конфигу установленного приложения.
+
+### `default_user_config_text`
+
+```python
+default_user_config_text() -> str
+```
+
+Возвращает стартовый пользовательский конфиг без prompt-текстов агента.
 
 ### `normalize_config`
 

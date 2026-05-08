@@ -8,7 +8,6 @@ Use case-сценарии голосового агента Zipper.
 
 - `LOGGER` = `logging.getLogger(__name__)`
 - `_KEYCODE_ESCAPE` = `53`
-- `_MAX_TOOL_OUTPUT_CHARS` = `8000`
 - `_MEMORY_SUMMARY_KEEP_EVENTS` = `40`
 
 ## Классы
@@ -32,7 +31,7 @@ config() -> ZipperConfig
 #### `__init__`
 
 ```python
-__init__(runtime: Any, recorder: Any, transcriber: Any, llm_processor: Any, config_provider: Any, memory_store: Any, agent_service: Any, clipboard_service: Any, text_output: Any, voice_output: Any, url_opener: Any, command_runner: Any, custom_tool_runner: Any, mcp_tool_provider: Any, system_integration_service: Any, recording_overlay: Any, publish_snapshot: Any) -> None
+__init__(runtime: Any, recorder: Any, transcriber: Any, llm_processor: Any, config_provider: Any, memory_store: Any, agent_service: Any, text_output: Any, voice_output: Any, system_integration_service: Any, recording_overlay: Any, publish_snapshot: Any) -> None
 ```
 
 Конструктор класса.
@@ -174,23 +173,3 @@ _release_display_sleep(runtime: Any) -> None
 _Внутренняя функция._
 
 Отпускает временную защиту дисплея от сна, если runtime её поддерживает.
-
-### `_tool_name`
-
-```python
-_tool_name(prefix: str, raw_name: str) -> str
-```
-
-_Внутренняя функция._
-
-Нормализует имя инструмента под ограничения LangChain.
-
-### `_trim_tool_output`
-
-```python
-_trim_tool_output(text: str) -> str
-```
-
-_Внутренняя функция._
-
-Ограничивает слишком длинный вывод инструмента для контекста агента.

@@ -157,9 +157,10 @@ class ZipperMemoryStoreService:
 
 @dataclass(frozen=True, slots=True)
 class ZipperAgentService:
-    """Concrete bundle LangChain-агента Zipper."""
+    """Concrete bundle агентского runtime Zipper."""
 
     invoke: Callable[..., ZipperAgentResult]
+    summarize_memory: Callable[..., str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,34 +179,6 @@ class ZipperVoiceOutputService:
     """Concrete bundle голосового вывода Zipper."""
 
     speak: Callable[[str], None]
-
-
-@dataclass(frozen=True, slots=True)
-class ZipperUrlOpenerService:
-    """Concrete bundle открытия URL Zipper."""
-
-    open_url: Callable[[str], bool]
-
-
-@dataclass(frozen=True, slots=True)
-class ZipperCommandRunnerService:
-    """Concrete bundle запуска разрешённых CLI-команд Zipper."""
-
-    run: Callable[[Any, str], str]
-
-
-@dataclass(frozen=True, slots=True)
-class ZipperCustomToolRunnerService:
-    """Concrete bundle пользовательских инструментов Zipper."""
-
-    run: Callable[[Any, str], str]
-
-
-@dataclass(frozen=True, slots=True)
-class ZipperMCPToolProviderService:
-    """Concrete bundle подключения MCP-инструментов Zipper."""
-
-    tools_for_config: Callable[[ZipperConfig], tuple[list[Any], list[str]]]
 
 
 class _NullRecordingOverlay:
@@ -319,6 +292,11 @@ def _null_zipper_agent_invoke(*_args: Any, **_kwargs: Any) -> ZipperAgentResult:
     return ZipperAgentResult(text="Zipper не настроен.", output_mode="window")
 
 
+def _null_zipper_memory_summary(*_args: Any, **_kwargs: Any) -> str:
+    """Возвращает пустую суммаризацию Zipper без агентского runtime."""
+    return ""
+
+
 def _null_show_zipper_text(_title: str, _text: str) -> None:
     """Игнорирует текстовый вывод Zipper."""
     return None
@@ -347,26 +325,6 @@ def _null_zipper_debug_events() -> list[Any]:
 def _null_zipper_speak(_text: str) -> None:
     """Игнорирует голосовой вывод Zipper."""
     return None
-
-
-def _null_open_url(_url: str) -> bool:
-    """Не открывает URL в headless-сценариях."""
-    return False
-
-
-def _null_run_command(_command: Any, _argument: str) -> str:
-    """Возвращает ошибку запуска CLI-команды без runner-а."""
-    return "CLI-runner Zipper не настроен."
-
-
-def _null_custom_tool(_tool: Any, _argument: str) -> str:
-    """Возвращает ошибку пользовательского инструмента без runner-а."""
-    return "Пользовательский runner Zipper не настроен."
-
-
-def _null_mcp_tools(_config: ZipperConfig) -> tuple[list[Any], list[str]]:
-    """Возвращает отсутствие MCP-инструментов."""
-    return [], []
 
 
 class _NullHotkeyListener:
@@ -557,10 +515,6 @@ class DictationApp:
         zipper_agent_service: ZipperAgentService | None = None,
         zipper_text_output: ZipperTextOutputService | None = None,
         zipper_voice_output: ZipperVoiceOutputService | None = None,
-        zipper_url_opener: ZipperUrlOpenerService | None = None,
-        zipper_command_runner: ZipperCommandRunnerService | None = None,
-        zipper_custom_tool_runner: ZipperCustomToolRunnerService | None = None,
-        zipper_mcp_tool_provider: ZipperMCPToolProviderService | None = None,
     ) -> None:
         self.settings_store = settings_store or _InMemorySettingsStore()
         self.recorder = recorder
@@ -619,7 +573,10 @@ class DictationApp:
             load=_null_load_zipper_memory,
             save=_null_save_zipper_memory,
         )
-        self.zipper_agent_service = zipper_agent_service or ZipperAgentService(invoke=_null_zipper_agent_invoke)
+        self.zipper_agent_service = zipper_agent_service or ZipperAgentService(
+            invoke=_null_zipper_agent_invoke,
+            summarize_memory=_null_zipper_memory_summary,
+        )
         self.zipper_text_output = zipper_text_output or ZipperTextOutputService(
             show_text=_null_show_zipper_text,
             confirm=_null_confirm_zipper,
@@ -628,10 +585,6 @@ class DictationApp:
             debug_events=_null_zipper_debug_events,
         )
         self.zipper_voice_output = zipper_voice_output or ZipperVoiceOutputService(speak=_null_zipper_speak)
-        self.zipper_url_opener = zipper_url_opener or ZipperUrlOpenerService(open_url=_null_open_url)
-        self.zipper_command_runner = zipper_command_runner or ZipperCommandRunnerService(run=_null_run_command)
-        self.zipper_custom_tool_runner = zipper_custom_tool_runner or ZipperCustomToolRunnerService(run=_null_custom_tool)
-        self.zipper_mcp_tool_provider = zipper_mcp_tool_provider or ZipperMCPToolProviderService(tools_for_config=_null_mcp_tools)
 
         self.model_options = list(Config.MODEL_PRESETS)
         if self.launch_config.model not in self.model_options:
@@ -756,13 +709,8 @@ class DictationApp:
             config_provider=self.zipper_config_provider,
             memory_store=self.zipper_memory_store,
             agent_service=self.zipper_agent_service,
-            clipboard_service=self.clipboard_service,
             text_output=self.zipper_text_output,
             voice_output=self.zipper_voice_output,
-            url_opener=self.zipper_url_opener,
-            command_runner=self.zipper_command_runner,
-            custom_tool_runner=self.zipper_custom_tool_runner,
-            mcp_tool_provider=self.zipper_mcp_tool_provider,
             system_integration_service=self.system_integration_service,
             recording_overlay=self.recording_overlay,
             publish_snapshot=self._notify_subscribers,

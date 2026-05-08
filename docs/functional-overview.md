@@ -20,7 +20,7 @@
 | Whisper -> LLM | LLM-хоткей `ctrl+shift+alt+l` или пункт меню LLM | Аудио с микрофона, распознанный текст, выбранный системный prompt, опциональный текст из clipboard или Obsidian | ASR, выбор контекста, локальная MLX LLM, обработка ответа | LLM-ответ в clipboard и историю; для Obsidian-сценариев — заметка в vault |
 | Reader RSVP | RSVP-хоткей `cmd_l+alt+r` или `📖 Reader -> 👀 Запустить RSVP` | Текстовый тип из системного буфера обмена, настройки wpm/chunk/font, флаг LLM-предобработки | Read-only чтение clipboard, ограничение длины, локальная LLM-предобработка или fallback, разбиение на RSVP-кадры с ORP | Borderless overlay для быстрого чтения; clipboard не меняется |
 | Reader TTS | TTS-хоткей `cmd_l+alt+t` или `📖 Reader -> 🔊 Запустить TTS` | Текстовый тип из clipboard, backend Apple/MLX, голос, скорость, лимит длительности, флаг LLM-предобработки | Read-only чтение clipboard, LLM-предобработка или fallback, чистка markdown/URL/кода, ограничение длины | Локальное озвучивание через Apple AVSpeech или MLX Qwen3-TTS; clipboard не меняется |
-| Zipper | Zipper-хоткей `ctrl+shift+alt+z` или `🧷 Zipper -> Запустить Zipper` | Аудио команды, конфиг Zipper, текущая MLX LLM, память, инструменты, clipboard/URL/CLI/MCP при явном вызове | ASR без автовставки, LangChain ReAct agent, allowlist-инструменты, сохранение событий и суммаризация памяти | Голосовой ответ, текстовое окно, debug-события, изменения только через выбранные инструменты |
+| Zipper | Zipper-хоткей `ctrl+shift+alt+z` или `🧷 Zipper -> Запустить Zipper` | Аудио команды, конфиг Zipper, текущая MLX LLM, память, инструменты, clipboard/URL/CLI/MCP при явном вызове | ASR без автовставки, инфраструктурный агентский runtime, allowlist-инструменты, сохранение событий и суммаризация памяти | Голосовой ответ, текстовое окно, debug-события, изменения только через выбранные инструменты |
 | Настройки и обслуживание | Пункты menu bar | Пользовательские значения модели, языка, хоткеев, микрофона, лимитов, методов вставки, reader/TTS/Zipper-настроек | Валидация доменными правилами, сохранение в `NSUserDefaults` или файлы Application Support | Обновлённый snapshot UI, сохранённые настройки между запусками |
 
 ## Общий жизненный цикл
@@ -87,7 +87,7 @@
 | ASR обычной диктовки | `str` после постобработки | Методы вставки, история, fallback clipboard |
 | ASR LLM-сценария | `str` исходного запроса | LLM prompt + optional context |
 | Clipboard reader | `ClipboardContent` -> `ReaderSourceText` -> `ProcessedText` | RSVP frames или TTS text |
-| Zipper команда | `str` после ASR | LangChain agent input, память событий |
+| Zipper команда | `str` после ASR | Вход агентского runtime, память событий |
 | Zipper tool output | `str`, обрезается до безопасного лимита для контекста | Agent observation, debug-панель, финальный ответ |
 
 Reader-сценарии читают clipboard только через read-only порт и не записывают
@@ -100,7 +100,6 @@ Reader-сценарии читают clipboard только через read-only
 | --- | --- |
 | Runtime-настройки, хоткеи, модель, методы вставки, reader-настройки | `NSUserDefaults` |
 | История текста | `NSUserDefaults`, до 20 записей, кроме приватного режима |
-| Zipper example config | `docs/zipper/zipper.example.toml` |
 | Zipper dev config | `zipper.local.toml`, не коммитится |
 | Zipper user config | `~/Library/Application Support/Dictator/zipper.toml` |
 | Zipper память | `~/Library/Application Support/Dictator/zipper_memory.json` |
@@ -118,4 +117,3 @@ Reader-сценарии читают clipboard только через read-only
   локальной очистки.
 - Если MCP или инструмент Zipper недоступен, ошибка попадает в debug-поток и
   пользовательский вывод, но обычная диктовка, Reader и TTS продолжают работать.
-

@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
-from datetime import datetime
 from typing import Any, cast
-from urllib.parse import urlparse
 
 from ..domain.constants import Config
 from ..domain.model_downloads import ModelRequiredError
@@ -17,13 +14,11 @@ from ..domain.zipper import (
     ZipperConfig,
     ZipperEvent,
     ZipperMemorySnapshot,
-    ZipperToolSpec,
 )
 
 LOGGER = logging.getLogger(__name__)
 
 _KEYCODE_ESCAPE = 53
-_MAX_TOOL_OUTPUT_CHARS = 8000
 _MEMORY_SUMMARY_KEEP_EVENTS = 40
 
 
@@ -41,19 +36,6 @@ def _release_display_sleep(runtime: Any) -> None:
         release(immediate=True, reason="zipper_cancel_or_start_failure")
 
 
-def _tool_name(prefix: str, raw_name: str) -> str:
-    """Нормализует имя инструмента под ограничения LangChain."""
-    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw_name.strip().lower()).strip("_")
-    return f"{prefix}_{normalized or 'tool'}"
-
-
-def _trim_tool_output(text: str) -> str:
-    """Ограничивает слишком длинный вывод инструмента для контекста агента."""
-    if len(text) <= _MAX_TOOL_OUTPUT_CHARS:
-        return text
-    return f"{text[:_MAX_TOOL_OUTPUT_CHARS]}\n\n... вывод обрезан ..."
-
-
 class ZipperUseCases:
     """Оркестрирует голосовой сценарий Zipper и инструменты агента."""
 
@@ -66,13 +48,8 @@ class ZipperUseCases:
         config_provider: Any,
         memory_store: Any,
         agent_service: Any,
-        clipboard_service: Any,
         text_output: Any,
         voice_output: Any,
-        url_opener: Any,
-        command_runner: Any,
-        custom_tool_runner: Any,
-        mcp_tool_provider: Any,
         system_integration_service: Any,
         recording_overlay: Any,
         publish_snapshot: Any,
@@ -84,13 +61,8 @@ class ZipperUseCases:
         self.config_provider = config_provider
         self.memory_store = memory_store
         self.agent_service = agent_service
-        self.clipboard_service = clipboard_service
         self.text_output = text_output
         self.voice_output = voice_output
-        self.url_opener = url_opener
-        self.command_runner = command_runner
-        self.custom_tool_runner = custom_tool_runner
-        self.mcp_tool_provider = mcp_tool_provider
         self.system_integration_service = system_integration_service
         self.recording_overlay = recording_overlay
         self.publish_snapshot = publish_snapshot
@@ -298,19 +270,17 @@ class ZipperUseCases:
         self.publish_snapshot()
         try:
             snapshot = self.memory_store.load()
-            tools = self._build_tools()
             self._event(
                 "agent_input",
                 "Текст передан агенту",
-                {"text": command_text, "tools": [tool.name for tool in tools]},
+                {"text": command_text},
             )
             result = self.agent_service.invoke(
                 command_text,
-                system_message=self._system_message(snapshot),
                 memory=snapshot.memory,
                 events=snapshot.events,
-                tools=tools,
                 config=self._config,
+                emit_event=self._event,
             )
             self._event(
                 "agent_output",
@@ -358,106 +328,6 @@ class ZipperUseCases:
             self._show_error(f"Некорректный конфиг Zipper: {error}")
             return ZipperConfig(enabled=False)
 
-    def _system_message(self, snapshot: ZipperMemorySnapshot) -> str:
-        if not snapshot.memory.strip():
-            return self._config.system_message
-        return f"{self._config.system_message}\n\nПостоянная память Zipper:\n{snapshot.memory.strip()}"
-
-    def _build_tools(self) -> list[ZipperToolSpec]:
-        tools = [
-            ZipperToolSpec("get_clipboard", "Получить текст из системного буфера обмена.", self._tool_get_clipboard),
-            ZipperToolSpec("set_clipboard", "Положить переданный текст в системный буфер обмена.", self._tool_set_clipboard),
-            ZipperToolSpec("current_datetime", "Получить текущие дату и время.", self._tool_current_datetime),
-            ZipperToolSpec("open_url", "Открыть URL в браузере по умолчанию.", self._tool_open_url),
-            ZipperToolSpec("show_text", "Показать текстовое окно с переданным содержимым.", self._tool_show_text),
-            ZipperToolSpec("speak_text", "Озвучить переданный текст.", self._tool_speak_text),
-        ]
-        tools.extend(self._cli_tools())
-        tools.extend(self._custom_tools())
-        tools.extend(self._mcp_tools())
-        return tools
-
-    def _cli_tools(self) -> list[ZipperToolSpec]:
-        def make_tool(command: Any) -> ZipperToolSpec:
-            return ZipperToolSpec(
-                _tool_name("cli", command.name),
-                f"{command.description} Разрешённая команда: {command.name}.",
-                lambda arg: self._tool_cli(command, arg),
-            )
-
-        return [
-            make_tool(command)
-            for command in self._config.cli_commands
-        ]
-
-    def _custom_tools(self) -> list[ZipperToolSpec]:
-        def make_tool(tool: Any) -> ZipperToolSpec:
-            return ZipperToolSpec(
-                _tool_name("custom", tool.name),
-                tool.description,
-                lambda arg: self.custom_tool_runner.run(tool, arg),
-            )
-
-        return [
-            make_tool(tool)
-            for tool in self._config.custom_tools
-        ]
-
-    def _mcp_tools(self) -> list[ZipperToolSpec]:
-        try:
-            tools, errors = self.mcp_tool_provider.tools_for_config(self._config)
-        except Exception as error:
-            self._event("mcp_error", "MCP недоступен", {"error": str(error)})
-            return []
-        for error_message in errors:
-            self._event("mcp_error", "MCP недоступен", {"error": error_message})
-        return list(tools)
-
-    def _tool_get_clipboard(self, _arg: str) -> str:
-        text = self.clipboard_service.read_text() or ""
-        self._event("tool", "get_clipboard", {"result": text})
-        return text or "Буфер обмена пуст."
-
-    def _tool_set_clipboard(self, arg: str) -> str:
-        self.clipboard_service.write_text(arg)
-        self._event("tool", "set_clipboard", {"chars": len(arg)})
-        return "Текст положен в буфер обмена."
-
-    def _tool_current_datetime(self, _arg: str) -> str:
-        value = datetime.now().astimezone().isoformat(timespec="seconds")
-        self._event("tool", "current_datetime", {"result": value})
-        return value
-
-    def _tool_open_url(self, arg: str) -> str:
-        url = arg.strip()
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return "Ошибка: можно открывать только корректные http/https URL."
-        opened = self.url_opener.open_url(url)
-        self._event("tool", "open_url", {"url": url, "opened": opened})
-        return "URL открыт." if opened else "Не удалось открыть URL."
-
-    def _tool_show_text(self, arg: str) -> str:
-        self.text_output.show_text("Zipper", arg)
-        self._event("tool", "show_text", {"chars": len(arg)})
-        return "Текстовое окно показано."
-
-    def _tool_speak_text(self, arg: str) -> str:
-        self.voice_output.speak(arg)
-        self._event("tool", "speak_text", {"chars": len(arg)})
-        return "Текст озвучен."
-
-    def _tool_cli(self, command: Any, arg: str) -> str:
-        if command.require_confirmation and not self.text_output.confirm(
-            "Подтвердить команду Zipper",
-            f"{command.description}\n\nКоманда: {' '.join(command.command)}\n\nАргумент агента: {arg}",
-        ):
-            self._event("tool", "cli_cancelled", {"name": command.name})
-            return "Выполнение команды отменено пользователем."
-        result = self.command_runner.run(command, arg)
-        self._event("tool", "cli", {"name": command.name, "result": result})
-        return _trim_tool_output(result)
-
     def _publish_result(self, result: ZipperAgentResult) -> None:
         text = result.text.strip()
         if not text:
@@ -500,27 +370,8 @@ class ZipperUseCases:
         if not old_events:
             return
         events_text = "\n".join(f"{event.kind}: {event.message} {event.payload}" for event in old_events)
-        prompt = (
-            "Суммаризуй события Zipper в постоянную память. "
-            "Сохрани важные факты, устойчивые предпочтения, повторяющиеся действия, часто используемые команды "
-            "и полезные выводы. Не дублируй уже известную память."
-        )
         try:
-            try:
-                summary = self.llm_processor.process_text(
-                    events_text,
-                    prompt,
-                    context=snapshot.memory or None,
-                    max_tokens=1000,
-                    keep_loaded=True,
-                ).strip()
-            except TypeError:
-                summary = self.llm_processor.process_text(
-                    events_text,
-                    prompt,
-                    context=snapshot.memory or None,
-                    max_tokens=1000,
-                ).strip()
+            summary = self.agent_service.summarize_memory(events_text, memory=snapshot.memory)
         except Exception:
             LOGGER.exception("🧷 Не удалось суммаризовать контекст Zipper")
             return
