@@ -73,7 +73,7 @@ def test_run_qwen_transcription_passes_audio_from_memory(monkeypatch):
             captured["language"] = kwargs.get("language")
             return FakeResult()
 
-    monkeypatch.setattr(asr_runtime_module, "_get_cached_qwen_model", lambda _model_name: FakeModel())
+    monkeypatch.setattr(asr_runtime_module, "_get_cached_qwen_model", lambda _model_name, **_kwargs: FakeModel())
 
     result = asr_runtime_module.run_qwen_transcription(make_audio(), "mlx-community/Qwen3-ASR-1.7B-8bit", "ru")
 
@@ -105,7 +105,7 @@ def test_run_qwen_transcription_falls_back_to_auto_language(monkeypatch):
             captured["language"] = kwargs.get("language")
             return FakeResult()
 
-    monkeypatch.setattr(asr_runtime_module, "_get_cached_qwen_model", lambda _model_name: FakeModel())
+    monkeypatch.setattr(asr_runtime_module, "_get_cached_qwen_model", lambda _model_name, **_kwargs: FakeModel())
 
     result = asr_runtime_module.run_qwen_transcription(make_audio(), "mlx-community/Qwen3-ASR-1.7B-8bit", "xx")
 

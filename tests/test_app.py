@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import src.app as app_module
 from src.domain.constants import Config
+from src.domain.model_downloads import ModelDownloadProgress
 from src.domain.types import LaunchConfig
 
 
@@ -582,8 +583,49 @@ def test_snapshot_reflects_initial_runtime_state(monkeypatch):
     assert snapshot.remove_trailing_period_for_single_sentence_enabled is True
     assert snapshot.restore_trailing_period_on_next_dictation_enabled is False
     assert snapshot.audio_artifact_cleanup_enabled is False
+    assert snapshot.model_download_title == "📦 Загрузка моделей: нет"
+    assert snapshot.model_download_active is False
     assert snapshot.current_input_device["index"] == 0
     assert recorder.input_device["index"] == 0
+
+
+def test_model_download_progress_updates_snapshot(monkeypatch):
+    """Прогресс загрузки моделей должен попадать в snapshot приложения."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    titles: list[str] = []
+    controller.subscribe(lambda snapshot: titles.append(snapshot.model_download_title))
+
+    controller.handle_model_download_progress(
+        ModelDownloadProgress(
+            label="ASR-модель",
+            model_name="mlx-community/whisper-turbo",
+            stage="Downloading",
+            downloaded_bytes=10 * 1024 * 1024,
+            total_bytes=20 * 1024 * 1024,
+            percent=50.0,
+            speed_bytes_per_second=2 * 1024 * 1024,
+            eta_seconds=5,
+        )
+    )
+
+    snapshot = controller.snapshot()
+    assert snapshot.model_download_active is True
+    assert "50%" in snapshot.model_download_title
+    assert "2 МБ/с" in snapshot.model_download_title
+    assert "осталось 5 с" in snapshot.model_download_title
+    assert titles[-1] == snapshot.model_download_title
+
+    controller.handle_model_download_progress(
+        ModelDownloadProgress(
+            label="ASR-модель",
+            model_name="mlx-community/whisper-turbo",
+            stage="",
+            percent=Config.DOWNLOAD_COMPLETE_PCT,
+            complete=True,
+        )
+    )
+
+    assert controller.snapshot().model_download_active is False
 
 
 def test_subscribe_receives_state_transitions(monkeypatch):

@@ -69,6 +69,8 @@ class StatusBarControllerProtocol(Protocol):
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int
+    model_download_title: str
+    model_download_active: bool
     recording_overlay: RecordingOverlayProtocol
     key_listener: Any
     start_time: float | None

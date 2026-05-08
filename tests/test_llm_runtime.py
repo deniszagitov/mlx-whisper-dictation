@@ -6,7 +6,8 @@ from src.infrastructure import llm_runtime
 
 
 def test_progress_tqdm_compatible_with_ensure_lock(monkeypatch):
-    """Downloader должен отдавать tqdm-класс, совместимый с ensure_lock и итерацией."""
+    """Downloader должен отдавать консольный tqdm с callback прогресса."""
+    from tqdm.auto import tqdm
     from tqdm.contrib.concurrent import ensure_lock
 
     tqdm_cls_holder = []
@@ -24,6 +25,7 @@ def test_progress_tqdm_compatible_with_ensure_lock(monkeypatch):
     assert progress_events == [("Подготовка…", 0, 0), ("", 100, 0)]
 
     tqdm_cls = tqdm_cls_holder[0]
+    assert issubclass(tqdm_cls, tqdm)
 
     with ensure_lock(tqdm_cls) as lock:
         assert lock is not None
@@ -31,8 +33,11 @@ def test_progress_tqdm_compatible_with_ensure_lock(monkeypatch):
     items = list(tqdm_cls([1, 2, 3], total=3, desc="files"))
     assert items == [1, 2, 3]
 
-    assert list(tqdm_cls()) == []
-    assert ("files", 100.0, 3) in progress_events
+    progress_events.clear()
+    progress_bar = tqdm_cls(total=3, unit="B", name="huggingface_hub.snapshot_download")
+    progress_bar.update(3)
+    progress_bar.close()
+    assert any(pct == 100.0 and total == 3 for _desc, pct, total in progress_events)
 
 
 def test_cleanup_llm_runtime_memory_calls_gc(monkeypatch):

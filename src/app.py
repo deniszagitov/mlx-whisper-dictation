@@ -22,6 +22,7 @@ from .domain.audio import (
     microphone_menu_title as format_microphone_menu_title,
 )
 from .domain.constants import Config
+from .domain.model_downloads import ModelDownloadProgress, format_model_download_title
 from .domain.reader_constants import DEFAULT_TTS_RATE_MULTIPLIER
 from .domain.reader_types import (
     ClipboardContent,
@@ -676,6 +677,8 @@ class DictationApp:
         self.system_event_observer: Any = None
         self.application_activation_observer: Any = None
         self._llm_downloading = False
+        self._model_download_active = False
+        self._model_download_title = "📦 Загрузка моделей: нет"
         self._preferred_input_device_unavailable = False
         self._preferred_input_device_notified = False
         self._display_sleep_prevention_active = False
@@ -1317,6 +1320,22 @@ class DictationApp:
     def llm_download_title(self, value: str) -> None:
         self._llm_download_title = value
 
+    @property
+    def model_download_title(self) -> str:
+        """Возвращает строку общего прогресса загрузки моделей."""
+        return self._model_download_title
+
+    @property
+    def model_download_active(self) -> bool:
+        """Сообщает, идёт ли сейчас загрузка модели."""
+        return self._model_download_active
+
+    def handle_model_download_progress(self, progress: ModelDownloadProgress) -> None:
+        """Обновляет общий статус загрузки моделей для menu bar."""
+        self._model_download_active = not (progress.complete or progress.failed)
+        self._model_download_title = format_model_download_title(progress)
+        self._notify_subscribers()
+
     def subscribe(self, callback: Callable[[AppSnapshot], None]) -> None:
         """Подписывает UI или тесты на обновления snapshot."""
         self._subscribers.append(callback)
@@ -1370,6 +1389,8 @@ class DictationApp:
             llm_clipboard_enabled=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
             history=list(getattr(self.transcriber, "history", [])),
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
+            model_download_title=self._model_download_title,
+            model_download_active=self._model_download_active,
             llm_download_title=self._llm_download_title,
             llm_download_interactive=not self._llm_downloading and not self._is_llm_model_cached(),
             llm_model_name=self.llm_model_name,
@@ -1793,6 +1814,7 @@ class DictationApp:
 
     def download_llm_model(self) -> None:
         """Запускает загрузку LLM-модели и публикует прогресс в snapshot."""
+        LOGGER.info("📥 Запрошена загрузка LLM-модели из runtime")
         self.llm_pipeline_use_cases.download_llm_model()
 
     def change_llm_prompt(self, prompt_name: str) -> None:

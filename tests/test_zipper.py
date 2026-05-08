@@ -357,6 +357,29 @@ def test_zipper_hotkey_reports_uncached_llm_and_starts_download():
     assert any(event.kind == "error" and "LLM-модель ещё не скачана" in event.message for event in text_output.events)
 
 
+def test_zipper_starts_download_before_blocking_error_window():
+    """Загрузка LLM должна стартовать до modal-окна с предупреждением."""
+    use_case, runtime, recorder, text_output, _memory = make_use_case(llm_cached=False)
+    order: list[str] = []
+
+    def download_llm_model() -> None:
+        order.append("download")
+        runtime.download_requests += 1
+
+    def show_text(title: str, text: str) -> None:
+        del title, text
+        order.append("window")
+
+    runtime.download_llm_model = download_llm_model
+    text_output.show_text = show_text
+
+    use_case.toggle()
+
+    assert recorder.started is False
+    assert runtime.download_requests == 1
+    assert order == ["download", "window"]
+
+
 def test_zipper_builtin_tools_keep_clipboard_and_cli_explicitly_configured():
     """Встроенные инструменты и CLI-команды доступны только из конфига."""
     command = ZipperCliCommand(

@@ -865,6 +865,8 @@ class AppSnapshot:
     llm_clipboard_enabled: bool
     history: list[str]
     total_tokens: int
+    model_download_title: str
+    model_download_active: bool
     llm_download_title: str
     llm_download_interactive: bool
     llm_model_name: str

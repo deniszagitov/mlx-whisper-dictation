@@ -328,6 +328,8 @@ def make_snapshot(**overrides):
         llm_clipboard_enabled=True,
         history=["Привет мир"],
         total_tokens=123,
+        model_download_title="📦 Загрузка моделей: нет",
+        model_download_active=False,
         llm_download_title="✅ LLM-модель загружена",
         llm_download_interactive=False,
         llm_model_name="gemma-4-26b-a4b-it-4bit",
@@ -397,6 +399,8 @@ class FakeDictationController:
         self.llm_clipboard_enabled = snapshot.llm_clipboard_enabled
         self.history = list(snapshot.history)
         self.total_tokens = snapshot.total_tokens
+        self.model_download_title = snapshot.model_download_title
+        self.model_download_active = snapshot.model_download_active
         self.llm_model_name = snapshot.llm_model_name
         self.llm_model_options = list(snapshot.llm_model_options)
         self.zipper_enabled = snapshot.zipper_enabled
@@ -668,6 +672,16 @@ class TestStatusBarInit:
         assert app.llm_menu[app.llm_prompt_menu.title].title == app.llm_prompt_menu.title
         assert app.llm_menu[app.llm_clipboard_item.title].title == app.llm_clipboard_item.title
         assert app.llm_menu[app.llm_download_item.title].title == app.llm_download_item.title
+
+    def test_model_download_progress_visible_in_menu(self, make_app):
+        """Общий прогресс загрузки моделей должен быть отдельным пунктом меню."""
+        app, *_ = make_app(languages=["ru"])
+        title = "📥 ASR-модель: 50% (10 МБ/20 МБ) · 2 МБ/с · осталось 5 с"
+
+        app._apply_snapshot(make_snapshot(model_download_title=title, model_download_active=True))
+
+        assert app.model_download_item.title == title
+        assert app._menu_item(title).title == title
 
     def test_started_is_false(self, make_app):
         """Запись не запущена при инициализации."""

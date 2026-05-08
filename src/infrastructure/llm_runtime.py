@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 from ..domain.constants import Config
 from ..domain.llm_processing import sanitize_llm_response
+from .model_manager import default_model_manager
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,10 +29,7 @@ def _is_vlm_model(model_name: str) -> bool:
 
 def load_llm_runtime_objects(model_name: str) -> tuple[Any, Any]:
     """Загружает MLX LLM-модель и токенизатор по имени модели."""
-    from mlx_lm import load
-
-    loaded = load(model_name)
-    return loaded[0], loaded[1]
+    return default_model_manager().load_llm_runtime_objects(model_name)
 
 
 def generate_llm_text(model: Any, tokenizer: Any, prompt: str, max_tokens: int = Config.LLM_MAX_TOKENS) -> str:
@@ -43,10 +41,7 @@ def generate_llm_text(model: Any, tokenizer: Any, prompt: str, max_tokens: int =
 
 def load_vlm_runtime_objects(model_name: str) -> tuple[Any, Any]:
     """Загружает VLM-модель и процессор по имени модели."""
-    from mlx_vlm import load
-
-    model, processor = load(model_name)
-    return model, processor
+    return default_model_manager().load_vlm_runtime_objects(model_name)
 
 
 def generate_vlm_text(model: Any, processor: Any, prompt: str, max_tokens: int = Config.LLM_MAX_TOKENS) -> str:
@@ -63,13 +58,7 @@ def cleanup_llm_runtime_memory() -> None:
 
 def is_llm_model_cached(model_name: str) -> bool:
     """Проверяет, скачана ли модель в кэш Hugging Face."""
-    try:
-        from huggingface_hub import try_to_load_from_cache
-
-        result = try_to_load_from_cache(model_name, "config.json")
-        return result is not None and not isinstance(result, type)
-    except Exception:
-        return False
+    return default_model_manager().is_model_cached(model_name)
 
 
 def ensure_llm_model_downloaded(
@@ -77,65 +66,7 @@ def ensure_llm_model_downloaded(
     progress_callback: Callable[[str, float, int], None] | None = None,
 ) -> None:
     """Скачивает модель в кэш Hugging Face с пробросом прогресса в callback."""
-    from huggingface_hub import snapshot_download
-
-    class _ProgressTqdm:
-        """Обёртка tqdm, совместимая с snapshot_download и ensure_lock."""
-
-        _lock = None
-
-        def __init__(self, iterable: Any = None, *args: Any, **kwargs: Any) -> None:
-            self._iterable = iterable
-            self.total: int | float = int(kwargs.get("total", 0) or 0)
-            self.desc = str(kwargs.get("desc", ""))
-            self.n = 0
-
-        def __iter__(self) -> Any:
-            """Проксирует итерацию и обновляет прогресс по каждому элементу."""
-            if self._iterable is None:
-                return
-            for item in self._iterable:
-                yield item
-                self.update(1)
-
-        def update(self, n: int = 1) -> None:
-            """Увеличивает прогресс и сообщает его во внешний callback."""
-            self.n += n
-            if progress_callback is not None and self.total and self.total > 0:
-                pct = min(self.n / self.total * Config.DOWNLOAD_COMPLETE_PCT, Config.DOWNLOAD_COMPLETE_PCT)
-                progress_callback(self.desc, pct, int(self.total))
-
-        def close(self) -> None:
-            """Вызывается snapshot_download при завершении шага."""
-
-        def __enter__(self) -> _ProgressTqdm:
-            """Context manager вход."""
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            """Context manager выход."""
-
-        @classmethod
-        def get_lock(cls) -> Any:
-            """Возвращает lock для tqdm.contrib.concurrent.ensure_lock."""
-            import threading
-
-            if cls._lock is None:
-                cls._lock = threading.Lock()
-            return cls._lock
-
-        @classmethod
-        def set_lock(cls, lock: Any) -> None:
-            """Устанавливает lock для tqdm.contrib.concurrent.ensure_lock."""
-            cls._lock = lock
-
-    if progress_callback is not None:
-        progress_callback("Подготовка…", 0, 0)
-
-    snapshot_download(model_name, tqdm_class=_ProgressTqdm)
-
-    if progress_callback is not None:
-        progress_callback("", Config.DOWNLOAD_COMPLETE_PCT, 0)
+    default_model_manager().ensure_llm_model_downloaded(model_name, progress_callback)
 
 
 class LlmGateway:
@@ -147,7 +78,7 @@ class LlmGateway:
         runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
         generation_runner: Callable[[Any, Any, str, int], str] | None = None,
         model_cache_checker: Callable[[str], bool] | None = None,
-        model_downloader: Callable[[str, Callable[[str, float, int], None] | None], None] | None = None,
+        model_downloader: Callable[[str, Callable[..., None] | None], None] | None = None,
         memory_cleanup: Callable[[], None] | None = None,
         vlm_runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
         vlm_generation_runner: Callable[[Any, Any, str, int], str] | None = None,
@@ -155,7 +86,7 @@ class LlmGateway:
         """Создаёт gateway к LLM runtime."""
         self.model_name = model_name
         self.last_token_usage: int = 0
-        self.download_progress_callback: Callable[[str, float, int], None] | None = None
+        self.download_progress_callback: Callable[..., None] | None = None
         self.performance_mode: str = PERFORMANCE_MODE_NORMAL
         self._cached_model: Any | None = None
         self._cached_tokenizer: Any | None = None

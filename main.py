@@ -57,7 +57,6 @@ from src.domain.types import (  # noqa: F401
     RecordedAudio,
     TranscriberPreferences,
 )
-from src.infrastructure.asr_runtime import run_asr_transcription
 from src.infrastructure.audio_preprocessing import preprocess_recorded_audio, resample_to_16k  # noqa: F401
 from src.infrastructure.audio_runtime import Recorder, list_input_devices
 from src.infrastructure.clipboard_reader import PasteboardReader
@@ -75,13 +74,10 @@ from src.infrastructure.llm_runtime import (
 )
 from src.infrastructure.llm_runtime import (
     cleanup_llm_runtime_memory,
-    ensure_llm_model_downloaded,
     generate_llm_text,
     generate_vlm_text,
-    is_llm_model_cached,
-    load_llm_runtime_objects,
-    load_vlm_runtime_objects,
 )
+from src.infrastructure.model_manager import ModelManager
 from src.infrastructure.obsidian import (
     get_default_vault_path,
     search_obsidian_notes,
@@ -309,6 +305,7 @@ def main() -> None:
 
     app_preferences = AppPreferences.from_store(defaults)
     transcriber_preferences = TranscriberPreferences.from_store(defaults)
+    model_manager = ModelManager()
 
     transcriber = SpeechTranscriber(
         args.model,
@@ -318,7 +315,7 @@ def main() -> None:
             recording_artifact_cleanup_enabled=transcriber_preferences.audio_artifact_cleanup_enabled,
         ),
         audio_preprocessor=preprocess_recorded_audio,
-        transcription_runner=run_asr_transcription,
+        transcription_runner=model_manager.run_asr_transcription,
         type_text_via_cgevent=lambda text: type_text_via_cgevent(text, frontmost_app_info=frontmost_application_info),
         insert_text_via_ax=insert_text_via_ax,
         send_cmd_v=lambda: send_cmd_v(frontmost_app_info=frontmost_application_info),
@@ -338,12 +335,12 @@ def main() -> None:
     recorder = Recorder()
     llm_processor = LLMProcessor(
         args.llm_model,
-        runtime_loader=load_llm_runtime_objects,
+        runtime_loader=model_manager.load_llm_runtime_objects,
         generation_runner=generate_llm_text,
-        model_cache_checker=is_llm_model_cached,
-        model_downloader=ensure_llm_model_downloaded,
+        model_cache_checker=model_manager.is_model_cached,
+        model_downloader=model_manager.ensure_llm_model_downloaded,
         memory_cleanup=cleanup_llm_runtime_memory,
-        vlm_runtime_loader=load_vlm_runtime_objects,
+        vlm_runtime_loader=model_manager.load_vlm_runtime_objects,
         vlm_generation_runner=generate_vlm_text,
     )
 
@@ -386,7 +383,7 @@ def main() -> None:
     rsvp_display = RSVPOverlay()
     tts_speaker = ReaderTTSRouter(
         apple_speaker=MacOSTTSController(),
-        mlx_speaker=MlxStreamingTTSController(),
+        mlx_speaker=MlxStreamingTTSController(model_loader=model_manager.load_tts_model),
     )
     zipper_config_provider = ZipperConfigProvider(open_path=open_path)
     zipper_memory_store = FileZipperMemoryStore()
@@ -446,6 +443,7 @@ def main() -> None:
         zipper_mcp_tool_provider=ZipperMCPToolProviderService(tools_for_config=ZipperMCPToolProvider().tools_for_config),
         zipper_note_writer=ZipperNoteWriterService(write_note=ZipperNoteWriter().write_note),
     )
+    model_manager.set_progress_callback(app_controller.handle_model_download_progress)
     app_controller_holder["controller"] = app_controller
     app = StatusBarApp(cast("Any", app_controller))
     key_listener = hotkey_listener_factory.create_listener(app_controller)

@@ -111,6 +111,8 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self.llm_prompt_menu.add(item)
         self.llm_clipboard_item = rumps.MenuItem("🤖 Буфер обмена для LLM", callback=self.toggle_llm_clipboard)
         initial_snapshot = self.app.snapshot()
+        self.model_download_item = rumps.MenuItem(initial_snapshot.model_download_title)
+        self.model_download_item.set_callback(None)
         self.llm_download_item = rumps.MenuItem(initial_snapshot.llm_download_title, callback=self._download_llm_model)
 
         self.recording_notification_item = rumps.MenuItem(
@@ -327,6 +329,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             "Начать запись",
             "Остановить запись",
             self.status_item,
+            self.model_download_item,
             None,
             self.recognition_menu,
             self.postprocessing_menu,
@@ -1038,6 +1041,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.capitalize_first_letter_item.state = int(snapshot.capitalize_first_letter_enabled)
         self.remove_trailing_period_for_single_sentence_item.state = int(snapshot.remove_trailing_period_for_single_sentence_enabled)
         self.restore_trailing_period_on_next_dictation_item.state = int(snapshot.restore_trailing_period_on_next_dictation_enabled)
+        self.model_download_item.title = snapshot.model_download_title
         self.llm_download_item.title = snapshot.llm_download_title
         self.llm_download_item.set_callback(self._download_llm_model if snapshot.llm_download_interactive else None)
         self.llm_model_menu.title = f"🤖 LLM-модель: {snapshot.llm_model_name}"

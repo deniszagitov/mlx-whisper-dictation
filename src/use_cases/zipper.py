@@ -191,10 +191,11 @@ class ZipperUseCases:
             return
         if not self.llm_processor.is_model_cached():
             message = "LLM-модель ещё не скачана. Запускаю загрузку; после завершения нажмите хоткей Zipper ещё раз."
-            self._show_error(message)
             download = getattr(self.runtime, "download_llm_model", None)
             if callable(download):
+                LOGGER.info("🧷 Zipper запускает загрузку LLM-модели перед записью")
                 download()
+            self._show_error(message)
             return
         if not self.runtime.prepare_recording():
             self._show_error("Zipper не смог начать запись: нет доступного микрофона или приложение не готово к записи.")

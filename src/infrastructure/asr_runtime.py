@@ -12,11 +12,6 @@ try:
 except ImportError:
     mx = None  # type: ignore[assignment]
 
-try:
-    from mlx_audio.stt import load as load_mlx_audio_stt_model
-except ImportError:
-    load_mlx_audio_stt_model = None
-
 import mlx_whisper
 
 LOGGER = logging.getLogger(__name__)
@@ -136,19 +131,24 @@ def _map_qwen_language(language: str | None) -> str | None:
     return mapped
 
 
-def _get_cached_qwen_model(model_name: str) -> Any:
+def _load_qwen_model_from_mlx_audio(model_name: str) -> Any:
+    """Загружает Qwen3-ASR модель через mlx-audio."""
+    try:
+        from mlx_audio.stt import load as load_mlx_audio_stt_model  # noqa: PLC0415
+    except ImportError as exc:
+        raise RuntimeError("Для модели Qwen3-ASR нужна зависимость mlx-audio. Выполните `uv sync --dev`.") from exc
+    return load_mlx_audio_stt_model(model_name)
+
+
+def _get_cached_qwen_model(model_name: str, model_loader: Any | None = None) -> Any:
     """Загружает и кэширует экземпляр Qwen3-ASR-модели."""
     with _QWEN_MODEL_CACHE_LOCK:
         cached_model = _QWEN_MODEL_CACHE.get(model_name)
         if cached_model is not None:
             return cached_model
 
-    if load_mlx_audio_stt_model is None:
-        raise RuntimeError(
-            "Для модели Qwen3-ASR нужна зависимость mlx-audio. Выполните `uv sync --dev`."
-        )
-
-    model = load_mlx_audio_stt_model(model_name)
+    loader = model_loader or _load_qwen_model_from_mlx_audio
+    model = loader(model_name)
     with _QWEN_MODEL_CACHE_LOCK:
         _QWEN_MODEL_CACHE[model_name] = model
     return model
@@ -216,12 +216,18 @@ def run_whisper_transcription(audio_data: Any, model_name: str, language: str | 
     return result
 
 
-def run_qwen_transcription(audio_data: Any, model_name: str, language: str | None) -> dict[str, Any]:
+def run_qwen_transcription(
+    audio_data: Any,
+    model_name: str,
+    language: str | None,
+    *,
+    model_loader: Any | None = None,
+) -> dict[str, Any]:
     """Запускает один проход Qwen3-ASR через mlx-audio без промежуточного WAV."""
     if mx is None:
         raise RuntimeError("Не удалось импортировать MLX runtime для Qwen3-ASR.")
 
-    model = _get_cached_qwen_model(model_name)
+    model = _get_cached_qwen_model(model_name, model_loader=model_loader)
     generate_kwargs: dict[str, object] = {}
     qwen_language = _map_qwen_language(language)
     if qwen_language is not None:

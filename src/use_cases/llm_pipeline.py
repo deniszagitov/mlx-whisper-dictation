@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..domain.constants import Config
 from ..domain.llm_processing import should_use_clipboard_context
+from ..domain.model_downloads import format_bytes, format_model_download_metrics
 
 if TYPE_CHECKING:
     import numpy as np
@@ -193,22 +194,31 @@ class LlmPipelineUseCases:
             self.runtime.system_integration_service.notify("MLX Whisper Dictation", "Загрузка уже выполняется…")
             return
 
+        LOGGER.info("📥 Запускаю загрузку LLM-модели")
         self.runtime.llm_downloading = True
         self.runtime.llm_download_title = "📥 Загрузка LLM: 0%"
         self.publish_snapshot()
 
-        def on_progress(desc: str, pct: float, total_bytes: int) -> None:
+        def on_progress(
+            desc: str,
+            pct: float,
+            total_bytes: int,
+            speed_bytes_per_second: float | None = None,
+            eta_seconds: float | None = None,
+        ) -> None:
+            metrics = format_model_download_metrics(speed_bytes_per_second, eta_seconds)
+            suffix = f" · {metrics}" if metrics else ""
             if total_bytes > 0:
-                size_mb = total_bytes / (1024 * 1024)
-                self.runtime.llm_download_title = f"📥 Загрузка LLM: {pct:.0f}% ({size_mb:.0f} МБ)"
+                self.runtime.llm_download_title = f"📥 Загрузка LLM: {pct:.0f}% ({format_bytes(total_bytes)}){suffix}"
             elif pct >= Config.DOWNLOAD_COMPLETE_PCT:
                 self.runtime.llm_download_title = "✅ LLM-модель загружена"
             else:
-                self.runtime.llm_download_title = f"📥 Загрузка LLM: {desc}"
+                self.runtime.llm_download_title = f"📥 Загрузка LLM: {desc}{suffix}"
             self.publish_snapshot()
 
         def download_thread() -> None:
             try:
+                LOGGER.info("📥 Thread загрузки LLM-модели стартовал")
                 llm_proc.download_progress_callback = on_progress
                 llm_proc.ensure_model_downloaded()
                 self.runtime.llm_download_title = "✅ LLM-модель загружена"

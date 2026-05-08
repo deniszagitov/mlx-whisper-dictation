@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..domain.reader_constants import TTS_MLX_STREAMING_INTERVAL_SECONDS
+from .model_manager import default_model_manager
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -143,12 +144,8 @@ class MlxStreamingTTSController:
         self._clear_mlx_cache()
 
     def _load_model_from_mlx_audio(self, model_name: str) -> Any:
-        """Загружает TTS-модель через mlx-audio."""
-        try:
-            from mlx_audio.tts import load as load_mlx_audio_tts_model  # noqa: PLC0415
-        except ImportError as exc:
-            raise RuntimeError("Для MLX TTS нужна зависимость mlx-audio. Выполните uv sync --dev.") from exc
-        return load_mlx_audio_tts_model(model_name)
+        """Загружает TTS-модель через централизованный менеджер моделей."""
+        return default_model_manager().load_tts_model(model_name)
 
     def _create_audio_player(self, sample_rate: int) -> Any:
         """Создаёт потоковый audio player mlx-audio."""

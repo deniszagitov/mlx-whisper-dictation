@@ -88,7 +88,7 @@ class FakeLlmProcessor:
     def ensure_model_downloaded(self) -> None:
         """Эмулирует загрузку модели с callback прогресса."""
         if self.download_progress_callback is not None:
-            self.download_progress_callback("weights", 25.0, 50 * 1024 * 1024)
+            self.download_progress_callback("weights", 25.0, 50 * 1024 * 1024, 5 * 1024 * 1024, 8)
             self.download_progress_callback("", Config.DOWNLOAD_COMPLETE_PCT, 0)
         if self.download_error is not None:
             raise self.download_error
@@ -369,6 +369,7 @@ def test_download_llm_model_updates_progress_and_finishes(monkeypatch: pytest.Mo
     assert runtime.llm_downloading is False
     assert runtime.llm_download_title == "✅ LLM-модель загружена"
     assert any("25%" in title for title in published)
+    assert any("5 МБ/с" in title and "осталось 8 с" in title for title in published)
     assert published[-1] == "✅ LLM-модель загружена"
     assert llm_processor.download_progress_callback is None
     assert ("MLX Whisper Dictation", "LLM-модель успешно загружена.") in notifications
