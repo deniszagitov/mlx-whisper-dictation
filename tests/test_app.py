@@ -500,6 +500,66 @@ def test_reader_tts_rate_default_migration_resets_previous_speed_once():
     assert controller.reader_tts_rate_multiplier == 1.4
 
 
+def test_reader_tts_engine_default_migration_resets_previous_backend_once():
+    """Сохранённый backend TTS один раз сбрасывается на Apple AVSpeech."""
+    values: dict[str, object] = {
+        Config.DEFAULTS_KEY_READER_TTS_ENGINE: "mlx",
+    }
+    settings_store = FakeSettingsStore()
+
+    def contains_key(key):
+        return key in values
+
+    def load_str(key, fallback=None):
+        return values.get(key, fallback)
+
+    def save_str(key, value):
+        values[key] = str(value)
+
+    def save_bool(key, value):
+        values[key] = bool(value)
+
+    settings_store.contains_key = contains_key  # type: ignore[assignment]
+    settings_store.load_str = load_str  # type: ignore[assignment]
+    settings_store.save_str = save_str  # type: ignore[assignment]
+    settings_store.save_bool = save_bool  # type: ignore[assignment]
+
+    def create_controller():
+        return app_module.DictationApp(
+            recorder=cast("Any", FakeRecorder()),
+            transcriber=cast("Any", FakeTranscriber()),
+            llm_processor=cast("Any", FakeLLMProcessor()),
+            launch_config=LaunchConfig.from_sources(
+                model="mlx-community/whisper-large-v3-turbo",
+                language=["ru"],
+                max_time=30,
+                llm_model=Config.DEFAULT_LLM_MODEL_NAME,
+                key_combination="cmd_l+alt",
+                secondary_key_combination=None,
+                llm_key_combination=None,
+            ),
+            clipboard_service=app_module.ClipboardService(read_text=lambda: None, write_text=lambda _text: None),
+            microphone_profiles_service=app_module.MicrophoneProfilesService(
+                load_profiles=lambda: [],
+                save_profiles=lambda _profiles: None,
+            ),
+            system_integration_service=make_system_integration_service(),
+            input_device_catalog=app_module.InputDeviceCatalogService(list_input_devices=lambda: []),
+            settings_store=cast("Any", settings_store),
+        )
+
+    controller = create_controller()
+
+    assert controller.reader_tts_engine == "apple"
+    assert values[Config.DEFAULTS_KEY_READER_TTS_ENGINE] == "apple"
+    assert values[Config.DEFAULTS_KEY_READER_TTS_ENGINE_DEFAULT_V2] is True
+
+    values[Config.DEFAULTS_KEY_READER_TTS_ENGINE] = "mlx"
+    controller = create_controller()
+
+    assert controller.reader_tts_engine == "mlx"
+
+
 def test_refresh_input_devices_rebinds_selected_microphone_by_name(monkeypatch):
     """После переиндексации устройств приложение должно вернуть выбранный микрофон по имени."""
     recorder = FakeRecorder()

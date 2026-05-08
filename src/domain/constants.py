@@ -114,6 +114,7 @@ class Config:
     DEFAULTS_KEY_READER_TTS_VOICE_ID = "reader.tts.voice_id"
     DEFAULTS_KEY_READER_TTS_MAX_MINUTES = "reader.tts.max_minutes"
     DEFAULTS_KEY_READER_TTS_ENGINE = "reader.tts.engine"
+    DEFAULTS_KEY_READER_TTS_ENGINE_DEFAULT_V2 = "reader.tts.engine.default_v2"
     DEFAULTS_KEY_READER_TTS_MLX_MODEL = "reader.tts.mlx_model"
     DEFAULTS_KEY_READER_TTS_MLX_VOICE_DESCRIPTION = "reader.tts.mlx_voice_description"
     DEFAULTS_KEY_READER_TTS_TONE_INSTRUCTION = "reader.tts.tone_instruction"

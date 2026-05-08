@@ -23,7 +23,7 @@ from .domain.audio import (
 )
 from .domain.constants import Config
 from .domain.model_downloads import ModelDownloadProgress, ModelRequiredError, format_model_download_title
-from .domain.reader_constants import DEFAULT_TTS_RATE_MULTIPLIER
+from .domain.reader_constants import DEFAULT_TTS_ENGINE, DEFAULT_TTS_RATE_MULTIPLIER
 from .domain.reader_types import (
     ClipboardContent,
     ReaderClipboardPort,
@@ -552,6 +552,7 @@ class DictationApp:
         self.launch_config = launch_config
         self.app_preferences = app_preferences or AppPreferences.from_store(self.settings_store)
         self._migrate_reader_tts_rate_default()
+        self._migrate_reader_tts_engine_default()
         self.reader_preferences = ReaderPreferences.from_store(self.settings_store, llm_model=self.launch_config.llm_model)
         self.hotkey_status = self.launch_config.hotkeys.hotkey_status
         self.secondary_hotkey_status = self.launch_config.hotkeys.secondary_hotkey_status
@@ -797,6 +798,13 @@ class DictationApp:
             return
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_RATE_MULTIPLIER, DEFAULT_TTS_RATE_MULTIPLIER)
         self.settings_store.save_bool(Config.DEFAULTS_KEY_READER_TTS_RATE_DEFAULT_V2, True)
+
+    def _migrate_reader_tts_engine_default(self) -> None:
+        """Одноразово сбрасывает дефолтный backend TTS на Apple AVSpeech."""
+        if self.settings_store.contains_key(Config.DEFAULTS_KEY_READER_TTS_ENGINE_DEFAULT_V2):
+            return
+        self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_ENGINE, DEFAULT_TTS_ENGINE)
+        self.settings_store.save_bool(Config.DEFAULTS_KEY_READER_TTS_ENGINE_DEFAULT_V2, True)
 
     def _save_input_device_name_preference(self, device_name: str | None) -> None:
         """Сохраняет предпочитаемое имя микрофона в настройках."""
