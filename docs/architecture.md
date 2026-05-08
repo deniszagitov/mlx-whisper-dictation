@@ -57,3 +57,31 @@ flowchart TD
 3. `StatusBarApp` подписывается на snapshot `DictationApp` и обновляет menu bar.
 4. Use-case сервисы меняют только состояние `DictationApp` и публикуют новый snapshot.
 5. Если автовставка не удалась, текст по-прежнему сохраняется через fallback в историю и, при включённой опции, в буфер обмена.
+
+## Функциональные потоки
+
+Подробные пользовательские сценарии описаны отдельно:
+
+- [Функциональное описание](functional-overview.md) фиксирует сценарии, хоткеи, входные и выходные данные, fallback-правила и пользовательские результаты.
+- [Диаграммы потоков данных](data-flow.md) показывают DFD-схемы для обычной диктовки, `Whisper -> LLM`, Reader RSVP/TTS, Zipper и загрузки моделей.
+
+В терминах архитектуры DFD показывает поток данных поверх слоёв:
+
+```mermaid
+flowchart LR
+    Triggers["Хоткеи / menu bar"] --> App["DictationApp"]
+    App --> UseCases["Use cases"]
+    UseCases --> Domain["Domain rules"]
+    UseCases --> Ports["Injected ports"]
+    Ports --> Infra["Infrastructure adapters"]
+    Infra --> MacOS["macOS / MLX / PyAudio / NSUserDefaults"]
+    MacOS --> Infra
+    Infra --> Ports
+    Ports --> UseCases
+    UseCases --> App
+    App --> UI["Snapshot -> StatusBarApp"]
+```
+
+Главное ограничение остаётся прежним: сценарии диктовки, Reader и Zipper могут
+использовать общий runtime и настройки, но не должны обходить use case-слой
+прямыми вызовами infrastructure из UI.

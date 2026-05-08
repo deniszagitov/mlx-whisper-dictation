@@ -1,29 +1,38 @@
 # Runtime API
 
-Этот раздел описывает runtime-часть после перехода на Clean Architecture.
+Этот раздел собирается автоматически по актуальной слоистой структуре проекта в каталоге `src/`.
 
-## Что покрывает раздел
+## Что покрывает автогенерация
 
-- composition root в `main.py`;
-- слой `domain` с чистыми правилами и типами;
-- слой `use_cases` со сценариями приложения;
-- adapters для menu bar UI и overlay;
-- infrastructure для macOS runtime, MLX, persistence и хоткеев.
+- точку входа приложения и CLI-аргументы;
+- domain-правила, настройки и типы;
+- запись звука, ASR/LLM/TTS runtime, hotkey runtime, разрешения macOS и menu bar UI;
+- use case-сценарии распознавания, истории, Reader, LLM-пайплайна и Zipper;
+- инфраструктуру Zipper: конфиг, память, allowlist CLI, MCP и LangChain agent.
 
 ## Карта runtime-модулей
 
 - [CLI и запуск](entrypoint.md) — Приложение офлайн-диктовки для macOS на базе MLX Whisper.
-- [Domain и настройки](modules/config.md) — Константы, типы, порты и NSUserDefaults adapter.
-- [Аудио и микрофон](modules/audio.md) — Domain-утилиты микрофона и runtime-запись через PyAudio.
+- [Domain и настройки](modules/config.md) — Чистые константы и helper-функции приложения Dictator.
+- [Аудио и микрофон](modules/audio.md) — Runtime-запись звука и перечисление устройств ввода через PyAudio.
+- [ASR runtime](modules/asr_runtime.md) — Runtime-обёртки над локальными ASR backend-ами.
+- [Model manager](modules/model_manager.md) — Централизованный менеджер локальных MLX-моделей.
 - [Диагностика](modules/diagnostics.md) — Логирование и сохранение диагностических артефактов приложения.
 - [История распознавания](modules/history.md) — Persistence истории распознанного текста через NSUserDefaults.
 - [LLM runtime](modules/llm_runtime.md) — Runtime-адаптеры для загрузки, генерации и выгрузки MLX LLM.
-- [Горячие клавиши](modules/hotkeys.md) — Domain-правила, runtime-listener'ы и UI-захват комбинаций.
-- [Разрешения macOS](modules/permissions.md) — Разрешения macOS и системные утилиты приложения.
-- [Распознавание и вставка](modules/transcriber.md) — Domain-правила и `TranscriptionUseCases`.
-- [LLM-обработка](modules/llm.md) — Domain-обработка, LLM pipeline и `LlmGateway`.
-- [Menu bar UI](modules/ui.md) — `StatusBarApp`, `RecordingOverlay` и `DictationApp`.
+- [Глобальные хоткеи](modules/hotkeys.md) — Горячие клавиши и единый keyboard dispatcher приложения Dictator.
+- [Разрешения macOS](modules/permissions.md) — Разрешения macOS и системные утилиты приложения Dictator.
+- [Распознавание и вставка](modules/transcriber.md) — Use case распознавания речи, вставки текста и истории.
+- [LLM-обработка](modules/llm.md) — Use case-сценарии LLM-пайплайна и загрузки модели.
+- [Reader source](modules/reader_source.md) — Общие правила чтения источника reader-сценариев из буфера обмена.
+- [Reader preprocessing](modules/reader_preprocessing.md) — Use case предобработки текста reader-модуля через локальную LLM.
+- [Reader RSVP](modules/reader_rsvp.md) — Use case запуска RSVP-чтения текста из буфера обмена.
+- [Reader TTS](modules/reader_tts.md) — Use case запуска ускоренного TTS из буфера обмена.
+- [Zipper use case](modules/zipper.md) — Use case-сценарии голосового агента Zipper.
+- [Zipper config](modules/zipper_config.md) — Загрузка и нормализация TOML-конфига Zipper.
+- [Zipper runtime](modules/zipper_runtime.md) — Инфраструктурные адаптеры Zipper: память, инструменты, URL и агент.
+- [Menu bar UI](modules/ui.md) — UI menu bar приложения Dictator.
 
 ## Как обновляется документация
 
-Страницы в `docs/api/` синхронизируются вместе с кодом при архитектурных и пользовательских изменениях. Для текущего refactor-а они обновлены вручную под новую слоистую структуру.
+Перед каждой сборкой MkDocs запускается `scripts/generate_docs.py`, который перечитывает текущий Python-код и перегенерирует страницы API в каталоге `docs/api/`.

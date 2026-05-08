@@ -16,6 +16,8 @@ theme:
 
 nav:
   - Обзор: index.md
+  - Функциональное описание: functional-overview.md
+  - Потоки данных: data-flow.md
   - Архитектура: architecture.md
   - API:
       - Runtime overview: api/runtime.md
@@ -23,13 +25,26 @@ nav:
       - Runtime-модули:
           - Domain и настройки: api/modules/config.md
           - Аудио и микрофон: api/modules/audio.md
+          - ASR runtime: api/modules/asr_runtime.md
+          - Model manager: api/modules/model_manager.md
           - Диагностика: api/modules/diagnostics.md
+          - История распознавания: api/modules/history.md
           - Глобальные хоткеи: api/modules/hotkeys.md
           - Разрешения macOS: api/modules/permissions.md
           - Распознавание и вставка: api/modules/transcriber.md
           - LLM-обработка: api/modules/llm.md
+          - LLM runtime: api/modules/llm_runtime.md
+          - Reader source: api/modules/reader_source.md
+          - Reader preprocessing: api/modules/reader_preprocessing.md
+          - Reader RSVP: api/modules/reader_rsvp.md
+          - Reader TTS: api/modules/reader_tts.md
+          - Zipper use case: api/modules/zipper.md
+          - Zipper config: api/modules/zipper_config.md
+          - Zipper runtime: api/modules/zipper_runtime.md
           - Menu bar UI: api/modules/ui.md
       - Сборка: api/setup.md
+  - Zipper:
+      - Функциональные требования: zipper/zipper_functional_requirements.md
 
 plugins:
   - search

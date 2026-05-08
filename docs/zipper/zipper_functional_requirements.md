@@ -309,6 +309,19 @@ Dictator.
 В AGENTS.md нужно добавить, что при изменении Zipper нужно обновлять
 документацию и тесты.
 
+Общее техническое описание Zipper теперь также должно быть синхронизировано с:
+
+```text
+docs/functional-overview.md
+docs/data-flow.md
+docs/api/modules/zipper.md
+docs/api/modules/zipper_config.md
+docs/api/modules/zipper_runtime.md
+```
+
+В этих страницах фиксируются пользовательский поток Zipper, входные и выходные
+данные, DFD-схема, конфиг, память, allowlist CLI, MCP fallback и runtime-границы.
+
 ## 17. Что входит в первый этап
 
 В первый этап входит:

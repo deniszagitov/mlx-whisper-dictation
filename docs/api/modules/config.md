@@ -1,18 +1,45 @@
 # Domain и настройки
 
-Старый `src/config.py` разделён на несколько модулей по слоям:
+Исходный файл: `src/domain/constants.py`
 
-- `src/domain/constants.py`
-  - Константы, пресеты моделей, лимитов записи и статусов UI.
-- `src/domain/types.py`
-  - `HistoryRecord`, `AudioDeviceInfo`, `MicrophoneProfile`, `AudioDiagnostics`.
-- `src/domain/ports.py`
-  - Протоколы внешних зависимостей: recorder, overlay, persistence, clipboard, system integration, LLM.
-- `src/infrastructure/persistence/defaults.py`
-  - Concrete-обёртка над `NSUserDefaults`.
+Чистые константы и helper-функции приложения Dictator.
 
-## Что важно
+## Классы
 
-- `domain` больше не импортирует `Foundation`.
-- `Defaults` больше не протекает транзитивно через общий модуль конфигурации.
-- Use-case слой работает через `SettingsStoreProtocol`, а concrete `Defaults` создаётся только в `main.py`.
+## `Config`
+
+Константы и пресеты приложения Dictator.
+
+### Методы
+
+#### `format_max_time_status`
+
+```python
+format_max_time_status(max_time: int | float | None) -> str
+```
+
+Преобразует лимит длительности записи в строку для меню.
+
+#### `performance_mode_label`
+
+```python
+performance_mode_label(performance_mode: str) -> str
+```
+
+Возвращает человекочитаемое имя режима работы.
+
+#### `normalize_performance_mode`
+
+```python
+normalize_performance_mode(performance_mode: object) -> str
+```
+
+Нормализует идентификатор режима работы.
+
+#### `audio_profile_label`
+
+```python
+audio_profile_label(profile_name: str) -> str
+```
+
+Возвращает человекочитаемую подпись аудиопрофиля.
