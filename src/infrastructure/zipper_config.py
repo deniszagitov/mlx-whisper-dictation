@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import tomllib
 from pathlib import Path
@@ -15,6 +16,8 @@ from ..domain.zipper import (
     ZipperDebugConfig,
     ZipperMCPServer,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def example_config_path() -> Path:
@@ -216,10 +219,20 @@ class ZipperConfigProvider:
     def load_config(self) -> ZipperConfig:
         """Загружает конфиг с приоритетом user > local > example."""
         raw: dict[str, Any] = {}
+        loaded_paths: list[str] = []
         for path in (self.example_path, self.local_path, self.user_path):
             if path.exists():
+                loaded_paths.append(str(path))
                 raw = _deep_merge(raw, _read_toml(path))
-        return normalize_config(raw)
+        config = normalize_config(raw)
+        LOGGER.info(
+            "🧷 Конфиг Zipper загружен: enabled=%s, debug=%s, user_path=%s, sources=%s",
+            config.enabled,
+            config.debug.enabled,
+            self.user_path,
+            ", ".join(loaded_paths) or "нет",
+        )
+        return config
 
     def open_config(self) -> bool:
         """Открывает пользовательский конфиг через системную интеграцию."""

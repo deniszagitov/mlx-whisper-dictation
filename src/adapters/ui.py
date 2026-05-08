@@ -110,7 +110,8 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             item.state = int(prompt_name == self.llm_prompt_name)
             self.llm_prompt_menu.add(item)
         self.llm_clipboard_item = rumps.MenuItem("🤖 Буфер обмена для LLM", callback=self.toggle_llm_clipboard)
-        self.llm_download_item = rumps.MenuItem(self.app.snapshot().llm_download_title, callback=self._download_llm_model)
+        initial_snapshot = self.app.snapshot()
+        self.llm_download_item = rumps.MenuItem(initial_snapshot.llm_download_title, callback=self._download_llm_model)
 
         self.recording_notification_item = rumps.MenuItem(
             "🔔 Уведомление о старте записи",
@@ -242,14 +243,22 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.reader_menu.add(self.reader_preprocess_item)
 
         self.zipper_menu = rumps.MenuItem("🧷 Zipper")
-        self.zipper_toggle_item = rumps.MenuItem("Включить Zipper", callback=self.toggle_zipper_enabled)
+        self.zipper_toggle_item = rumps.MenuItem(
+            "Выключить Zipper" if initial_snapshot.zipper_enabled else "Включить Zipper",
+            callback=self.toggle_zipper_enabled,
+        )
+        self.zipper_toggle_item.state = int(initial_snapshot.zipper_enabled)
         self.zipper_status_item = rumps.MenuItem(f"Статус: {self.zipper_status}")
         self.zipper_status_item.set_callback(None)
         self.zipper_run_item = rumps.MenuItem(f"Запустить Zipper    {self.zipper_hotkey_status}", callback=self.start_zipper)
         self.zipper_menu_hotkey_item = rumps.MenuItem(f"Хоткей: {self.zipper_hotkey_status}", callback=self.change_zipper_hotkey)
-        self.zipper_config_item = rumps.MenuItem("Открыть конфиг Zipper…", callback=self.open_zipper_config)
+        self.zipper_config_item = rumps.MenuItem(
+            f"Открыть конфиг Zipper… ({initial_snapshot.zipper_config_path})",
+            callback=self.open_zipper_config,
+        )
         self.zipper_reload_config_item = rumps.MenuItem("Перезагрузить конфиг Zipper", callback=self.reload_zipper_config)
         self.zipper_debug_item = rumps.MenuItem("Debug-панель Zipper", callback=self.toggle_zipper_debug_panel)
+        self.zipper_debug_item.state = int(initial_snapshot.zipper_debug_panel_enabled)
         self.zipper_clear_context_item = rumps.MenuItem("Очистить контекст Zipper", callback=self.clear_zipper_context)
         self.zipper_clear_memory_item = rumps.MenuItem("Очистить постоянную память Zipper", callback=self.clear_zipper_memory)
         self.zipper_menu.add(self.zipper_toggle_item)

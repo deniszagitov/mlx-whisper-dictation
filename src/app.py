@@ -762,6 +762,13 @@ class DictationApp:
         self.zipper_enabled = self.zipper_use_cases.config.enabled
         self.zipper_debug_panel_enabled = self.zipper_use_cases.config.debug.enabled
         self.zipper_text_output.set_debug_visible(self.zipper_debug_panel_enabled)
+        LOGGER.info(
+            "🧷 Runtime Zipper инициализирован: enabled=%s, debug_panel=%s, status=%s, config_path=%s",
+            self.zipper_enabled,
+            self.zipper_debug_panel_enabled,
+            self.zipper_status,
+            self.zipper_config_path,
+        )
         self.hotkey_management_use_cases = HotkeyManagementUseCases(
             runtime=self,
             settings_store=self.settings_store,

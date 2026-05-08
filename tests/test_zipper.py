@@ -373,7 +373,7 @@ def test_zipper_builtin_tools_keep_clipboard_and_cli_explicitly_configured():
     assert tools["cli_date"].run("") == "cli output"
 
 
-def test_zipper_config_provider_merges_example_local_and_user(tmp_path):
+def test_zipper_config_provider_merges_example_local_and_user(tmp_path, caplog):
     """Конфиг Zipper поддерживает example/local/user с ожидаемым приоритетом."""
     example = tmp_path / "example.toml"
     local = tmp_path / "zipper.local.toml"
@@ -402,6 +402,7 @@ enabled = true
     )
 
     provider = ZipperConfigProvider(example_path=example, local_path=local, user_path=user, open_path=lambda path: True)
+    caplog.set_level("INFO", logger="src.infrastructure.zipper_config")
     config = provider.load_config()
 
     assert config.enabled is True
@@ -409,6 +410,10 @@ enabled = true
     assert config.context.max_tokens == 10
     assert config.context.max_events == 3
     assert config.debug.enabled is True
+    assert "Конфиг Zipper загружен: enabled=True, debug=True" in caplog.text
+    assert str(example) in caplog.text
+    assert str(local) in caplog.text
+    assert str(user) in caplog.text
 
 
 def test_zipper_summarizes_context_to_persistent_memory():

@@ -1766,6 +1766,9 @@ class TestStatusBarWithFakeController:
         assert "custom-whisper" in app.model_item.title
         assert "456" in app.token_usage_item.title
         assert "ru" in app.language_item.title
+        assert app.zipper_toggle_item.title == "Выключить Zipper"
+        assert app.zipper_toggle_item.state == 1
+        assert "/tmp/zipper.toml" in app.zipper_config_item.title
 
     def test_subscription_updates_menu_from_new_snapshot(self):
         """При новом snapshot UI должен обновить статус и заголовки без знания runtime."""
