@@ -50,7 +50,13 @@ def request_application_quit(sender: object | None = None, *, emit_before_quit: 
             rumps.events.before_quit.emit()
         AppKit.NSApplication.sharedApplication().terminate_(sender)
 
-    callLater(APPKIT_QUIT_DEFER_SECONDS, terminate_application)
+    def schedule_termination() -> None:
+        callLater(APPKIT_QUIT_DEFER_SECONDS, terminate_application)
+
+    if AppKit.NSThread.isMainThread():
+        schedule_termination()
+        return
+    callAfter(schedule_termination)
 
 
 def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
@@ -365,6 +371,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         ]
 
         self.menu = menu
+        self._ensure_quit_item_available()
         self.status_timer = rumps.Timer(self.on_status_tick, 1)
         self.status_timer.start()
 
@@ -748,6 +755,12 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             raise KeyError(title)
         return item
 
+    def _ensure_quit_item_available(self) -> None:
+        """Оставляет пункт «Выход» активным во всех состояниях menu bar."""
+        self.quit_item.set_callback(self.quit_application)
+        with contextlib.suppress(Exception):
+            self.quit_item._menuitem.setEnabled_(True)
+
     def _state_label(self) -> str:
         """Возвращает человекочитаемое имя текущего состояния."""
         labels = {
@@ -1095,6 +1108,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
         if not snapshot.started:
             self._refresh_title_and_status()
+        self._ensure_quit_item_available()
         self._last_snapshot = snapshot
 
     def _apply_download_status_snapshot(self, snapshot: AppSnapshot) -> bool:
@@ -1124,6 +1138,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.model_download_item.title = snapshot.model_download_title
         self.llm_download_item.title = snapshot.llm_download_title
         self.llm_download_item.set_callback(self._download_llm_model if snapshot.llm_download_interactive else None)
+        self._ensure_quit_item_available()
         self._last_snapshot = snapshot
         return True
 
@@ -1436,6 +1451,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
     def on_status_tick(self, _: object) -> None:
         """Обновляет индикатор времени записи в строке меню."""
+        self._ensure_quit_item_available()
         self.app.on_status_tick()
         if not self.started:
             self._refresh_title_and_status()

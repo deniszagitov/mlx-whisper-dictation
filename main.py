@@ -367,25 +367,27 @@ def _build_cli_shutdown_handler(
     rsvp_display: Any,
     display_sleep_prevention_service: DisplaySleepPreventionService,
     quit_application: Any = None,
-    force_exit: Any = os._exit,
-    timer_factory: Any = threading.Timer,
+    force_exit: Any = None,
+    timer_factory: Any = None,
     stop_runtime: Any = None,
 ) -> Any:
     """Создаёт обработчик SIGINT/SIGTERM для запуска из терминала."""
     shutdown_requested = False
     quit_app = quit_application or (lambda sender: request_application_quit(sender, emit_before_quit=False))
+    force_exit_callback = force_exit or os._exit
+    timer_factory_callback = timer_factory or threading.Timer
 
     def handler(signum: int, _frame: Any = None) -> None:
         nonlocal shutdown_requested
         exit_code = 128 + int(signum)
         if shutdown_requested:
             LOGGER.warning("🛑 Получен повторный сигнал завершения, выхожу принудительно: signal=%s", signum)
-            force_exit(exit_code)
+            force_exit_callback(exit_code)
             return
 
         shutdown_requested = True
         LOGGER.info("🛑 Получен сигнал завершения из CLI: signal=%s", signum)
-        timer = timer_factory(CLI_FORCE_EXIT_DELAY_SECONDS, lambda: force_exit(exit_code))
+        timer = timer_factory_callback(CLI_FORCE_EXIT_DELAY_SECONDS, lambda: force_exit_callback(exit_code))
         timer.daemon = True
         timer.start()
 
@@ -414,14 +416,16 @@ def _install_cli_shutdown_handlers(
 ) -> None:
     """Регистрирует Ctrl-C/Ctrl-Term shutdown для запуска приложения из CLI."""
     cleanup_lock = threading.RLock()
-    cleanup_done = False
+    runtime_cleanup_done = False
+    signal_wait_cleanup_done = False
+    signal_wait_cleanup = None
 
     def cleanup_runtime_once(*_args: Any, **_kwargs: Any) -> None:
-        nonlocal cleanup_done
+        nonlocal runtime_cleanup_done
         with cleanup_lock:
-            if cleanup_done:
+            if runtime_cleanup_done:
                 return
-            cleanup_done = True
+            runtime_cleanup_done = True
         _stop_runtime_for_cli_shutdown(
             app_controller=app_controller,
             key_listener=key_listener,
@@ -429,6 +433,13 @@ def _install_cli_shutdown_handlers(
             rsvp_display=rsvp_display,
             display_sleep_prevention_service=display_sleep_prevention_service,
         )
+
+    def cleanup_signal_wait_once() -> None:
+        nonlocal signal_wait_cleanup_done
+        with cleanup_lock:
+            if signal_wait_cleanup_done:
+                return
+            signal_wait_cleanup_done = True
         if callable(signal_wait_cleanup):
             signal_wait_cleanup()
 
@@ -459,6 +470,7 @@ def _install_cli_shutdown_handlers(
 
     def cleanup_before_quit(*_args: Any, **_kwargs: Any) -> None:
         cleanup_runtime_once()
+        cleanup_signal_wait_once()
 
     rumps.events.before_start.register(install_mach_signal_handlers)
     rumps.events.before_quit.register(cleanup_before_quit)

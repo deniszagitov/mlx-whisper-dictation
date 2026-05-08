@@ -221,6 +221,7 @@ class HotkeyDispatcher:
         self._event_tap: Any = None
         self._tap_source: Any = None
         self._tap_run_loop: Any = None
+        self._stopping = False
         self._escape_key_up_suppressed = False
         self._pending_modifier_only_binding: _HotkeyBinding | None = None
         self.update_hotkeys(
@@ -236,6 +237,7 @@ class HotkeyDispatcher:
         """Запускает единый CGEventTap без leaky-fallback режима."""
         if self._event_tap is not None:
             return
+        self._stopping = False
 
         event_mask = (
             Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged)
@@ -269,18 +271,22 @@ class HotkeyDispatcher:
 
     def stop(self) -> None:
         """Останавливает единый keyboard dispatcher."""
-        if self._event_tap is not None:
-            Quartz.CGEventTapEnable(self._event_tap, False)
-            if self._tap_source is not None and self._tap_run_loop is not None:
-                Quartz.CFRunLoopRemoveSource(
-                    self._tap_run_loop,
-                    self._tap_source,
-                    Quartz.kCFRunLoopCommonModes,
-                )
-        self._event_tap = None
-        self._tap_source = None
-        self._tap_run_loop = None
-        self._reset_runtime_state()
+        self._stopping = True
+        try:
+            if self._event_tap is not None:
+                Quartz.CGEventTapEnable(self._event_tap, False)
+                if self._tap_source is not None and self._tap_run_loop is not None:
+                    Quartz.CFRunLoopRemoveSource(
+                        self._tap_run_loop,
+                        self._tap_source,
+                        Quartz.kCFRunLoopCommonModes,
+                    )
+            self._event_tap = None
+            self._tap_source = None
+            self._tap_run_loop = None
+            self._reset_runtime_state()
+        finally:
+            self._stopping = False
 
     def on_system_wake(self) -> None:
         """Восстанавливает CGEventTap после выхода системы из sleep."""
@@ -513,15 +519,21 @@ class HotkeyDispatcher:
 
     def _cgevent_tap_callback(self, _proxy: Any, event_type: int, cg_event: Any, _refcon: Any) -> Any | None:
         if event_type == Quartz.kCGEventTapDisabledByTimeout:
-            LOGGER.warning("⌨️ CGEventTap отключён по таймауту, включаем обратно")
             self._reset_runtime_state()
+            if self._stopping:
+                LOGGER.info("⌨️ CGEventTap отключён при штатной остановке dispatcher-а")
+                return cg_event
+            LOGGER.warning("⌨️ CGEventTap отключён по таймауту, включаем обратно")
             if self._event_tap is not None:
                 Quartz.CGEventTapEnable(self._event_tap, True)
             return cg_event
 
         if event_type == Quartz.kCGEventTapDisabledByUserInput:
-            LOGGER.warning("⌨️ CGEventTap отключён системой, включаем обратно")
             self._reset_runtime_state()
+            if self._stopping:
+                LOGGER.info("⌨️ CGEventTap отключён при штатной остановке dispatcher-а")
+                return cg_event
+            LOGGER.warning("⌨️ CGEventTap отключён системой, включаем обратно")
             if self._event_tap is not None:
                 Quartz.CGEventTapEnable(self._event_tap, True)
             return cg_event

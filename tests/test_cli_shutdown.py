@@ -256,3 +256,60 @@ def test_install_cli_shutdown_handlers_runs_before_quit_cleanup_once(app_module,
         "display_release",
         "signal_cleanup",
     ]
+
+
+def test_installed_cli_handler_keeps_second_ctrl_c_force_exit(app_module, monkeypatch):
+    """После первого Ctrl-C sigwait остаётся активным, чтобы повторный Ctrl-C мог завершить процесс."""
+    events: list[str] = []
+    forced_exits: list[int] = []
+    captured_handler: dict[str, Any] = {}
+    FakeTimer.instances = []
+
+    monkeypatch.setattr(app_module.signal, "signal", lambda _signum, _handler: None)
+    monkeypatch.setattr(app_module.rumps.events.before_start, "register", lambda _callback: None)
+    monkeypatch.setattr(app_module.rumps.events.before_quit, "register", lambda _callback: None)
+    monkeypatch.setattr(app_module.os, "_exit", forced_exits.append)
+    monkeypatch.setattr(app_module.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(
+        app_module,
+        "request_application_quit",
+        lambda _sender, **_kwargs: events.append("quit"),
+    )
+
+    def install_signal_wait_thread(handler):
+        captured_handler["handler"] = handler
+        return lambda: events.append("signal_cleanup")
+
+    monkeypatch.setattr(app_module, "_install_cli_signal_wait_thread", install_signal_wait_thread)
+
+    app_controller = SimpleNamespace(
+        recording_overlay=SimpleNamespace(hide=lambda: events.append("overlay_hide")),
+        cancel_recording=lambda: events.append("cancel_recording"),
+        shutdown_reader=lambda: events.append("reader_shutdown"),
+    )
+    key_listener = SimpleNamespace(stop=lambda: events.append("hotkeys_stop"))
+    tts_speaker = SimpleNamespace(stop=lambda: events.append("tts_stop"))
+    rsvp_display = SimpleNamespace(close=lambda: events.append("rsvp_close"))
+    display_sleep = SimpleNamespace(release=lambda: events.append("display_release"))
+
+    app_module._install_cli_shutdown_handlers(
+        app_controller=app_controller,
+        key_listener=key_listener,
+        tts_speaker=tts_speaker,
+        rsvp_display=rsvp_display,
+        display_sleep_prevention_service=display_sleep,
+    )
+
+    captured_handler["handler"](signal.SIGINT, None)
+    captured_handler["handler"](signal.SIGINT, None)
+
+    assert events == [
+        "cancel_recording",
+        "hotkeys_stop",
+        "reader_shutdown",
+        "overlay_hide",
+        "display_release",
+        "quit",
+    ]
+    assert "signal_cleanup" not in events
+    assert forced_exits == [130]

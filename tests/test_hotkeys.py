@@ -895,6 +895,36 @@ class TestHotkeyDispatcher:
         assert result is sentinel
         assert enabled_calls == [("fake_tap", True)]
 
+    def test_stop_does_not_reenable_tap_from_disable_callback(self, app_module, monkeypatch):
+        """Штатная остановка dispatcher-а не должна включать CGEventTap обратно."""
+        import Quartz as _quartz_mod  # noqa: N813
+
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher._event_tap = "fake_tap"
+        returned_events = []
+        enabled_calls = []
+        sentinel = object()
+
+        def fake_enable(tap, enable):
+            enabled_calls.append((tap, enable))
+            if enable is False:
+                returned_events.append(
+                    dispatcher._cgevent_tap_callback(
+                        None,
+                        _quartz_mod.kCGEventTapDisabledByUserInput,
+                        sentinel,
+                        None,
+                    )
+                )
+
+        monkeypatch.setattr(_quartz_mod, "CGEventTapEnable", fake_enable)
+
+        dispatcher.stop()
+
+        assert returned_events == [sentinel]
+        assert enabled_calls == [("fake_tap", False)]
+        assert dispatcher._event_tap is None
+
     def test_callback_clears_modifier_state_on_timeout_disable(self, app_module, monkeypatch):
         """После timeout-disable dispatcher не должен хранить залипшие модификаторы."""
         import Quartz as _quartz_mod  # noqa: N813
