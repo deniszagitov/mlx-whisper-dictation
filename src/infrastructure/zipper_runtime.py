@@ -35,7 +35,6 @@ _MAX_TOOL_OUTPUT_CHARS = 8000
 _ZIPPER_AGENT_MAX_ITERATIONS = 4
 _ZIPPER_AGENT_MAX_EXECUTION_SECONDS = 60
 _ZIPPER_AGENT_MAX_TOKENS = 1000
-_ZIPPER_FALLBACK_MAX_TOKENS = 500
 _ZIPPER_MEMORY_SUMMARY_MAX_TOKENS = 1000
 _ZIPPER_RECENT_EVENTS_LIMIT = 20
 _ZIPPER_SYSTEM_MESSAGE = (
@@ -158,20 +157,16 @@ class LangChainZipperAgent:
         config: ZipperConfig,
         emit_event: _ZipperEventSink | None = None,
     ) -> ZipperAgentResult:
-        """Запускает агентский runtime или безопасный fallback без произвольных команд."""
+        """Запускает агентский runtime Zipper через LangChain и настроенные tools."""
         event = emit_event or _noop_event
         tools = self._build_tools(config, event)
-        try:
-            return self._invoke_langchain(
-                request,
-                memory=memory,
-                events=events,
-                tools=tools,
-                config=config,
-            )
-        except ImportError as error:
-            LOGGER.warning("🧷 LangChain недоступен, использую простой fallback Zipper: %s", error)
-            return self._invoke_fallback(request, memory=memory, tools=tools)
+        return self._invoke_langchain(
+            request,
+            memory=memory,
+            events=events,
+            tools=tools,
+            config=config,
+        )
 
     def summarize_memory(self, events_text: str, *, memory: str = "") -> str:
         """Суммаризует старые события Zipper в постоянную память через текущую LLM."""
@@ -254,39 +249,6 @@ class LangChainZipperAgent:
         )
         text = str(result.get("output") or "").strip()
         return self._parse_output_mode(text)
-
-    def _invoke_fallback(
-        self,
-        request: str,
-        *,
-        memory: str,
-        tools: list[Tool],
-    ) -> ZipperAgentResult:
-        normalized = request.strip().lower()
-        if "буфер" in normalized and any(word in normalized for word in ("прочитай", "получи", "что")):
-            return ZipperAgentResult(text=self._run_tool(tools, "get_clipboard", ""), output_mode="window")
-        if normalized.startswith("открой ") and "http" in normalized:
-            url = request[request.find("http") :].strip()
-            return ZipperAgentResult(text=self._run_tool(tools, "open_url", url), output_mode="voice")
-        if "дата" in normalized or "время" in normalized:
-            return ZipperAgentResult(text=self._run_tool(tools, "current_datetime", ""), output_mode="voice")
-        system_message = self._system_message(memory)
-        try:
-            response = self.llm_processor.process_text(
-                request,
-                system_message,
-                context=self._render_tool_context(tools),
-                max_tokens=_ZIPPER_FALLBACK_MAX_TOKENS,
-                keep_loaded=True,
-            )
-        except TypeError:
-            response = self.llm_processor.process_text(
-                request,
-                system_message,
-                context=self._render_tool_context(tools),
-                max_tokens=_ZIPPER_FALLBACK_MAX_TOKENS,
-            )
-        return ZipperAgentResult(text=response or "Готово.", output_mode="window")
 
     def _build_tools(self, config: ZipperConfig, event: _ZipperEventSink) -> list[Tool]:
         """Собирает LangChain tools: описание и код каждого tool находятся рядом."""
@@ -476,9 +438,6 @@ class LangChainZipperAgent:
             f"{event.kind}: {event.message} {event.payload}"
             for event in events[-_ZIPPER_RECENT_EVENTS_LIMIT :]
         )
-
-    def _render_tool_context(self, tools: list[Tool]) -> str:
-        return "\n".join(f"{tool.name}: {tool.description}" for tool in tools)
 
     def _tool_name(self, prefix: str, raw_name: str) -> str:
         normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", raw_name.strip().lower()).strip("_")

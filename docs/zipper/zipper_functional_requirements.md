@@ -319,7 +319,7 @@ docs/api/modules/zipper_runtime.md
 ```
 
 В этих страницах фиксируются пользовательский поток Zipper, входные и выходные
-данные, DFD-схема, конфиг, память, allowlist CLI, MCP fallback и runtime-границы.
+данные, DFD-схема, конфиг, память, allowlist CLI, обработка ошибок MCP и runtime-границы.
 
 ## 17. Что входит в первый этап
 

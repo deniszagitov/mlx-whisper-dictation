@@ -453,20 +453,6 @@ def test_zipper_builtin_tools_keep_clipboard_and_cli_explicitly_configured():
     assert tools["cli_date"].invoke("") == "cli output"
     assert "write_note" not in tools
 
-
-def test_zipper_fallback_no_longer_handles_note_command_as_tool():
-    """Фраза про заметку больше не вызывает локальный writer Zipper."""
-    agent = LangChainZipperAgent(FakeLLM())
-
-    result = agent._invoke_fallback(
-        "запиши заметку тест",
-        memory="",
-        tools=[],
-    )
-
-    assert result == ZipperAgentResult(text="пользователь часто просит дату", output_mode="window")
-
-
 def test_zipper_config_provider_merges_local_and_user(tmp_path, caplog):
     """Конфиг Zipper поддерживает local/user с ожидаемым приоритетом."""
     local = tmp_path / "zipper.local.toml"

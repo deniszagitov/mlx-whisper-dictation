@@ -11,7 +11,6 @@
 - `_ZIPPER_AGENT_MAX_ITERATIONS` = `4`
 - `_ZIPPER_AGENT_MAX_EXECUTION_SECONDS` = `60`
 - `_ZIPPER_AGENT_MAX_TOKENS` = `1000`
-- `_ZIPPER_FALLBACK_MAX_TOKENS` = `500`
 - `_ZIPPER_MEMORY_SUMMARY_MAX_TOKENS` = `1000`
 - `_ZIPPER_RECENT_EVENTS_LIMIT` = `20`
 - `_ZIPPER_SYSTEM_MESSAGE` = `'Ты Zipper, локальный голосовой агент Dictator. Выполняй только безопасные действия через доступные инструменты. Отвечай по-русски, кратко и практично.'`
@@ -70,7 +69,7 @@ __init__(llm_processor: Any, *, clipboard_service: Any | None = None, text_outpu
 invoke(request: str, *, memory: str, events: tuple[ZipperEvent, ...], config: ZipperConfig, emit_event: _ZipperEventSink | None = None) -> ZipperAgentResult
 ```
 
-Запускает агентский runtime или безопасный fallback без произвольных команд.
+Запускает агентский runtime Zipper через LangChain и настроенные tools.
 
 #### `summarize_memory`
 

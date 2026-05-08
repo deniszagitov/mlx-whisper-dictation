@@ -288,7 +288,7 @@ def _null_save_zipper_memory(_snapshot: ZipperMemorySnapshot) -> None:
 
 
 def _null_zipper_agent_invoke(*_args: Any, **_kwargs: Any) -> ZipperAgentResult:
-    """Возвращает fallback-ответ Zipper без агентского runtime."""
+    """Возвращает ответ для отключённого агентского runtime Zipper."""
     return ZipperAgentResult(text="Zipper не настроен.", output_mode="window")
 
 
