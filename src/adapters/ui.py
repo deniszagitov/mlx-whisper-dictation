@@ -17,6 +17,7 @@ from PyObjCTools.AppHelper import callAfter, callLater  # type: ignore[import-un
 
 from ..domain.constants import Config
 from ..domain.reader_constants import (
+    DEFAULT_TTS_MLX_MODEL,
     DEFAULT_TTS_MLX_VOICE_NAME,
     DEFAULT_TTS_TONE_INSTRUCTION,
     RSVP_CHUNK_SIZE_OPTIONS,
@@ -517,7 +518,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     @property
     def reader_tts_mlx_model(self) -> str:
         """Возвращает выбранную MLX TTS-модель."""
-        return str(getattr(self.app, "reader_tts_mlx_model", "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit"))
+        return str(getattr(self.app, "reader_tts_mlx_model", DEFAULT_TTS_MLX_MODEL))
 
     @property
     def reader_tts_mlx_voice_description(self) -> str:

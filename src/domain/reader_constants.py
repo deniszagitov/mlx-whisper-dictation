@@ -26,11 +26,11 @@ DEFAULT_TTS_RATE_MULTIPLIER: Final = 1.0
 DEFAULT_TTS_MAX_MINUTES: Final = 5
 DEFAULT_TTS_ENGINE: Final = "apple"
 DEFAULT_TTS_MLX_MODEL: Final = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit"
-DEFAULT_TTS_MLX_VOICE_NAME: Final = "Русский быстрый ассистент-робот"
+DEFAULT_TTS_MLX_VOICE_NAME: Final = "Русский спокойный диктор"
 DEFAULT_TTS_MLX_VOICE_DESCRIPTION: Final = (
-    "Быстрый русский голос ассистента-робота: чёткая дикция, собранная энергичная подача, "
-    "уверенный техничный тембр, короткие паузы, высокая разборчивость, без эмоциональной драматизации. "
-    "Всегда говорит по-русски."
+    "一个自然、清晰、沉稳的俄语成年男声旁白：中低音色，标准俄语发音，语速略快但不急促，"
+    "短暂停顿，高可懂度，适合朗读长文本、笔记和助手回答。"
+    "始终使用俄语发音，不要说中文，不要模仿机器人，不要夸张表演。"
 )
 DEFAULT_TTS_TONE_INSTRUCTION: Final = ""
 TTS_RATE_MULTIPLIER_MIN: Final = 0.1
@@ -44,14 +44,16 @@ TTS_ENGINE_LABELS: Final = {
     TTS_ENGINE_APPLE: "Apple AVSpeech",
     TTS_ENGINE_MLX: "MLX Qwen3-TTS",
 }
-TTS_MLX_MODEL_OPTIONS: Final = (DEFAULT_TTS_MLX_MODEL,)
+TTS_MLX_MODEL_OPTIONS: Final = (
+    DEFAULT_TTS_MLX_MODEL,
+)
 TTS_MLX_STREAMING_INTERVAL_SECONDS: Final = 0.32
 TTS_MLX_LANGUAGE_CODE: Final = "russian"
 TTS_MLX_GENERATION_SEED: Final = 42
-TTS_MLX_GENERATION_TEMPERATURE: Final = 0.7
-TTS_MLX_GENERATION_TOP_P: Final = 0.95
-TTS_MLX_GENERATION_TOP_K: Final = 40
-TTS_MLX_GENERATION_REPETITION_PENALTY: Final = 1.0
+TTS_MLX_GENERATION_TEMPERATURE: Final = 0.35
+TTS_MLX_GENERATION_TOP_P: Final = 0.9
+TTS_MLX_GENERATION_TOP_K: Final = 50
+TTS_MLX_GENERATION_REPETITION_PENALTY: Final = 1.05
 TTS_BASE_WORDS_PER_MINUTE: Final = 170
 
 DEFAULT_READER_PREPROCESS_ENABLED: Final = True

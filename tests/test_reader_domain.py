@@ -5,6 +5,7 @@ from src.domain.reader_constants import (
     DEFAULT_TTS_MLX_MODEL,
     DEFAULT_TTS_MLX_VOICE_DESCRIPTION,
     TTS_ENGINE_MLX,
+    TTS_MLX_MODEL_OPTIONS,
     clamp_tts_rate_multiplier,
     estimate_rsvp_duration_seconds,
     reader_orp_index,
@@ -93,6 +94,14 @@ def test_tts_config_uses_builtin_qwen_voice_and_tone_instruction():
     assert config.mlx_voice_description == DEFAULT_TTS_MLX_VOICE_DESCRIPTION
     assert config.tone_instruction == "вопросительно"
     assert config.mlx_instruct == f"{DEFAULT_TTS_MLX_VOICE_DESCRIPTION}\nИнтонация TTS: вопросительно."
+
+
+def test_default_mlx_tts_profile_uses_chinese_voice_design_for_russian_reader():
+    """Встроенный MLX-профиль описывает русский голос китайской Qwen-инструкцией."""
+    assert DEFAULT_TTS_MLX_MODEL == "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit"
+    assert "俄语" in DEFAULT_TTS_MLX_VOICE_DESCRIPTION
+    assert "不要说中文" in DEFAULT_TTS_MLX_VOICE_DESCRIPTION
+    assert TTS_MLX_MODEL_OPTIONS == (DEFAULT_TTS_MLX_MODEL,)
 
 
 def test_tts_config_falls_back_to_default_mlx_settings():
