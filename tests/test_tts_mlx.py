@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 from src.domain.reader_constants import TTS_ENGINE_MLX
 from src.domain.reader_types import TTSConfig
+from src.infrastructure.model_runtime_service import ModelRuntimeService
 from src.infrastructure.tts_mlx import MlxStreamingTTSController
 from src.infrastructure.tts_router import ReaderTTSRouter
 
@@ -129,7 +130,7 @@ def test_mlx_streaming_tts_generates_and_queues_audio_chunks():
     assert mx.clear_calls >= 1
 
 
-def test_mlx_streaming_tts_keeps_model_only_in_fast_mode():
+def test_mlx_streaming_tts_uses_shared_runtime_cache_regardless_keep_flag():
     loader_calls = []
     model = FakeModel()
 
@@ -137,8 +138,9 @@ def test_mlx_streaming_tts_keeps_model_only_in_fast_mode():
         loader_calls.append(model_name)
         return model
 
+    runtime_service = ModelRuntimeService(mlx_tts_loader=load_model)
     controller = MlxStreamingTTSController(
-        model_loader=load_model,
+        model_loader=runtime_service.get_mlx_tts,
         player_factory=FakePlayer,
         mx_module=FakeMx(),
     )
@@ -157,7 +159,7 @@ def test_mlx_streaming_tts_keeps_model_only_in_fast_mode():
 
     controller.set_keep_model_loaded(False)
     controller.speak("три", config)
-    assert loader_calls == ["model", "model"]
+    assert loader_calls == ["model"]
 
 
 def test_mlx_streaming_tts_flush_closes_existing_stream_when_not_playing():

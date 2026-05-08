@@ -13,6 +13,7 @@ from src.domain.zipper import (
     ZipperMemorySnapshot,
 )
 from src.infrastructure.llm_runtime import LlmGateway
+from src.infrastructure.model_runtime_service import ModelRuntimeService
 from src.infrastructure.zipper_config import ZipperConfigProvider, normalize_config
 from src.infrastructure.zipper_runtime import LangChainZipperAgent
 from src.use_cases.zipper import ZipperUseCases
@@ -546,9 +547,10 @@ def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool()
         assert max_tokens == 1000
         return next(responses)
 
+    runtime_service = ModelRuntimeService(lm_loader=load_runtime)
     processor = LlmGateway(
         "fake-agent-model",
-        runtime_loader=load_runtime,
+        runtime_loader=runtime_service.get_lm,
         generation_runner=generate,
         memory_cleanup=lambda: cleanup_calls.append(True),
     )
@@ -564,7 +566,7 @@ def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool()
     assert result == ZipperAgentResult(text="Сейчас 2026-05-08.", output_mode="window")
     assert load_calls == ["fake-agent-model"]
     assert len(generation_prompts) == 2
-    assert processor._cached_model is not None
+    assert processor._cached_model is None
     assert processor.performance_mode == "normal"
     assert cleanup_calls == []
 
@@ -675,9 +677,10 @@ def test_zipper_langchain_keeps_loaded_model_between_agent_invocations():
         assert max_tokens == 1000
         return next(responses)
 
+    runtime_service = ModelRuntimeService(lm_loader=load_runtime)
     processor = LlmGateway(
         "fake-agent-model",
-        runtime_loader=load_runtime,
+        runtime_loader=runtime_service.get_lm,
         generation_runner=generate,
         memory_cleanup=lambda: cleanup_calls.append(True),
     )
@@ -699,7 +702,7 @@ def test_zipper_langchain_keeps_loaded_model_between_agent_invocations():
     assert first == ZipperAgentResult(text="Первый ответ.", output_mode="voice")
     assert second == ZipperAgentResult(text="Второй ответ.", output_mode="voice")
     assert load_calls == ["fake-agent-model"]
-    assert processor._cached_model is not None
+    assert processor._cached_model is None
     assert processor.performance_mode == "normal"
     assert cleanup_calls == []
 
@@ -725,9 +728,10 @@ def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
         assert max_tokens == 1000
         return next(responses)
 
+    runtime_service = ModelRuntimeService(lm_loader=load_runtime)
     processor = FakeCachedLLM(
         "fake-agent-model",
-        runtime_loader=load_runtime,
+        runtime_loader=runtime_service.get_lm,
         generation_runner=generate,
         memory_cleanup=lambda: cleanup_calls.append(True),
     )
@@ -771,7 +775,7 @@ def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
     assert use_case.transcriber.transcribe_to_text_called is True
     assert load_calls == ["fake-agent-model"]
     assert len(generation_prompts) == 2
-    assert processor._cached_model is not None
+    assert processor._cached_model is None
     assert processor.performance_mode == "normal"
     assert cleanup_calls == []
     assert text_output.messages[-1] == ("Zipper", "Сейчас 2026-05-08.")

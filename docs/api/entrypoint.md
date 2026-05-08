@@ -102,7 +102,7 @@ _Внутренняя функция._
 ### `_build_cli_shutdown_handler`
 
 ```python
-_build_cli_shutdown_handler(*, app_controller: DictationApp, key_listener: Any, tts_speaker: Any, rsvp_display: Any, display_sleep_prevention_service: DisplaySleepPreventionService, quit_application: Any = None, force_exit: Any = os._exit, timer_factory: Any = threading.Timer) -> Any
+_build_cli_shutdown_handler(*, app_controller: DictationApp, key_listener: Any, tts_speaker: Any, rsvp_display: Any, display_sleep_prevention_service: DisplaySleepPreventionService, quit_application: Any = None, force_exit: Any = None, timer_factory: Any = None, stop_runtime: Any = None) -> Any
 ```
 
 _Внутренняя функция._

@@ -9,6 +9,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = ROOT / "docs"
+SINGULAR_PAGE_LAST_DIGIT = 1
+SINGULAR_PAGE_TEENS_SUFFIX = 11
+PAUCAL_PAGE_LAST_DIGITS = {2, 3, 4}
+PAUCAL_PAGE_TEENS_SUFFIXES = {12, 13, 14}
 
 
 @dataclass
@@ -59,6 +63,7 @@ RUNTIME_TARGETS = (
     ModuleTarget("Аудио и микрофон", ROOT / "src/infrastructure/audio_runtime.py", "api/modules/audio.md"),
     ModuleTarget("ASR runtime", ROOT / "src/infrastructure/asr_runtime.py", "api/modules/asr_runtime.md"),
     ModuleTarget("Model manager", ROOT / "src/infrastructure/model_manager.py", "api/modules/model_manager.md"),
+    ModuleTarget("Model runtime service", ROOT / "src/infrastructure/model_runtime_service.py", "api/modules/model_runtime_service.md"),
     ModuleTarget("Диагностика", ROOT / "src/infrastructure/persistence/diagnostics.py", "api/modules/diagnostics.md"),
     ModuleTarget("История распознавания", ROOT / "src/infrastructure/persistence/history.py", "api/modules/history.md"),
     ModuleTarget("LLM runtime", ROOT / "src/infrastructure/llm_runtime.py", "api/modules/llm_runtime.md"),
@@ -350,6 +355,13 @@ def _render_runtime_overview(runtime_modules: list[ModuleDoc]) -> str:
 def _render_index(runtime_modules: list[ModuleDoc], setup_module: ModuleDoc) -> str:
     """Рендерит главную страницу документации."""
     entrypoint_doc = runtime_modules[0]
+    runtime_module_count = len(runtime_modules)
+    if runtime_module_count % 10 == SINGULAR_PAGE_LAST_DIGIT and runtime_module_count % 100 != SINGULAR_PAGE_TEENS_SUFFIX:
+        module_page_label = "автогенерируемая страница"
+    elif runtime_module_count % 10 in PAUCAL_PAGE_LAST_DIGITS and runtime_module_count % 100 not in PAUCAL_PAGE_TEENS_SUFFIXES:
+        module_page_label = "автогенерируемые страницы"
+    else:
+        module_page_label = "автогенерируемых страниц"
     lines = [
         "# Dictator",
         "",
@@ -369,7 +381,7 @@ def _render_index(runtime_modules: list[ModuleDoc], setup_module: ModuleDoc) -> 
         "",
         "## Что уже доступно",
         "",
-        f"- обзор runtime-слоя и {len(runtime_modules)} автогенерируемых страниц по модулям;",
+        f"- обзор runtime-слоя и {runtime_module_count} {module_page_label} по модулям;",
         f"- автогенерируемая страница [{setup_module.title}]({setup_module.output_path.replace('api/', 'api/')});",
         "- ручная архитектурная диаграмма текущих потоков записи, распознавания, вставки, Reader, TTS и Zipper.",
         "",

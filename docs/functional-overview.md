@@ -28,11 +28,13 @@
 1. `main.py` читает CLI-аргументы и сохранённые настройки.
 2. `main.py` создаёт concrete adapters: recorder, ASR/LLM/TTS runtime,
    clipboard/text-input adapters, persistence, menu bar UI и hotkey dispatcher.
-3. `DictationApp` получает зависимости через конструктор и создаёт use case-слой.
-4. `StatusBarApp` подписывается на snapshot приложения и показывает текущее
+3. `ModelManager` и единый runtime-сервис прогревают выбранные ASR, LLM/VLM и
+   MLX TTS модели в фоне, если их snapshot уже есть в локальном cache.
+4. `DictationApp` получает зависимости через конструктор и создаёт use case-слой.
+5. `StatusBarApp` подписывается на snapshot приложения и показывает текущее
    состояние в menu bar.
-5. `HotkeyDispatcher` принимает глобальные сочетания клавиш через `CGEventTap`.
-6. Каждый пользовательский сценарий меняет state приложения и публикует новый
+6. `HotkeyDispatcher` принимает глобальные сочетания клавиш через `CGEventTap`.
+7. Каждый пользовательский сценарий меняет state приложения и публикует новый
    snapshot для UI.
 7. Ошибки сценариев должны заканчиваться понятным уведомлением и fallback-ом,
    а не потерей результата.

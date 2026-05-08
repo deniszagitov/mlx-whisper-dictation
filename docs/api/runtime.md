@@ -17,9 +17,10 @@
 - [Аудио и микрофон](modules/audio.md) — Runtime-запись звука и перечисление устройств ввода через PyAudio.
 - [ASR runtime](modules/asr_runtime.md) — Runtime-обёртки над локальными ASR backend-ами.
 - [Model manager](modules/model_manager.md) — Централизованный менеджер локальных MLX-моделей.
+- [Model runtime service](modules/model_runtime_service.md) — Единый runtime-сервис загруженных MLX-моделей.
 - [Диагностика](modules/diagnostics.md) — Логирование и сохранение диагностических артефактов приложения.
 - [История распознавания](modules/history.md) — Persistence истории распознанного текста через NSUserDefaults.
-- [LLM runtime](modules/llm_runtime.md) — Runtime-адаптеры для загрузки, генерации и выгрузки MLX LLM.
+- [LLM runtime](modules/llm_runtime.md) — Runtime-адаптеры для генерации через локальные MLX LLM/VLM.
 - [Глобальные хоткеи](modules/hotkeys.md) — Горячие клавиши и единый keyboard dispatcher приложения Dictator.
 - [Разрешения macOS](modules/permissions.md) — Разрешения macOS и системные утилиты приложения Dictator.
 - [Распознавание и вставка](modules/transcriber.md) — Use case распознавания речи, вставки текста и истории.

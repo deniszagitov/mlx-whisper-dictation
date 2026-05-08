@@ -72,23 +72,26 @@ class TestLlmGatewayChangeModel:
         gw.change_model("model-a")
         cleanup.assert_not_called()
 
-    def test_change_model_unloads_cached(self):
-        """change_model выгружает ранее кэшированную модель."""
+    def test_change_model_releases_and_preloads_shared_runtime(self):
+        """change_model освобождает старую модель и запускает прогрев новой."""
         cleanup = MagicMock()
+        release = MagicMock()
+        preload = MagicMock()
         lm_loader = MagicMock(return_value=(MagicMock(), MagicMock()))
         gw = LlmGateway(
             "model-a",
             runtime_loader=lm_loader,
             generation_runner=MagicMock(return_value="ok"),
             memory_cleanup=cleanup,
+            model_releaser=release,
+            model_preloader=preload,
         )
-        gw.performance_mode = "fast"
-        gw._load_runtime_objects()
-        assert gw._cached_model is not None
 
         gw.change_model("model-b")
         assert gw._cached_model is None
-        cleanup.assert_called_once()
+        cleanup.assert_not_called()
+        release.assert_called_once_with("model-a")
+        preload.assert_called_once_with("model-b")
 
     def test_change_model_switches_to_vlm_backend(self):
         """Переключение на VLM-модель должно выбрать VLM backend."""

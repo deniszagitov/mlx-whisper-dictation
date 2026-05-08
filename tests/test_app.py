@@ -353,13 +353,12 @@ def test_shutdown_reader_stops_outputs_and_waits_for_worker(monkeypatch):
     assert not worker.is_alive()
 
 
-def test_zipper_uses_separate_llm_runtime_for_agent_memory_policy(monkeypatch):
-    """Zipper должен иметь отдельный LLM runtime и не наследовать общий режим выгрузки."""
+def test_zipper_uses_shared_llm_processor(monkeypatch):
+    """Reader, LLM-пайплайн и Zipper должны использовать один LLM processor."""
     del monkeypatch
     recorder = FakeRecorder()
     transcriber = FakeTranscriber()
     llm_processor = FakeLLMProcessor()
-    zipper_llm_processor = FakeLLMProcessor()
     settings_store = FakeSettingsStore()
     launch_config = LaunchConfig.from_sources(
         model="mlx-community/whisper-large-v3-turbo",
@@ -375,7 +374,6 @@ def test_zipper_uses_separate_llm_runtime_for_agent_memory_policy(monkeypatch):
         transcriber=cast("Any", transcriber),
         llm_processor=cast("Any", llm_processor),
         launch_config=launch_config,
-        zipper_llm_processor=cast("Any", zipper_llm_processor),
         clipboard_service=app_module.ClipboardService(read_text=lambda: None, write_text=lambda _text: None),
         microphone_profiles_service=app_module.MicrophoneProfilesService(load_profiles=lambda: [], save_profiles=lambda _profiles: None),
         system_integration_service=make_system_integration_service(),
@@ -383,22 +381,20 @@ def test_zipper_uses_separate_llm_runtime_for_agent_memory_policy(monkeypatch):
         settings_store=cast("Any", settings_store),
     )
 
-    assert controller.zipper_use_cases.llm_processor is zipper_llm_processor
+    assert controller.zipper_use_cases.llm_processor is llm_processor
+    assert controller.reader_preprocess_use_case.llm_processor is llm_processor
     assert llm_processor.performance_mode == Config.PERFORMANCE_MODE_NORMAL
-    assert zipper_llm_processor.performance_mode is None
     assert llm_processor.model_memory_loading_callback is not None
-    assert zipper_llm_processor.model_memory_loading_callback is not None
 
     controller.change_performance_mode(Config.PERFORMANCE_MODE_FAST)
 
     assert llm_processor.performance_mode == Config.PERFORMANCE_MODE_FAST
-    assert zipper_llm_processor.performance_mode is None
 
     next_model = next(model for model in Config.LLM_MODEL_PRESETS if model != Config.DEFAULT_LLM_MODEL_NAME)
     controller.change_llm_model(next_model)
 
     assert llm_processor.model_name == next_model
-    assert zipper_llm_processor.model_name == next_model
+    assert controller.reader_preferences.preprocess_model == next_model
 
 
 def test_reader_tts_rate_default_migration_resets_previous_speed_once():

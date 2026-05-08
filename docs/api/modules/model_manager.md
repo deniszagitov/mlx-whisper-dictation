@@ -161,7 +161,7 @@ _Внутренняя функция._
 #### `__init__`
 
 ```python
-__init__(*, downloader: ModelDownloaderProtocol | None = None, progress_callback: ProgressCallback | None = None, lm_loader: Callable[[str], tuple[Any, Any]] | None = None, vlm_loader: Callable[[str], tuple[Any, Any]] | None = None, qwen_asr_loader: Callable[[str], Any] | None = None, tts_loader: Callable[[str], Any] | None = None) -> None
+__init__(*, downloader: ModelDownloaderProtocol | None = None, progress_callback: ProgressCallback | None = None, lm_loader: Callable[[str], tuple[Any, Any]] | None = None, vlm_loader: Callable[[str], tuple[Any, Any]] | None = None, qwen_asr_loader: Callable[[str], Any] | None = None, tts_loader: Callable[[str], Any] | None = None, whisper_loader: Callable[[str], Any] | None = None, runtime_service: ModelRuntimeService | None = None) -> None
 ```
 
 Конструктор класса.
@@ -220,6 +220,16 @@ ensure_llm_model_downloaded(model_name: str, progress_callback: LegacyProgressCa
 load_llm_runtime_objects(model_name: str) -> tuple[Any, Any]
 ```
 
+Возвращает MLX LLM-модель из единого runtime-cache.
+
+#### `_load_llm_runtime_objects_uncached`
+
+```python
+_load_llm_runtime_objects_uncached(model_name: str) -> tuple[Any, Any]
+```
+
+_Внутренняя функция._
+
 Загружает MLX LLM-модель после проверки общим downloader-ом.
 
 #### `load_vlm_runtime_objects`
@@ -227,6 +237,16 @@ load_llm_runtime_objects(model_name: str) -> tuple[Any, Any]
 ```python
 load_vlm_runtime_objects(model_name: str) -> tuple[Any, Any]
 ```
+
+Возвращает MLX VLM-модель из единого runtime-cache.
+
+#### `_load_vlm_runtime_objects_uncached`
+
+```python
+_load_vlm_runtime_objects_uncached(model_name: str) -> tuple[Any, Any]
+```
+
+_Внутренняя функция._
 
 Загружает MLX VLM-модель после проверки общим downloader-ом.
 
@@ -236,6 +256,16 @@ load_vlm_runtime_objects(model_name: str) -> tuple[Any, Any]
 load_qwen_asr_model(model_name: str) -> Any
 ```
 
+Возвращает Qwen3-ASR модель из единого runtime-cache.
+
+#### `_load_qwen_asr_model_uncached`
+
+```python
+_load_qwen_asr_model_uncached(model_name: str) -> Any
+```
+
+_Внутренняя функция._
+
 Скачивает и загружает Qwen3-ASR модель через mlx-audio.
 
 #### `load_tts_model`
@@ -244,7 +274,35 @@ load_qwen_asr_model(model_name: str) -> Any
 load_tts_model(model_name: str) -> Any
 ```
 
+Возвращает streaming MLX TTS-модель из единого runtime-cache.
+
+#### `_load_tts_model_uncached`
+
+```python
+_load_tts_model_uncached(model_name: str) -> Any
+```
+
+_Внутренняя функция._
+
 Загружает streaming MLX TTS-модель после проверки общим downloader-ом.
+
+#### `load_whisper_model`
+
+```python
+load_whisper_model(model_name: str) -> Any
+```
+
+Возвращает Whisper-модель из единого runtime-cache и заполняет ModelHolder.
+
+#### `_load_whisper_model_uncached`
+
+```python
+_load_whisper_model_uncached(model_name: str) -> Any
+```
+
+_Внутренняя функция._
+
+Загружает Whisper-модель в ModelHolder после проверки downloader-а.
 
 #### `run_asr_transcription`
 
@@ -253,6 +311,54 @@ run_asr_transcription(audio_data: npt.NDArray[np.float32], model_name: str, lang
 ```
 
 Скачивает ASR-модель и запускает подходящий backend.
+
+#### `preload_selected_models`
+
+```python
+preload_selected_models(*, asr_model: str | None = None, llm_model: str | None = None, tts_model: str | None = None) -> None
+```
+
+Запускает безопасный фоновый прогрев выбранных runtime-моделей.
+
+#### `preload_asr_model`
+
+```python
+preload_asr_model(model_name: str) -> None
+```
+
+Прогревает выбранную ASR-модель, если её snapshot уже доступен локально.
+
+#### `preload_llm_model`
+
+```python
+preload_llm_model(model_name: str) -> None
+```
+
+Прогревает выбранную LLM/VLM-модель, если её snapshot уже доступен локально.
+
+#### `preload_tts_model`
+
+```python
+preload_tts_model(model_name: str) -> None
+```
+
+Прогревает выбранную MLX TTS-модель, если её snapshot уже доступен локально.
+
+#### `release_model`
+
+```python
+release_model(model_name: str) -> None
+```
+
+Освобождает runtime-экземпляры указанной модели.
+
+#### `shutdown`
+
+```python
+shutdown() -> None
+```
+
+Очищает единый runtime-cache моделей при выходе.
 
 #### `_mark_model_ready`
 
@@ -273,6 +379,16 @@ _runtime_model_name(model_name: str) -> str
 _Внутренняя функция._
 
 Подменяет HF repo id на локальный snapshot path, если он уже есть в cache.
+
+#### `_set_whisper_model_holder`
+
+```python
+_set_whisper_model_holder(model_path: str, model: Any) -> None
+```
+
+_Внутренняя функция._
+
+Заполняет singleton ModelHolder библиотеки mlx_whisper.
 
 ## Публичные функции
 

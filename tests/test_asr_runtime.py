@@ -2,6 +2,7 @@
 
 import numpy as np
 from src.infrastructure import asr_runtime as asr_runtime_module
+from src.infrastructure.model_runtime_service import ModelRuntimeService
 
 
 def make_audio(seconds=1.0, amplitude=0.01):
@@ -113,3 +114,44 @@ def test_run_qwen_transcription_falls_back_to_auto_language(monkeypatch):
     assert not isinstance(captured["audio"], str)
     assert result["language"] == "English"
     assert result["total_tokens"] == 2
+
+
+def test_run_qwen_transcription_uses_shared_runtime_cache(monkeypatch):
+    """Повторные Qwen-ASR вызовы должны брать модель из общего runtime-cache."""
+    load_calls: list[str] = []
+
+    class FakeResult:
+        def __init__(self) -> None:
+            self.text = "Привет"
+            self.language = "Russian"
+            self.segments: list[dict[str, float | str]] = []
+            self.prompt_tokens = 1
+            self.generation_tokens = 2
+            self.total_tokens = 3
+
+    class FakeModel:
+        def generate(self, _audio, **_kwargs):
+            return FakeResult()
+
+    def load_model(model_name: str):
+        load_calls.append(model_name)
+        return FakeModel()
+
+    service = ModelRuntimeService(qwen_asr_loader=load_model)
+
+    first = asr_runtime_module.run_qwen_transcription(
+        make_audio(),
+        "mlx-community/Qwen3-ASR-1.7B-8bit",
+        "ru",
+        model_loader=service.get_qwen_asr,
+    )
+    second = asr_runtime_module.run_qwen_transcription(
+        make_audio(),
+        "mlx-community/Qwen3-ASR-1.7B-8bit",
+        "ru",
+        model_loader=service.get_qwen_asr,
+    )
+
+    assert first["text"] == "Привет"
+    assert second["text"] == "Привет"
+    assert load_calls == ["mlx-community/Qwen3-ASR-1.7B-8bit"]

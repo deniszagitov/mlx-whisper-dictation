@@ -1,9 +1,10 @@
-"""Runtime-адаптеры для загрузки, генерации и выгрузки MLX LLM."""
+"""Runtime-адаптеры для генерации через локальные MLX LLM/VLM."""
 
 from __future__ import annotations
 
 import gc
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -12,19 +13,12 @@ if TYPE_CHECKING:
 from ..domain.constants import Config
 from ..domain.llm_processing import sanitize_llm_response
 from .model_manager import default_model_manager
+from .model_runtime_service import is_vlm_model as _is_vlm_model
 
 LOGGER = logging.getLogger(__name__)
 
 PERFORMANCE_MODE_NORMAL = "normal"
 PERFORMANCE_MODE_FAST = "fast"
-
-_VLM_MODEL_INDICATORS = ("gemma-4", "gemma4", "-vlm", "vision")
-
-
-def _is_vlm_model(model_name: str) -> bool:
-    """Определяет, нужен ли mlx_vlm для данной модели."""
-    lower = model_name.lower()
-    return any(indicator in lower for indicator in _VLM_MODEL_INDICATORS)
 
 
 def load_llm_runtime_objects(model_name: str) -> tuple[Any, Any]:
@@ -94,6 +88,8 @@ class LlmGateway:
         memory_cleanup: Callable[[], None] | None = None,
         vlm_runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
         vlm_generation_runner: Callable[[Any, Any, str, int], Any] | None = None,
+        model_releaser: Callable[[str], None] | None = None,
+        model_preloader: Callable[[str], None] | None = None,
     ) -> None:
         """Создаёт gateway к LLM runtime."""
         self.model_name = model_name
@@ -102,6 +98,7 @@ class LlmGateway:
         self.performance_mode: str = PERFORMANCE_MODE_NORMAL
         self._cached_model: Any | None = None
         self._cached_tokenizer: Any | None = None
+        self._generation_lock = threading.RLock()
         self._lm_runtime_loader = runtime_loader
         self._lm_generation_runner = generation_runner
         self._vlm_runtime_loader = vlm_runtime_loader
@@ -109,6 +106,8 @@ class LlmGateway:
         self._model_cache_checker = model_cache_checker
         self._model_downloader = model_downloader
         self._memory_cleanup = memory_cleanup
+        self._model_releaser = model_releaser
+        self._model_preloader = model_preloader
         self._model_memory_loading_callback: Callable[[bool, str, str], None] | None = None
         self._apply_backend_for_model(model_name)
 
@@ -129,25 +128,16 @@ class LlmGateway:
         """Переключает стратегию управления памятью для LLM."""
         normalized_mode = performance_mode if performance_mode == PERFORMANCE_MODE_FAST else PERFORMANCE_MODE_NORMAL
         self.performance_mode = normalized_mode
-        if normalized_mode != PERFORMANCE_MODE_FAST:
-            self._unload_cached_model()
 
     def _load_runtime_objects(self) -> tuple[Any, Any]:
-        """Возвращает модель и токенизатор, используя кэш в быстром режиме."""
-        if self._cached_model is not None and self._cached_tokenizer is not None:
-            LOGGER.info("🤖 Использую уже загруженную LLM-модель")
-            return self._cached_model, self._cached_tokenizer
-
+        """Возвращает модель и токенизатор через единый runtime-cache."""
         if self._runtime_loader is None:
             raise RuntimeError("LLM runtime не настроен")
 
-        LOGGER.info("🤖 Загрузка LLM: %s", self.model_name)
+        LOGGER.info("🤖 Запрашиваю LLM через единый runtime-cache: %s", self.model_name)
         self._emit_model_memory_loading(True)
         try:
-            model, tokenizer = self._runtime_loader(self.model_name)
-            self._cached_model = model
-            self._cached_tokenizer = tokenizer
-            return model, tokenizer
+            return self._runtime_loader(self.model_name)
         finally:
             self._emit_model_memory_loading(False)
 
@@ -165,13 +155,18 @@ class LlmGateway:
         """Переключает LLM-модель и автоматически выбирает backend."""
         if model_name == self.model_name:
             return
+        previous_model_name = self.model_name
         self._unload_cached_model()
+        if self._model_releaser is not None:
+            self._model_releaser(previous_model_name)
         self.model_name = model_name
         self._apply_backend_for_model(model_name)
+        if self._model_preloader is not None:
+            self._model_preloader(model_name)
         LOGGER.info("🤖 LLM-модель переключена: %s", model_name)
 
     def _unload_cached_model(self) -> None:
-        """Выгружает LLM-модель и токенизатор из памяти."""
+        """Очищает legacy-ссылки gateway без владения shared runtime-cache."""
         had_cached_objects = self._cached_model is not None or self._cached_tokenizer is not None
         self._cached_model = None
         self._cached_tokenizer = None
@@ -232,12 +227,12 @@ class LlmGateway:
         keep_loaded: bool = False,
     ) -> str:
         """Отправляет текст в LLM и возвращает очищенный ответ."""
-        effective_max_tokens = max_tokens if max_tokens is not None else Config.LLM_MAX_TOKENS
-        self.last_token_usage = 0
-        model, tokenizer = self._load_runtime_objects()
-        if self._generation_runner is None:
-            raise RuntimeError("LLM generation runtime не настроен")
-        try:
+        with self._generation_lock:
+            effective_max_tokens = max_tokens if max_tokens is not None else Config.LLM_MAX_TOKENS
+            self.last_token_usage = 0
+            model, tokenizer = self._load_runtime_objects()
+            if self._generation_runner is None:
+                raise RuntimeError("LLM generation runtime не настроен")
             actual_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
             if hasattr(actual_tokenizer, "apply_chat_template"):
                 user_content = f"Контекст из буфера обмена:\n{context}\n\nЗапрос:\n{text}" if context else text
@@ -267,11 +262,6 @@ class LlmGateway:
             response_tokens = self._count_tokens(tokenizer, response)
             self.last_token_usage = prompt_tokens + response_tokens
             LOGGER.info("🤖 Очищенный ответ LLM: длина=%d, текст=%r", len(response), response)
-            return response.strip()
-        finally:
             if keep_loaded:
-                LOGGER.info("🤖 LLM остаётся в памяти для Zipper")
-            elif self.performance_mode == PERFORMANCE_MODE_FAST:
-                LOGGER.info("🤖 LLM остаётся в памяти для быстрого режима")
-            else:
-                self._unload_cached_model()
+                LOGGER.info("🤖 LLM удерживается единым runtime-cache для Zipper")
+            return response.strip()

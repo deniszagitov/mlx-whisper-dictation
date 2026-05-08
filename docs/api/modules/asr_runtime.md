@@ -8,7 +8,6 @@ Runtime-обёртки над локальными ASR backend-ами.
 
 - `LOGGER` = `logging.getLogger(__name__)`
 - `_QWEN_LANGUAGE_NAMES` = `{'ar': 'Arabic', 'arabic': 'Arabic', 'cs': 'Czech', 'czech': 'Czech', 'da': 'Danish', 'danish': 'Danish', 'de': 'German', 'german': 'German', 'el': 'Greek', 'greek': 'Greek', 'en': 'English', 'english': 'English', 'es': 'Spanish', 'spanish': 'Spanish', 'fa': 'Persian', 'persian': 'Persian', 'fi': 'Finnish', 'finnish': 'Finnish', 'fil': 'Filipino', 'filipino': 'Filipino', 'fr': 'French', 'french': 'French', 'hi': 'Hindi', 'hindi': 'Hindi', 'hu': 'Hungarian', 'hungarian': 'Hungarian', 'id': 'Indonesian', 'indonesian': 'Indonesian', 'it': 'Italian', 'italian': 'Italian', 'ja': 'Japanese', 'japanese': 'Japanese', 'ko': 'Korean', 'korean': 'Korean', 'mk': 'Macedonian', 'macedonian': 'Macedonian', 'ms': 'Malay', 'malay': 'Malay', 'nl': 'Dutch', 'dutch': 'Dutch', 'pl': 'Polish', 'polish': 'Polish', 'pt': 'Portuguese', 'portuguese': 'Portuguese', 'ro': 'Romanian', 'romanian': 'Romanian', 'ru': 'Russian', 'russian': 'Russian', 'sv': 'Swedish', 'swedish': 'Swedish', 'th': 'Thai', 'thai': 'Thai', 'tr': 'Turkish', 'turkish': 'Turkish', 'vi': 'Vietnamese', 'vietnamese': 'Vietnamese', 'yue': 'Cantonese', 'cantonese': 'Cantonese', 'zh': 'Chinese', 'zh-cn': 'Chinese', 'zh-hans': 'Chinese', 'zh-hant': 'Chinese', 'zh-tw': 'Chinese', 'chinese': 'Chinese'}`
-- `_QWEN_MODEL_CACHE_LOCK` = `threading.Lock()`
 
 ## Публичные функции
 
@@ -94,7 +93,7 @@ _get_cached_qwen_model(model_name: str, model_loader: Any | None = None) -> Any
 
 _Внутренняя функция._
 
-Загружает и кэширует экземпляр Qwen3-ASR-модели.
+Получает Qwen3-ASR модель через переданный или общий runtime-loader.
 
 ### `_normalize_qwen_segments`
 

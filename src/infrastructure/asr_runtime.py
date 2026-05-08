@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-import threading
 from typing import Any
 
 try:
@@ -82,10 +81,6 @@ _QWEN_LANGUAGE_NAMES = {
     "zh-tw": "Chinese",
     "chinese": "Chinese",
 }
-_QWEN_MODEL_CACHE: dict[str, object] = {}
-_QWEN_MODEL_CACHE_LOCK = threading.Lock()
-
-
 def _coerce_int(value: object) -> int:
     """Преобразует вход в неотрицательное целое число."""
     if isinstance(value, bool):
@@ -141,17 +136,12 @@ def _load_qwen_model_from_mlx_audio(model_name: str) -> Any:
 
 
 def _get_cached_qwen_model(model_name: str, model_loader: Any | None = None) -> Any:
-    """Загружает и кэширует экземпляр Qwen3-ASR-модели."""
-    with _QWEN_MODEL_CACHE_LOCK:
-        cached_model = _QWEN_MODEL_CACHE.get(model_name)
-        if cached_model is not None:
-            return cached_model
+    """Получает Qwen3-ASR модель через переданный или общий runtime-loader."""
+    if model_loader is not None:
+        return model_loader(model_name)
+    from .model_manager import default_model_manager  # noqa: PLC0415
 
-    loader = model_loader or _load_qwen_model_from_mlx_audio
-    model = loader(model_name)
-    with _QWEN_MODEL_CACHE_LOCK:
-        _QWEN_MODEL_CACHE[model_name] = model
-    return model
+    return default_model_manager().load_qwen_asr_model(model_name)
 
 
 def _normalize_qwen_segments(segments: object) -> list[dict[str, Any]]:

@@ -75,10 +75,13 @@ class SettingsUseCases:
         if model_repo not in self.runtime.model_options or model_repo == self.runtime.model_repo:
             return
 
+        previous_model_repo = self.runtime.model_repo
         self.runtime.model_repo = model_repo
         self.runtime.model_name = model_repo.rsplit("/", maxsplit=1)[-1]
         self.transcriber.model_name = model_repo
         self.settings_store.save_str(Config.DEFAULTS_KEY_MODEL, model_repo)
+        self._release_runtime_model(previous_model_repo)
+        self._preload_asr_model(model_repo)
         LOGGER.info("🧠 Выбрана модель: %s", model_repo)
         self.runtime.system_integration_service.notify("MLX Whisper Dictation", f"Модель переключена: {self.runtime.model_name}")
         self.publish_snapshot()
@@ -353,3 +356,15 @@ class SettingsUseCases:
             if processor is not None:
                 processors.append(processor)
         return tuple(processors)
+
+    def _release_runtime_model(self, model_name: str) -> None:
+        """Просит app-слой освободить runtime-cache для старой модели."""
+        release_model = getattr(self.runtime, "release_runtime_model", None)
+        if callable(release_model):
+            release_model(model_name)
+
+    def _preload_asr_model(self, model_name: str) -> None:
+        """Просит app-слой прогреть новую ASR-модель в фоне."""
+        preload_model = getattr(self.runtime, "preload_asr_model", None)
+        if callable(preload_model):
+            preload_model(model_name)

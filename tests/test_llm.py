@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from src.domain import llm_processing
 from src.infrastructure import llm_runtime
+from src.infrastructure.model_runtime_service import ModelRuntimeService
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,9 +53,10 @@ def make_processor(
     def fake_cleanup() -> None:
         actual_cleanup_calls.append(True)
 
+    runtime_service = ModelRuntimeService(lm_loader=fake_load, memory_cleanup=fake_cleanup)
     return llm_runtime.LlmGateway(
         "fake-model",
-        runtime_loader=fake_load,
+        runtime_loader=runtime_service.get_lm,
         generation_runner=generation_runner or fake_generate,
         model_cache_checker=lambda _model_name: False,
         model_downloader=lambda _model_name, _callback: None,
@@ -62,8 +64,8 @@ def make_processor(
     )
 
 
-def test_fast_mode_reuses_loaded_model():
-    """Быстрый режим должен повторно использовать уже загруженную модель."""
+def test_shared_runtime_reuses_loaded_model_in_fast_mode():
+    """Быстрый режим использует единый runtime-cache без локального cache gateway."""
     load_calls: list[str] = []
     cleanup_calls: list[bool] = []
     processor = make_processor(load_calls=load_calls, cleanup_calls=cleanup_calls)
@@ -72,24 +74,25 @@ def test_fast_mode_reuses_loaded_model():
     assert processor.process_text("первый", "система") == "готово"
     assert processor.process_text("второй", "система") == "готово"
     assert load_calls == ["fake-model"]
-    assert processor._cached_model is not None
+    assert processor._cached_model is None
     assert cleanup_calls == []
 
 
-def test_normal_mode_unloads_model_after_generation():
-    """Обычный режим должен выгружать модель после каждого ответа."""
+def test_normal_mode_keeps_model_in_shared_runtime_until_release():
+    """Обычный режим больше не выгружает LLM после каждого ответа."""
     load_calls: list[str] = []
     cleanup_calls: list[bool] = []
     processor = make_processor(load_calls=load_calls, cleanup_calls=cleanup_calls)
 
     assert processor.process_text("текст", "система") == "готово"
+    assert processor.process_text("ещё текст", "система") == "готово"
     assert load_calls == ["fake-model"]
     assert processor._cached_model is None
-    assert cleanup_calls == [True]
+    assert cleanup_calls == []
 
 
-def test_keep_loaded_retains_model_without_switching_mode():
-    """Разовый вызов Zipper должен удерживать модель без смены режима работы."""
+def test_keep_loaded_is_compatible_with_shared_runtime():
+    """Флаг keep_loaded сохраняется для совместимости, но памятью владеет общий сервис."""
     load_calls: list[str] = []
     cleanup_calls: list[bool] = []
     processor = make_processor(load_calls=load_calls, cleanup_calls=cleanup_calls)
@@ -98,7 +101,7 @@ def test_keep_loaded_retains_model_without_switching_mode():
 
     assert processor.performance_mode == "normal"
     assert load_calls == ["fake-model"]
-    assert processor._cached_model is not None
+    assert processor._cached_model is None
     assert cleanup_calls == []
 
 

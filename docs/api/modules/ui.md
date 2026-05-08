@@ -10,6 +10,7 @@ UI menu bar приложения Dictator.
 ## Константы
 
 - `LOGGER` = `logging.getLogger(__name__)`
+- `APPKIT_QUIT_DEFER_SECONDS` = `0.01`
 
 ## Классы
 
@@ -534,6 +535,16 @@ _menu_item(title: str) -> Any
 _Внутренняя функция._
 
 Возвращает пункт меню по заголовку.
+
+#### `_ensure_quit_item_available`
+
+```python
+_ensure_quit_item_available() -> None
+```
+
+_Внутренняя функция._
+
+Оставляет пункт «Выход» активным во всех состояниях menu bar.
 
 #### `_state_label`
 
@@ -1127,6 +1138,14 @@ clear_zipper_memory(_sender: rumps.MenuItem) -> None
 
 Очищает постоянную память Zipper.
 
+#### `quit_application`
+
+```python
+quit_application(sender: rumps.MenuItem) -> None
+```
+
+Завершает приложение через управляемый shutdown.
+
 #### `change_reader_rsvp_wpm`
 
 ```python
@@ -1336,6 +1355,14 @@ _Внутренняя функция._
 Переключает LLM-модель.
 
 ## Публичные функции
+
+### `request_application_quit`
+
+```python
+request_application_quit(sender: object | None = None, *, emit_before_quit: bool = True) -> None
+```
+
+Запрашивает выход из AppKit на следующем проходе run loop.
 
 ### `prompt_text`
 

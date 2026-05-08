@@ -260,13 +260,22 @@ def test_model_manager_routes_downloads_through_single_downloader(monkeypatch) -
         load_calls.append(("tts", model_name))
         return object()
 
+    def fake_whisper_loader(model_name: str) -> object:
+        load_calls.append(("whisper", model_name))
+        return object()
+
     def fake_whisper(audio_data: object, model_name: str, language: str | None) -> dict[str, str | None]:
         del audio_data
         load_calls.append(("asr", model_name))
         return {"text": language}
 
     monkeypatch.setattr(asr_runtime, "run_whisper_transcription", fake_whisper)
-    manager = ModelManager(downloader=FakeDownloader(), lm_loader=fake_lm_loader, tts_loader=fake_tts_loader)
+    manager = ModelManager(
+        downloader=FakeDownloader(),
+        lm_loader=fake_lm_loader,
+        tts_loader=fake_tts_loader,
+        whisper_loader=fake_whisper_loader,
+    )
 
     manager.ensure_model_downloaded("mlx-community/llm", label="LLM-модель")
     manager.load_llm_runtime_objects("mlx-community/llm")
@@ -283,6 +292,7 @@ def test_model_manager_routes_downloads_through_single_downloader(monkeypatch) -
     assert load_calls == [
         ("llm", "mlx-community/llm"),
         ("tts", "mlx-community/tts"),
+        ("whisper", "mlx-community/whisper-turbo"),
         ("asr", "mlx-community/whisper-turbo"),
     ]
 
@@ -311,13 +321,22 @@ def test_model_manager_passes_local_snapshot_paths_to_runtime_loaders(monkeypatc
         load_calls.append(("tts", model_name))
         return object()
 
+    def fake_whisper_loader(model_name: str) -> object:
+        load_calls.append(("whisper", model_name))
+        return object()
+
     def fake_whisper(audio_data: object, model_name: str, language: str | None) -> dict[str, str | None]:
         del audio_data
         load_calls.append(("asr", model_name))
         return {"text": language}
 
     monkeypatch.setattr(asr_runtime, "run_whisper_transcription", fake_whisper)
-    manager = ModelManager(downloader=FakeDownloader(), lm_loader=fake_lm_loader, tts_loader=fake_tts_loader)
+    manager = ModelManager(
+        downloader=FakeDownloader(),
+        lm_loader=fake_lm_loader,
+        tts_loader=fake_tts_loader,
+        whisper_loader=fake_whisper_loader,
+    )
 
     manager.ensure_model_downloaded("mlx-community/llm", label="LLM-модель")
     manager.load_llm_runtime_objects("mlx-community/llm")
@@ -334,6 +353,7 @@ def test_model_manager_passes_local_snapshot_paths_to_runtime_loaders(monkeypatc
     assert load_calls == [
         ("llm", "/tmp/hf-cache/mlx-community--llm"),
         ("tts", "/tmp/hf-cache/mlx-community--tts"),
+        ("whisper", "/tmp/hf-cache/mlx-community--whisper-turbo"),
         ("asr", "/tmp/hf-cache/mlx-community--whisper-turbo"),
     ]
 
@@ -449,3 +469,40 @@ def test_model_manager_passes_qwen_asr_loader_through_downloader(monkeypatch) ->
     assert result == {"text": "qwen"}
     assert download_calls == [("ASR-модель", "mlx-community/Qwen3-ASR-1.7B-8bit")]
     assert load_calls == ["mlx-community/Qwen3-ASR-1.7B-8bit"]
+
+
+def test_model_manager_whisper_transcription_reuses_runtime_model(monkeypatch) -> None:
+    """Повторная Whisper-транскрибация той же модели не должна повторно грузить веса."""
+    load_calls: list[str] = []
+    transcribe_calls: list[str] = []
+
+    class FakeDownloader:
+        def is_model_cached(self, _model_name: str) -> bool:
+            return True
+
+        def get_local_model_path(self, model_name: str) -> str:
+            return f"/tmp/hf-cache/{model_name.replace('/', '--')}"
+
+        def ensure_downloaded(self, _model_name: str, *, label: str, progress_callback: Any = None) -> None:
+            del label, progress_callback
+
+    def fake_whisper_loader(model_name: str) -> object:
+        load_calls.append(model_name)
+        return object()
+
+    def fake_whisper(audio_data: object, model_name: str, language: str | None) -> dict[str, str | None]:
+        del audio_data
+        transcribe_calls.append(model_name)
+        return {"text": language}
+
+    monkeypatch.setattr(asr_runtime, "run_whisper_transcription", fake_whisper)
+    manager = ModelManager(downloader=FakeDownloader(), whisper_loader=fake_whisper_loader)
+
+    manager.run_asr_transcription(np.zeros(16000, dtype=np.float32), "mlx-community/whisper-turbo", "ru")
+    manager.run_asr_transcription(np.zeros(16000, dtype=np.float32), "mlx-community/whisper-turbo", "ru")
+
+    assert load_calls == ["/tmp/hf-cache/mlx-community--whisper-turbo"]
+    assert transcribe_calls == [
+        "/tmp/hf-cache/mlx-community--whisper-turbo",
+        "/tmp/hf-cache/mlx-community--whisper-turbo",
+    ]

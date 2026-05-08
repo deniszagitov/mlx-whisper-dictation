@@ -30,6 +30,7 @@ from src.app import (  # noqa: F401
     InputDeviceCatalogService,
     MicrophoneProfilesService,
     ModelDownloadService,
+    ModelRuntimeControlService,
     ObsidianService,
     SystemDiagnosticsService,
     SystemIntegrationService,
@@ -312,6 +313,7 @@ def _stop_runtime_for_cli_shutdown(
         _safe_shutdown_call("закрытие RSVP", getattr(rsvp_display, "close", None))
     _safe_shutdown_call("скрытие overlay записи", getattr(app_controller.recording_overlay, "hide", None))
     _safe_shutdown_call("отпускание защиты дисплея", display_sleep_prevention_service.release)
+    _safe_shutdown_call("очистка runtime-cache моделей", getattr(app_controller, "shutdown_model_runtime", None))
 
 
 def _install_cli_signal_wait_thread(
@@ -523,25 +525,22 @@ def main() -> None:
     )
     recorder = Recorder()
 
-    def make_llm_processor() -> LLMProcessor:
-        """Создаёт независимый MLX LLM runtime поверх общего менеджера моделей."""
-        return LLMProcessor(
-            args.llm_model,
-            runtime_loader=model_manager.load_llm_runtime_objects,
-            generation_runner=generate_llm_text,
-            model_cache_checker=model_manager.is_model_cached,
-            model_downloader=lambda model_name, progress_callback, label="LLM-модель": model_manager.ensure_model_downloaded(
-                model_name,
-                label=label,
-                progress_callback=progress_callback,
-            ),
-            memory_cleanup=cleanup_llm_runtime_memory,
-            vlm_runtime_loader=model_manager.load_vlm_runtime_objects,
-            vlm_generation_runner=generate_vlm_text,
-        )
-
-    llm_processor = make_llm_processor()
-    zipper_llm_processor = make_llm_processor()
+    llm_processor = LLMProcessor(
+        args.llm_model,
+        runtime_loader=model_manager.load_llm_runtime_objects,
+        generation_runner=generate_llm_text,
+        model_cache_checker=model_manager.is_model_cached,
+        model_downloader=lambda model_name, progress_callback, label="LLM-модель": model_manager.ensure_model_downloaded(
+            model_name,
+            label=label,
+            progress_callback=progress_callback,
+        ),
+        memory_cleanup=cleanup_llm_runtime_memory,
+        vlm_runtime_loader=model_manager.load_vlm_runtime_objects,
+        vlm_generation_runner=generate_vlm_text,
+        model_releaser=model_manager.release_model,
+        model_preloader=model_manager.preload_llm_model,
+    )
 
     obsidian_vault_path = defaults.load_str(Config.DEFAULTS_KEY_OBSIDIAN_VAULT, fallback=None) or str(get_default_vault_path())
     obsidian_service = ObsidianService(
@@ -575,6 +574,13 @@ def main() -> None:
     model_download_service = ModelDownloadService(
         ensure_downloaded=lambda model_name, label: model_manager.ensure_model_downloaded(model_name, label=label),
     )
+    model_runtime_service = ModelRuntimeControlService(
+        release_model=model_manager.release_model,
+        preload_asr_model=model_manager.preload_asr_model,
+        preload_llm_model=model_manager.preload_llm_model,
+        preload_tts_model=model_manager.preload_tts_model,
+        shutdown=model_manager.shutdown,
+    )
     input_device_catalog = InputDeviceCatalogService(list_input_devices=list_input_devices)
     hotkey_capture_service = HotkeyCaptureService(capture_combination=capture_hotkey_combination)
     hotkey_listener_factory = HotkeyListenerFactoryService(
@@ -601,7 +607,7 @@ def main() -> None:
         config_factory=_zipper_tts_config,
     )
     zipper_agent_runtime = LangChainZipperAgent(
-        zipper_llm_processor,
+        llm_processor,
         clipboard_service=clipboard_service,
         text_output=zipper_text_output_adapter,
         voice_output=zipper_voice_output_adapter,
@@ -612,7 +618,6 @@ def main() -> None:
         transcriber,
         llm_processor,
         args,
-        zipper_llm_processor=zipper_llm_processor,
         app_preferences=app_preferences,
         clipboard_service=clipboard_service,
         microphone_profiles_service=microphone_profiles_service,
@@ -621,6 +626,7 @@ def main() -> None:
         display_sleep_prevention_service=display_sleep_prevention_service,
         system_diagnostics_service=system_diagnostics_service,
         model_download_service=model_download_service,
+        model_runtime_service=model_runtime_service,
         input_device_catalog=input_device_catalog,
         hotkey_capture_service=hotkey_capture_service,
         hotkey_listener_factory=hotkey_listener_factory,
@@ -653,6 +659,11 @@ def main() -> None:
     )
     model_manager.set_progress_callback(app_controller.handle_model_download_progress)
     app_controller_holder["controller"] = app_controller
+    model_manager.preload_selected_models(
+        asr_model=args.model,
+        llm_model=args.llm_model,
+        tts_model=app_controller.reader_tts_mlx_model,
+    )
     app = StatusBarApp(cast("Any", app_controller))
     key_listener = hotkey_listener_factory.create_listener(app_controller)
     app_controller.key_listener = key_listener

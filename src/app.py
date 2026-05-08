@@ -119,6 +119,17 @@ class ModelDownloadService:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelRuntimeControlService:
+    """Concrete bundle управления загруженными runtime-моделями."""
+
+    release_model: Callable[[str], None]
+    preload_asr_model: Callable[[str], None]
+    preload_llm_model: Callable[[str], None]
+    preload_tts_model: Callable[[str], None]
+    shutdown: Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
 class InputDeviceCatalogService:
     """Concrete bundle для перечисления доступных устройств ввода."""
 
@@ -245,6 +256,21 @@ def _null_system_diagnostics_capture(_label: str) -> None:
 
 def _null_model_download(_model_name: str, _label: str) -> None:
     """Игнорирует загрузку модели в headless-сценариях."""
+    return None
+
+
+def _null_release_runtime_model(_model_name: str) -> None:
+    """Игнорирует выгрузку runtime-модели в headless-сценариях."""
+    return None
+
+
+def _null_preload_runtime_model(_model_name: str) -> None:
+    """Игнорирует прогрев runtime-модели в headless-сценариях."""
+    return None
+
+
+def _null_shutdown_runtime_models() -> None:
+    """Игнорирует очистку runtime-cache моделей в headless-сценариях."""
     return None
 
 
@@ -503,6 +529,7 @@ class DictationApp:
         display_sleep_prevention_service: DisplaySleepPreventionService | None = None,
         system_diagnostics_service: SystemDiagnosticsService | None = None,
         model_download_service: ModelDownloadService | None = None,
+        model_runtime_service: ModelRuntimeControlService | None = None,
         input_device_catalog: InputDeviceCatalogService | None = None,
         hotkey_capture_service: HotkeyCaptureService | None = None,
         hotkey_listener_factory: HotkeyListenerFactoryService | None = None,
@@ -556,6 +583,13 @@ class DictationApp:
             capture=_null_system_diagnostics_capture,
         )
         self.model_download_service = model_download_service or ModelDownloadService(ensure_downloaded=_null_model_download)
+        self.model_runtime_service = model_runtime_service or ModelRuntimeControlService(
+            release_model=_null_release_runtime_model,
+            preload_asr_model=_null_preload_runtime_model,
+            preload_llm_model=_null_preload_runtime_model,
+            preload_tts_model=_null_preload_runtime_model,
+            shutdown=_null_shutdown_runtime_models,
+        )
         self.input_device_catalog = input_device_catalog or InputDeviceCatalogService(list_input_devices=_empty_input_devices)
         self.hotkey_capture_service = hotkey_capture_service or HotkeyCaptureService(capture_combination=_noop_capture_combination)
         self.hotkey_listener_factory = hotkey_listener_factory or HotkeyListenerFactoryService(
@@ -1329,6 +1363,41 @@ class DictationApp:
         """Запускает общую загрузку модели по сигналу runtime-слоя."""
         self.download_model(requirement.model_name, label=requirement.label)
 
+    def release_runtime_model(self, model_name: str) -> None:
+        """Освобождает загруженный runtime-экземпляр модели."""
+        try:
+            self.model_runtime_service.release_model(model_name)
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось освободить runtime-модель: %s", model_name)
+
+    def preload_asr_model(self, model_name: str) -> None:
+        """Запускает фоновый прогрев ASR-модели."""
+        try:
+            self.model_runtime_service.preload_asr_model(model_name)
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось запустить прогрев ASR-модели: %s", model_name)
+
+    def preload_llm_model(self, model_name: str) -> None:
+        """Запускает фоновый прогрев LLM/VLM-модели."""
+        try:
+            self.model_runtime_service.preload_llm_model(model_name)
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось запустить прогрев LLM/VLM-модели: %s", model_name)
+
+    def preload_tts_model(self, model_name: str) -> None:
+        """Запускает фоновый прогрев MLX TTS-модели."""
+        try:
+            self.model_runtime_service.preload_tts_model(model_name)
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось запустить прогрев MLX TTS-модели: %s", model_name)
+
+    def shutdown_model_runtime(self) -> None:
+        """Очищает единый runtime-cache моделей при завершении приложения."""
+        try:
+            self.model_runtime_service.shutdown()
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось очистить runtime-cache моделей")
+
     def download_model(self, model_name: str, *, label: str) -> None:
         """Запускает фоновую загрузку модели через единый downloader приложения."""
         if self._model_download_worker is not None and self._model_download_worker.is_alive():
@@ -1968,6 +2037,9 @@ class DictationApp:
 
     def change_reader_tts_mlx_model(self, model_name: str) -> None:
         """Меняет MLX TTS-модель."""
+        previous_model_name = self.reader_tts_mlx_model
+        if model_name == previous_model_name:
+            return
         self.reader_preferences = self.reader_preferences.with_tts_config(
             TTSConfig.from_values(
                 rate_multiplier=self.reader_tts_rate_multiplier,
@@ -1979,6 +2051,8 @@ class DictationApp:
             )
         )
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_MLX_MODEL, self.reader_tts_mlx_model)
+        self.release_runtime_model(previous_model_name)
+        self.preload_tts_model(self.reader_tts_mlx_model)
         LOGGER.info("🔈 MLX TTS-модель сохранена: %s", self.reader_tts_mlx_model)
         self._notify_subscribers()
 

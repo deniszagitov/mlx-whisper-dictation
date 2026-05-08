@@ -32,7 +32,6 @@ class MlxStreamingTTSController:
         self._model_loader = model_loader or self._load_model_from_mlx_audio
         self._player_factory = player_factory or self._create_audio_player
         self._mx = mx_module
-        self._model_cache: dict[str, Any] = {}
         self._state_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._player: Any | None = None
@@ -91,8 +90,6 @@ class MlxStreamingTTSController:
                 with self._state_lock:
                     self._speaking = False
                     self._player = None
-                if not self._keep_model_loaded:
-                    self._release_model(model_name)
                 self._clear_mlx_cache()
                 LOGGER.info("🔈 MLX TTS поток завершён")
 
@@ -117,31 +114,12 @@ class MlxStreamingTTSController:
         return []
 
     def set_keep_model_loaded(self, enabled: bool) -> None:
-        """Меняет режим удержания MLX TTS-модели в памяти."""
+        """Сохраняет совместимый флаг; MLX TTS удерживает единый runtime-сервис."""
         self._keep_model_loaded = bool(enabled)
-        if not self._keep_model_loaded and not self.is_speaking():
-            self._release_model()
 
     def _get_model(self, model_name: str) -> Any:
-        """Загружает MLX TTS-модель или берёт её из локального cache."""
-        with self._state_lock:
-            cached_model = self._model_cache.get(model_name)
-            if cached_model is not None:
-                return cached_model
-
-        model = self._model_loader(model_name)
-        with self._state_lock:
-            self._model_cache[model_name] = model
-        return model
-
-    def _release_model(self, model_name: str | None = None) -> None:
-        """Выгружает MLX TTS-модель из cache контроллера."""
-        with self._state_lock:
-            if model_name is None:
-                self._model_cache.clear()
-            else:
-                self._model_cache.pop(model_name, None)
-        self._clear_mlx_cache()
+        """Получает MLX TTS-модель через единый runtime-сервис."""
+        return self._model_loader(model_name)
 
     def _load_model_from_mlx_audio(self, model_name: str) -> Any:
         """Загружает TTS-модель через централизованный менеджер моделей."""

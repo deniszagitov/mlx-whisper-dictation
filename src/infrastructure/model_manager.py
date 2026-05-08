@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ..domain.constants import Config
 from ..domain.model_downloads import ModelDownloadProgress, ModelRequiredError, format_model_download_metrics
+from .model_runtime_service import ModelRuntimeService, is_qwen_asr_model_name, is_vlm_model
 
 if TYPE_CHECKING:
     import numpy as np
@@ -534,6 +535,8 @@ class ModelManager:
         vlm_loader: Callable[[str], tuple[Any, Any]] | None = None,
         qwen_asr_loader: Callable[[str], Any] | None = None,
         tts_loader: Callable[[str], Any] | None = None,
+        whisper_loader: Callable[[str], Any] | None = None,
+        runtime_service: ModelRuntimeService | None = None,
     ) -> None:
         self._downloader = downloader or HuggingFaceModelDownloader()
         self._progress_callback = progress_callback
@@ -541,8 +544,16 @@ class ModelManager:
         self._vlm_loader = vlm_loader
         self._qwen_asr_loader = qwen_asr_loader
         self._tts_loader = tts_loader
+        self._whisper_loader = whisper_loader
         self._verified_models: set[str] = set()
         self._verified_models_lock = threading.Lock()
+        self._runtime_service = runtime_service or ModelRuntimeService(
+            lm_loader=self._load_llm_runtime_objects_uncached,
+            vlm_loader=self._load_vlm_runtime_objects_uncached,
+            qwen_asr_loader=self._load_qwen_asr_model_uncached,
+            mlx_tts_loader=self._load_tts_model_uncached,
+            whisper_loader=self._load_whisper_model_uncached,
+        )
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
         """Назначает callback для публикации прогресса в приложение."""
@@ -594,6 +605,10 @@ class ModelManager:
         self.ensure_model_downloaded(model_name, label="LLM-модель", progress_callback=progress_callback)
 
     def load_llm_runtime_objects(self, model_name: str) -> tuple[Any, Any]:
+        """Возвращает MLX LLM-модель из единого runtime-cache."""
+        return self._runtime_service.get_lm(model_name)
+
+    def _load_llm_runtime_objects_uncached(self, model_name: str) -> tuple[Any, Any]:
         """Загружает MLX LLM-модель после проверки общим downloader-ом."""
         self.require_model_ready(model_name, label="LLM-модель")
         runtime_model_name = self._runtime_model_name(model_name)
@@ -606,6 +621,10 @@ class ModelManager:
         return loaded[0], loaded[1]
 
     def load_vlm_runtime_objects(self, model_name: str) -> tuple[Any, Any]:
+        """Возвращает MLX VLM-модель из единого runtime-cache."""
+        return self._runtime_service.get_vlm(model_name)
+
+    def _load_vlm_runtime_objects_uncached(self, model_name: str) -> tuple[Any, Any]:
         """Загружает MLX VLM-модель после проверки общим downloader-ом."""
         self.require_model_ready(model_name, label="VLM-модель")
         runtime_model_name = self._runtime_model_name(model_name)
@@ -618,6 +637,10 @@ class ModelManager:
         return model, processor
 
     def load_qwen_asr_model(self, model_name: str) -> Any:
+        """Возвращает Qwen3-ASR модель из единого runtime-cache."""
+        return self._runtime_service.get_qwen_asr(model_name)
+
+    def _load_qwen_asr_model_uncached(self, model_name: str) -> Any:
         """Скачивает и загружает Qwen3-ASR модель через mlx-audio."""
         self.ensure_model_downloaded(model_name, label="ASR-модель")
         runtime_model_name = self._runtime_model_name(model_name)
@@ -631,6 +654,10 @@ class ModelManager:
         return loader(runtime_model_name)
 
     def load_tts_model(self, model_name: str) -> Any:
+        """Возвращает streaming MLX TTS-модель из единого runtime-cache."""
+        return self._runtime_service.get_mlx_tts(model_name)
+
+    def _load_tts_model_uncached(self, model_name: str) -> Any:
         """Загружает streaming MLX TTS-модель после проверки общим downloader-ом."""
         self.require_model_ready(model_name, label="TTS-модель")
         runtime_model_name = self._runtime_model_name(model_name)
@@ -642,6 +669,24 @@ class ModelManager:
                 raise RuntimeError("Для MLX TTS нужна зависимость mlx-audio. Выполните uv sync --dev.") from exc
             loader = load_mlx_audio_tts_model
         return loader(runtime_model_name)
+
+    def load_whisper_model(self, model_name: str) -> Any:
+        """Возвращает Whisper-модель из единого runtime-cache и заполняет ModelHolder."""
+        return self._runtime_service.get_whisper(model_name)
+
+    def _load_whisper_model_uncached(self, model_name: str) -> Any:
+        """Загружает Whisper-модель в ModelHolder после проверки downloader-а."""
+        self.require_model_ready(model_name, label="ASR-модель")
+        runtime_model_name = self._runtime_model_name(model_name)
+        if self._whisper_loader is None:
+            import mlx.core as mx  # noqa: PLC0415
+            from mlx_whisper.load_models import load_model  # noqa: PLC0415
+
+            model = load_model(runtime_model_name, dtype=mx.float16)
+        else:
+            model = self._whisper_loader(runtime_model_name)
+        self._set_whisper_model_holder(runtime_model_name, model)
+        return model
 
     def run_asr_transcription(
         self,
@@ -660,7 +705,57 @@ class ModelManager:
                 model_loader=self.load_qwen_asr_model,
             )
         self.ensure_model_downloaded(model_name, label="ASR-модель")
+        self.load_whisper_model(model_name)
         return asr_runtime.run_whisper_transcription(audio_data, self._runtime_model_name(model_name), language)
+
+    def preload_selected_models(
+        self,
+        *,
+        asr_model: str | None = None,
+        llm_model: str | None = None,
+        tts_model: str | None = None,
+    ) -> None:
+        """Запускает безопасный фоновый прогрев выбранных runtime-моделей."""
+        if asr_model:
+            self.preload_asr_model(asr_model)
+        if llm_model:
+            self.preload_llm_model(llm_model)
+        if tts_model:
+            self.preload_tts_model(tts_model)
+
+    def preload_asr_model(self, model_name: str) -> None:
+        """Прогревает выбранную ASR-модель, если её snapshot уже доступен локально."""
+        if not self.is_model_cached(model_name):
+            LOGGER.info("🧠 Пропускаю прогрев ASR-модели: нет локального cache, model=%s", model_name)
+            return
+        if is_qwen_asr_model_name(model_name):
+            self._runtime_service.preload_model(model_name, label="ASR-модель", loader=self.load_qwen_asr_model)
+            return
+        self._runtime_service.preload_model(model_name, label="ASR-модель", loader=self.load_whisper_model)
+
+    def preload_llm_model(self, model_name: str) -> None:
+        """Прогревает выбранную LLM/VLM-модель, если её snapshot уже доступен локально."""
+        if not self.is_model_cached(model_name):
+            LOGGER.info("🧠 Пропускаю прогрев LLM/VLM-модели: нет локального cache, model=%s", model_name)
+            return
+        label = "VLM-модель" if is_vlm_model(model_name) else "LLM-модель"
+        loader = self.load_vlm_runtime_objects if is_vlm_model(model_name) else self.load_llm_runtime_objects
+        self._runtime_service.preload_model(model_name, label=label, loader=loader)
+
+    def preload_tts_model(self, model_name: str) -> None:
+        """Прогревает выбранную MLX TTS-модель, если её snapshot уже доступен локально."""
+        if not self.is_model_cached(model_name):
+            LOGGER.info("🧠 Пропускаю прогрев MLX TTS-модели: нет локального cache, model=%s", model_name)
+            return
+        self._runtime_service.preload_model(model_name, label="TTS-модель", loader=self.load_tts_model)
+
+    def release_model(self, model_name: str) -> None:
+        """Освобождает runtime-экземпляры указанной модели."""
+        self._runtime_service.release_model(model_name)
+
+    def shutdown(self) -> None:
+        """Очищает единый runtime-cache моделей при выходе."""
+        self._runtime_service.shutdown()
 
     def _mark_model_ready(self, model_name: str) -> None:
         """Запоминает успешную проверку модели для последующих runtime-load вызовов."""
@@ -676,6 +771,15 @@ class ModelManager:
             return model_name
         local_path = resolver(model_name)
         return local_path or model_name
+
+    def _set_whisper_model_holder(self, model_path: str, model: Any) -> None:
+        """Заполняет singleton ModelHolder библиотеки mlx_whisper."""
+        import importlib  # noqa: PLC0415
+
+        transcribe_module = importlib.import_module("mlx_whisper.transcribe")
+        model_holder = transcribe_module.ModelHolder
+        model_holder.model = model
+        model_holder.model_path = model_path
 
 
 _DEFAULT_MODEL_MANAGER: ModelManager | None = None

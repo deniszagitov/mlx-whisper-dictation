@@ -160,9 +160,14 @@ flowchart TD
 ```mermaid
 flowchart TD
     Request["ASR / LLM / TTS / Zipper<br/>запрос модели"] --> Cached{"Snapshot есть<br/>в Hugging Face cache?"}
-    Cached -->|да| Memory["Синхронная загрузка<br/>модели в память"]
+    Cached -->|да| Shared{"Модель уже есть<br/>в runtime-cache?"}
+    Shared -->|да| Runtime["Runtime продолжает сценарий<br/>с тем же экземпляром"]
+    Shared -->|нет| Inflight{"Такая загрузка<br/>уже идёт?"}
+    Inflight -->|да| Wait["Ждать текущий<br/>single-flight load"]
+    Inflight -->|нет| Memory["Загрузить модель<br/>в единый runtime-cache"]
+    Wait --> Runtime
     Memory --> Status["Menu bar:<br/>загрузка модели в память"]
-    Status --> Runtime["Runtime продолжает сценарий"]
+    Status --> Runtime
     Cached -->|нет| Downloader["ModelManager.ensure_downloaded()<br/>4 воркера HF"]
     Downloader --> Progress["Menu bar progress:<br/>процент, объём, скорость, ETA"]
     Progress --> Slow{"Пауза или скорость<br/>ниже порога?"}

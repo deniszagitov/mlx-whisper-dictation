@@ -2,14 +2,13 @@
 
 Исходный файл: `src/infrastructure/llm_runtime.py`
 
-Runtime-адаптеры для загрузки, генерации и выгрузки MLX LLM.
+Runtime-адаптеры для генерации через локальные MLX LLM/VLM.
 
 ## Константы
 
 - `LOGGER` = `logging.getLogger(__name__)`
 - `PERFORMANCE_MODE_NORMAL` = `'normal'`
 - `PERFORMANCE_MODE_FAST` = `'fast'`
-- `_VLM_MODEL_INDICATORS` = `('gemma-4', 'gemma4', '-vlm', 'vision')`
 
 ## Классы
 
@@ -22,7 +21,7 @@ Concrete gateway для обработки текста через MLX LLM.
 #### `__init__`
 
 ```python
-__init__(model_name: str = Config.DEFAULT_LLM_MODEL_NAME, runtime_loader: Callable[[str], tuple[Any, Any]] | None = None, generation_runner: Callable[[Any, Any, str, int], Any] | None = None, model_cache_checker: Callable[[str], bool] | None = None, model_downloader: Callable[..., None] | None = None, memory_cleanup: Callable[[], None] | None = None, vlm_runtime_loader: Callable[[str], tuple[Any, Any]] | None = None, vlm_generation_runner: Callable[[Any, Any, str, int], Any] | None = None) -> None
+__init__(model_name: str = Config.DEFAULT_LLM_MODEL_NAME, runtime_loader: Callable[[str], tuple[Any, Any]] | None = None, generation_runner: Callable[[Any, Any, str, int], Any] | None = None, model_cache_checker: Callable[[str], bool] | None = None, model_downloader: Callable[..., None] | None = None, memory_cleanup: Callable[[], None] | None = None, vlm_runtime_loader: Callable[[str], tuple[Any, Any]] | None = None, vlm_generation_runner: Callable[[Any, Any, str, int], Any] | None = None, model_releaser: Callable[[str], None] | None = None, model_preloader: Callable[[str], None] | None = None) -> None
 ```
 
 Создаёт gateway к LLM runtime.
@@ -61,7 +60,7 @@ _load_runtime_objects() -> tuple[Any, Any]
 
 _Внутренняя функция._
 
-Возвращает модель и токенизатор, используя кэш в быстром режиме.
+Возвращает модель и токенизатор через единый runtime-cache.
 
 #### `_emit_model_memory_loading`
 
@@ -89,7 +88,7 @@ _unload_cached_model() -> None
 
 _Внутренняя функция._
 
-Выгружает LLM-модель и токенизатор из памяти.
+Очищает legacy-ссылки gateway без владения shared runtime-cache.
 
 #### `is_model_cached`
 
@@ -192,16 +191,6 @@ ensure_llm_model_downloaded(model_name: str, progress_callback: Callable[[str, f
 Скачивает модель в кэш Hugging Face с пробросом прогресса в callback.
 
 ## Внутренние функции
-
-### `_is_vlm_model`
-
-```python
-_is_vlm_model(model_name: str) -> bool
-```
-
-_Внутренняя функция._
-
-Определяет, нужен ли mlx_vlm для данной модели.
 
 ### `_coerce_generated_text`
 

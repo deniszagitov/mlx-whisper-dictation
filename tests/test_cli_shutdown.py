@@ -231,6 +231,7 @@ def test_install_cli_shutdown_handlers_runs_before_quit_cleanup_once(app_module,
         recording_overlay=SimpleNamespace(hide=lambda: events.append("overlay_hide")),
         cancel_recording=lambda: events.append("cancel_recording"),
         shutdown_reader=lambda: events.append("reader_shutdown"),
+        shutdown_model_runtime=lambda: events.append("model_runtime_shutdown"),
     )
     key_listener = SimpleNamespace(stop=lambda: events.append("hotkeys_stop"))
     tts_speaker = SimpleNamespace(stop=lambda: events.append("tts_stop"))
@@ -254,6 +255,7 @@ def test_install_cli_shutdown_handlers_runs_before_quit_cleanup_once(app_module,
         "reader_shutdown",
         "overlay_hide",
         "display_release",
+        "model_runtime_shutdown",
         "signal_cleanup",
     ]
 
@@ -286,6 +288,7 @@ def test_installed_cli_handler_keeps_second_ctrl_c_force_exit(app_module, monkey
         recording_overlay=SimpleNamespace(hide=lambda: events.append("overlay_hide")),
         cancel_recording=lambda: events.append("cancel_recording"),
         shutdown_reader=lambda: events.append("reader_shutdown"),
+        shutdown_model_runtime=lambda: events.append("model_runtime_shutdown"),
     )
     key_listener = SimpleNamespace(stop=lambda: events.append("hotkeys_stop"))
     tts_speaker = SimpleNamespace(stop=lambda: events.append("tts_stop"))
@@ -309,6 +312,7 @@ def test_installed_cli_handler_keeps_second_ctrl_c_force_exit(app_module, monkey
         "reader_shutdown",
         "overlay_hide",
         "display_release",
+        "model_runtime_shutdown",
         "quit",
     ]
     assert "signal_cleanup" not in events
