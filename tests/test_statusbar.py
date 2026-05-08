@@ -14,6 +14,7 @@ import src.adapters.ui as ui_module
 import src.app as app_controller_module
 from src.adapters import overlay
 from src.domain.constants import Config
+from src.domain.reader_constants import DEFAULT_TTS_MLX_VOICE_NAME
 from src.domain.types import LaunchConfig, MicrophoneProfile
 
 
@@ -1356,18 +1357,23 @@ class TestStatusBarMenuSelections:
         assert (Config.DEFAULTS_KEY_READER_TTS_ENGINE, "mlx") in saved_values
         assert app.reader_tts_engine_menu.title == "Backend: MLX Qwen3-TTS"
         assert app.reader_tts_engine_menu["MLX Qwen3-TTS"].state == 1
+        assert app.reader_tts_voice_menu.title == f"MLX-голос: {DEFAULT_TTS_MLX_VOICE_NAME}"
+        assert app.reader_tts_voice_menu[f"MLX-голос: {DEFAULT_TTS_MLX_VOICE_NAME}"].state == 1
+        with pytest.raises(KeyError):
+            app.reader_tts_voice_menu["Авто: русский голос"]
 
-    def test_prompt_reader_tts_mlx_voice_description_persists_value(self, make_app, monkeypatch):
-        """Описание голоса MLX VoiceDesign сохраняется через меню."""
+    def test_prompt_reader_tts_tone_instruction_persists_value(self, make_app, monkeypatch):
+        """Интонация TTS сохраняется через меню."""
         saved_values = []
-        monkeypatch.setattr(ui_module, "prompt_text", lambda *args, **kwargs: "Низкий спокойный голос")
+        monkeypatch.setattr(ui_module, "prompt_text", lambda *args, **kwargs: "коротко и уверенно")
         app, _recorder, _transcriber = make_app(languages=["ru"], max_time=30)
         monkeypatch.setattr(app.app.settings_store, "save_str", lambda key, value: saved_values.append((key, value)))
 
-        app.prompt_reader_tts_mlx_voice_description(None)
+        app.prompt_reader_tts_tone_instruction(None)
 
-        assert app.reader_tts_mlx_voice_description == "Низкий спокойный голос"
-        assert (Config.DEFAULTS_KEY_READER_TTS_MLX_VOICE_DESCRIPTION, "Низкий спокойный голос") in saved_values
+        assert app.reader_tts_tone_instruction == "коротко и уверенно"
+        assert (Config.DEFAULTS_KEY_READER_TTS_TONE_INSTRUCTION, "коротко и уверенно") in saved_values
+        assert app.reader_tts_tone_instruction_item.title == "Интонация TTS: коротко и уверенно"
 
     def test_prompt_reader_tts_mlx_model_accepts_custom_streaming_model(self, make_app, monkeypatch):
         """MLX TTS-модель можно задать точной строкой."""

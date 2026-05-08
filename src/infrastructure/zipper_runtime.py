@@ -573,10 +573,24 @@ class LangChainZipperAgent:
         return "Текстовое окно показано."
 
     def _tool_speak_text(self, arg: str, event: _ZipperEventSink) -> str:
+        text = self._parse_speak_text_argument(arg)
         if self.voice_output is not None:
-            self.voice_output.speak(arg)
-        event("tool", "speak_text", {"chars": len(arg)})
+            self.voice_output.speak(text)
+        event("tool", "speak_text", {"chars": len(text)})
         return "Текст озвучен."
+
+    def _parse_speak_text_argument(self, arg: str) -> str:
+        """Поддерживает plain text и JSON с input для speak_text."""
+        raw = str(arg or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+        if not isinstance(parsed, dict):
+            return raw
+        return self._tool_argument_to_string(parsed)
 
     def _tool_cli(self, command: ZipperCliCommand, arg: str, event: _ZipperEventSink) -> str:
         if command.require_confirmation and self.text_output is not None and not self.text_output.confirm(
@@ -639,6 +653,8 @@ class LangChainZipperAgent:
                 raw_mode = normalized.split(":", maxsplit=1)[1].strip()
                 if raw_mode in {"voice", "window", "both"}:
                     mode = raw_mode
+                continue
+            if normalized.startswith("tone_instruction:"):
                 continue
             lines.append(line)
         return ZipperAgentResult(text="\n".join(lines).strip() or text, output_mode=mode)  # type: ignore[arg-type]

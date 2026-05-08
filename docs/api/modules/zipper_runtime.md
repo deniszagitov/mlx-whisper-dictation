@@ -196,6 +196,16 @@ _Внутренняя функция._
 
 Собирает LangChain tools: описание и код каждого tool находятся рядом.
 
+#### `_parse_speak_text_argument`
+
+```python
+_parse_speak_text_argument(arg: str) -> str
+```
+
+_Внутренняя функция._
+
+Поддерживает plain text и JSON с input для speak_text.
+
 ## Внутренние функции
 
 ### `_noop_event`

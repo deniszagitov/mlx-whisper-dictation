@@ -116,6 +116,7 @@ class Config:
     DEFAULTS_KEY_READER_TTS_ENGINE = "reader.tts.engine"
     DEFAULTS_KEY_READER_TTS_MLX_MODEL = "reader.tts.mlx_model"
     DEFAULTS_KEY_READER_TTS_MLX_VOICE_DESCRIPTION = "reader.tts.mlx_voice_description"
+    DEFAULTS_KEY_READER_TTS_TONE_INSTRUCTION = "reader.tts.tone_instruction"
     DEFAULTS_KEY_READER_PREPROCESS_MODEL = "reader.preprocess.model"
     DEFAULTS_KEY_READER_PREPROCESS_ENABLED = "reader.preprocess.enabled"
     DEFAULTS_KEY_OBSIDIAN_VAULT = "obsidian_vault_path"

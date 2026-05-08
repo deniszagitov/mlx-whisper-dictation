@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.adapters.zipper_windows import ZipperVoiceOutput
 from src.domain.constants import Config
 from src.domain.model_downloads import ModelRequiredError
+from src.domain.reader_types import TTSConfig
 from src.domain.zipper import (
     ZipperAgentResult,
     ZipperCliCommand,
@@ -353,6 +355,35 @@ def test_zipper_records_voice_command_without_regular_insertion():
     assert any(event.kind == "user_speech" for event in memory.snapshot.events)
 
 
+def test_zipper_speaks_voice_result_through_voice_output():
+    """Zipper направляет голосовой ответ в сервис озвучивания."""
+    agent = FakeAgent(ZipperAgentResult(text="Готово", output_mode="voice"))
+    use_case, _runtime, _recorder, _text_output, _memory = make_use_case(agent=agent)
+
+    use_case._run_agent("ответь голосом", lambda: True)
+
+    assert use_case.voice_output.spoken == ["Готово"]
+
+
+def test_zipper_voice_output_uses_current_tts_config():
+    """Адаптер голосового вывода Zipper использует текущую настройку TTS."""
+
+    class FakeSpeaker:
+        def __init__(self) -> None:
+            self.spoken: list[tuple[str, TTSConfig]] = []
+
+        def speak(self, text: str, config: TTSConfig) -> None:
+            self.spoken.append((text, config))
+
+    speaker = FakeSpeaker()
+    output = ZipperVoiceOutput(speaker, config_factory=lambda: TTSConfig(tone_instruction="утвердительно"))
+
+    output.speak("Готово")
+
+    assert speaker.spoken[0][0] == "Готово"
+    assert speaker.spoken[0][1].tone_instruction == "утвердительно"
+
+
 def test_zipper_debug_panel_toggle_updates_state_and_stream():
     """Debug-панель Zipper должна менять состояние runtime и получать событие."""
     use_case, runtime, _recorder, text_output, _memory = make_use_case()
@@ -613,6 +644,7 @@ def test_zipper_qwen_uses_hermes_tool_calls_without_react_iteration_limit():
     assert len(generation_prompts) == 2
     assert "Action:" not in generation_prompts[0]
     assert "<tool_call>" in generation_prompts[0]
+    assert "tone_instruction" not in generation_prompts[0]
     assert "tool current_datetime" in generation_prompts[1]
     assert any(kind == "tool" and message == "current_datetime" for kind, message, _payload in events)
 
@@ -629,7 +661,10 @@ def test_zipper_qwen_maps_output_tool_to_result_without_double_speaking():
     def generate(_model: object, _tokenizer: FakeAgentTokenizer, prompt: str, max_tokens: int) -> str:
         generation_prompts.append(prompt)
         assert max_tokens == 1000
-        return '<tool_call>{"name": "speak_text", "arguments": {"input": "Я не могу управлять медиаплеером."}}</tool_call>'
+        return (
+            '<tool_call>{"name": "speak_text", "arguments": '
+            '{"input": "Я не могу управлять медиаплеером.", "tone_instruction": "дружелюбный и бодрый"}}</tool_call>'
+        )
 
     def emit_event(kind: str, message: str, payload: dict[str, Any] | None = None) -> None:
         events.append((kind, message, payload))
@@ -652,10 +687,27 @@ def test_zipper_qwen_maps_output_tool_to_result_without_double_speaking():
 
     assert result == ZipperAgentResult(text="Я не могу управлять медиаплеером.", output_mode="voice")
     assert len(generation_prompts) == 1
+    assert "tone_instruction" not in generation_prompts[0]
     assert voice_output.spoken == []
     assert events[0][0] == "tool"
     assert events[0][1] == "speak_text"
     assert events[0][2] == {"chars": len("Я не могу управлять медиаплеером."), "deferred_to_output": True}
+
+
+def test_zipper_speak_text_tool_uses_input_argument_for_voice_output():
+    """Инструмент speak_text озвучивает значение input из JSON-аргументов."""
+    events: list[tuple[str, str, dict[str, Any] | None]] = []
+    voice_output = FakeVoiceOutput()
+    agent = LangChainZipperAgent(object(), voice_output=voice_output)
+
+    def emit_event(kind: str, message: str, payload: dict[str, Any] | None = None) -> None:
+        events.append((kind, message, payload))
+
+    result = agent._tool_speak_text('{"input": "Готово.", "tone_instruction": "спокойный и чёткий"}', emit_event)
+
+    assert result == "Текст озвучен."
+    assert voice_output.spoken == ["Готово."]
+    assert events == [("tool", "speak_text", {"chars": len("Готово.")})]
 
 
 def test_zipper_langchain_keeps_loaded_model_between_agent_invocations():
@@ -664,8 +716,8 @@ def test_zipper_langchain_keeps_loaded_model_between_agent_invocations():
     cleanup_calls: list[bool] = []
     responses = iter(
         (
-            "Thought: отвечаю\nFinal Answer: Первый ответ.\noutput_mode: voice",
-            "Thought: отвечаю снова\nFinal Answer: Второй ответ.\noutput_mode: voice",
+            "Thought: отвечаю\nFinal Answer: Первый ответ.\noutput_mode: voice\ntone_instruction: дружелюбный и бодрый",
+            "Thought: отвечаю снова\nFinal Answer: Второй ответ.\noutput_mode: voice\ntone_instruction: спокойный и чёткий",
         )
     )
 

@@ -80,6 +80,21 @@ def test_tts_config_accepts_mlx_backend_settings():
     assert config.mlx_voice_description == "Спокойный голос"
 
 
+def test_tts_config_uses_builtin_qwen_voice_and_tone_instruction():
+    config = TTSConfig.from_values(
+        rate_multiplier=1,
+        voice_id=None,
+        engine=TTS_ENGINE_MLX,
+        mlx_model=DEFAULT_TTS_MLX_MODEL,
+        mlx_voice_description="Старое пользовательское описание",
+        tone_instruction="  вопросительно  ",
+    )
+
+    assert config.mlx_voice_description == DEFAULT_TTS_MLX_VOICE_DESCRIPTION
+    assert config.tone_instruction == "вопросительно"
+    assert config.mlx_instruct == f"{DEFAULT_TTS_MLX_VOICE_DESCRIPTION}\nИнтонация TTS: вопросительно."
+
+
 def test_tts_config_falls_back_to_default_mlx_settings():
     config = TTSConfig.from_values(rate_multiplier=1, voice_id=None, engine="unknown", mlx_model="", mlx_voice_description="")
 

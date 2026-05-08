@@ -3,7 +3,17 @@
 from types import SimpleNamespace
 
 import numpy as np
-from src.domain.reader_constants import TTS_ENGINE_MLX
+from src.domain.reader_constants import (
+    DEFAULT_TTS_MLX_MODEL,
+    DEFAULT_TTS_MLX_VOICE_DESCRIPTION,
+    TTS_ENGINE_MLX,
+    TTS_MLX_GENERATION_REPETITION_PENALTY,
+    TTS_MLX_GENERATION_SEED,
+    TTS_MLX_GENERATION_TEMPERATURE,
+    TTS_MLX_GENERATION_TOP_K,
+    TTS_MLX_GENERATION_TOP_P,
+    TTS_MLX_LANGUAGE_CODE,
+)
 from src.domain.reader_types import TTSConfig
 from src.infrastructure.model_runtime_service import ModelRuntimeService
 from src.infrastructure.tts_mlx import MlxStreamingTTSController
@@ -60,6 +70,8 @@ class FakeMx:
 
     def __init__(self):
         self.clear_calls = 0
+        self.seed_calls: list[int] = []
+        self.random = SimpleNamespace(seed=self.seed_calls.append)
 
     def clear_cache(self):
         self.clear_calls += 1
@@ -114,15 +126,23 @@ def test_mlx_streaming_tts_generates_and_queues_audio_chunks():
             rate_multiplier=2.35,
             voice_id=None,
             engine=TTS_ENGINE_MLX,
-            mlx_model="mlx-community/Qwen3-TTS-test",
-            mlx_voice_description="Спокойный голос",
+            mlx_model=DEFAULT_TTS_MLX_MODEL,
+            mlx_voice_description="Старое описание",
+            tone_instruction="коротко и уверенно",
         ),
     )
 
     assert model.calls[0]["stream"] is True
     assert model.calls[0]["streaming_interval"] == 0.32
-    assert model.calls[0]["instruct"] == "Спокойный голос"
+    assert model.calls[0]["voice"] is None
+    assert model.calls[0]["instruct"] == f"{DEFAULT_TTS_MLX_VOICE_DESCRIPTION}\nИнтонация TTS: коротко и уверенно."
+    assert model.calls[0]["lang_code"] == TTS_MLX_LANGUAGE_CODE
+    assert model.calls[0]["temperature"] == TTS_MLX_GENERATION_TEMPERATURE
+    assert model.calls[0]["top_p"] == TTS_MLX_GENERATION_TOP_P
+    assert model.calls[0]["top_k"] == TTS_MLX_GENERATION_TOP_K
+    assert model.calls[0]["repetition_penalty"] == TTS_MLX_GENERATION_REPETITION_PENALTY
     assert model.calls[0]["speed"] == 2.35
+    assert mx.seed_calls == [TTS_MLX_GENERATION_SEED]
     np.testing.assert_allclose(players[0].chunks[0], np.array([0.1, 0.2], dtype=np.float32))
     np.testing.assert_allclose(players[0].chunks[1], np.array([0.3], dtype=np.float32))
     assert players[0].started == 1

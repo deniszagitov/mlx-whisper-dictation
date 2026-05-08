@@ -228,6 +228,14 @@ reader_tts_mlx_voice_description() -> str
 
 Возвращает описание MLX-голоса.
 
+#### `reader_tts_tone_instruction`
+
+```python
+reader_tts_tone_instruction() -> str
+```
+
+Возвращает свободную инструкцию по интонации TTS.
+
 #### `reader_preprocess_enabled`
 
 ```python
@@ -724,7 +732,7 @@ _refresh_reader_tts_voice_menu() -> None
 
 _Внутренняя функция._
 
-Пересобирает подменю системных голосов TTS.
+Пересобирает подменю голосов TTS для текущего backend-а.
 
 #### `_refresh_reader_items`
 
@@ -1217,6 +1225,14 @@ prompt_reader_tts_mlx_voice_description(_sender: rumps.MenuItem) -> None
 ```
 
 Открывает диалог описания голоса MLX VoiceDesign.
+
+#### `prompt_reader_tts_tone_instruction`
+
+```python
+prompt_reader_tts_tone_instruction(_sender: rumps.MenuItem) -> None
+```
+
+Открывает диалог свободной инструкции по интонации TTS.
 
 #### `change_reader_tts_voice`
 

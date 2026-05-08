@@ -17,10 +17,14 @@ from PyObjCTools.AppHelper import callAfter, callLater  # type: ignore[import-un
 
 from ..domain.constants import Config
 from ..domain.reader_constants import (
+    DEFAULT_TTS_MLX_VOICE_NAME,
+    DEFAULT_TTS_TONE_INSTRUCTION,
     RSVP_CHUNK_SIZE_OPTIONS,
     RSVP_FONT_SIZE_OPTIONS,
     RSVP_WPM_OPTIONS,
+    TTS_ENGINE_APPLE,
     TTS_ENGINE_LABELS,
+    TTS_ENGINE_MLX,
     TTS_MAX_MINUTES_OPTIONS,
     TTS_MLX_MODEL_OPTIONS,
     TTS_RATE_MULTIPLIER_STEP,
@@ -232,9 +236,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.reader_tts_mlx_model_menu.add(None)
         self.reader_tts_mlx_model_menu.add(rumps.MenuItem("Задать модель...", callback=self.prompt_reader_tts_mlx_model))
         self.reader_tts_mlx_voice_description_item = rumps.MenuItem(
-            "Описание MLX-голоса...",
-            callback=self.prompt_reader_tts_mlx_voice_description,
+            f"MLX-голос: {DEFAULT_TTS_MLX_VOICE_NAME}",
         )
+        self.reader_tts_mlx_voice_description_item.set_callback(None)
+        self.reader_tts_tone_instruction_item = rumps.MenuItem("Интонация TTS...", callback=self.prompt_reader_tts_tone_instruction)
         self.reader_tts_rate_menu = rumps.MenuItem(f"Скорость речи: {self._format_tts_rate(self.reader_tts_rate_multiplier)}")
         self.reader_tts_rate_down_item = rumps.MenuItem("− медленнее", callback=self.decrease_reader_tts_rate_multiplier)
         self.reader_tts_rate_value_item = rumps.MenuItem(f"Скорость: {self._format_tts_rate(self.reader_tts_rate_multiplier)}")
@@ -253,6 +258,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.reader_tts_settings_menu.add(self.reader_tts_engine_menu)
         self.reader_tts_settings_menu.add(self.reader_tts_mlx_model_menu)
         self.reader_tts_settings_menu.add(self.reader_tts_mlx_voice_description_item)
+        self.reader_tts_settings_menu.add(self.reader_tts_tone_instruction_item)
         self.reader_tts_settings_menu.add(self.reader_tts_rate_menu)
         self.reader_tts_settings_menu.add(self.reader_tts_voice_menu)
         self.reader_tts_settings_menu.add(self.reader_tts_max_minutes_menu)
@@ -517,6 +523,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def reader_tts_mlx_voice_description(self) -> str:
         """Возвращает описание MLX-голоса."""
         return str(getattr(self.app, "reader_tts_mlx_voice_description", ""))
+
+    @property
+    def reader_tts_tone_instruction(self) -> str:
+        """Возвращает свободную инструкцию по интонации TTS."""
+        return str(getattr(self.app, "reader_tts_tone_instruction", DEFAULT_TTS_TONE_INSTRUCTION))
 
     @property
     def reader_preprocess_enabled(self) -> bool:
@@ -871,10 +882,19 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.reader_tts_item.title = f"🔊 Запустить TTS    {self.tts_hotkey_status}"
 
     def _refresh_reader_tts_voice_menu(self) -> None:
-        """Пересобирает подменю системных голосов TTS."""
+        """Пересобирает подменю голосов TTS для текущего backend-а."""
         if getattr(self.reader_tts_voice_menu, "_menu", None) is not None:
             self.reader_tts_voice_menu.clear()
 
+        if self.reader_tts_engine == TTS_ENGINE_MLX:
+            self.reader_tts_voice_menu.title = f"MLX-голос: {DEFAULT_TTS_MLX_VOICE_NAME}"
+            voice_item = rumps.MenuItem(f"MLX-голос: {DEFAULT_TTS_MLX_VOICE_NAME}")
+            voice_item.set_callback(None)
+            voice_item.state = 1
+            self.reader_tts_voice_menu.add(voice_item)
+            return
+
+        self.reader_tts_voice_menu.title = "Голос"
         auto_item = rumps.MenuItem("Авто: русский голос", callback=self.change_reader_tts_voice)
         auto_item.state = int(self.reader_tts_voice_id is None)
         self.reader_tts_voice_menu.add(auto_item)
@@ -895,6 +915,9 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.reader_rsvp_font_menu.title = f"Размер шрифта: {self.reader_rsvp_font_size}"
         self.reader_tts_engine_menu.title = f"Backend: {self._format_tts_engine(self.reader_tts_engine)}"
         self.reader_tts_mlx_model_menu.title = f"MLX-модель: {self._short_model_name(self.reader_tts_mlx_model)}"
+        self.reader_tts_mlx_voice_description_item.title = f"MLX-голос: {DEFAULT_TTS_MLX_VOICE_NAME}"
+        tone_suffix = self.reader_tts_tone_instruction or "не задана"
+        self.reader_tts_tone_instruction_item.title = f"Интонация TTS: {tone_suffix}"
         self.reader_tts_rate_menu.title = f"Скорость речи: {self._format_tts_rate(self.reader_tts_rate_multiplier)}"
         self.reader_tts_rate_value_item.title = f"Скорость: {self._format_tts_rate(self.reader_tts_rate_multiplier)}"
         self.reader_tts_max_minutes_menu.title = f"Макс. длина аудио: {self._format_tts_max_minutes(self.reader_tts_max_minutes)}"
@@ -1393,8 +1416,21 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             return
         self.app.change_reader_tts_mlx_voice_description(description)
 
+    def prompt_reader_tts_tone_instruction(self, _sender: rumps.MenuItem) -> None:
+        """Открывает диалог свободной инструкции по интонации TTS."""
+        tone_instruction = prompt_text(
+            "Интонация TTS",
+            "Добавьте короткую подсказку для интонации: утвердительно, вопросительно, коротко и уверенно.",
+            default_text=self.reader_tts_tone_instruction,
+        )
+        if tone_instruction is None:
+            return
+        self.app.change_reader_tts_tone_instruction(tone_instruction)
+
     def change_reader_tts_voice(self, sender: rumps.MenuItem) -> None:
         """Меняет системный голос TTS."""
+        if self.reader_tts_engine != TTS_ENGINE_APPLE:
+            return
         if sender.title.startswith("Авто:"):
             self.app.change_reader_tts_voice(None)
             return

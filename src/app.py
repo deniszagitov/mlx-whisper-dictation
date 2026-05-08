@@ -1277,6 +1277,11 @@ class DictationApp:
         return self.reader_preferences.tts_config.mlx_voice_description
 
     @property
+    def reader_tts_tone_instruction(self) -> str:
+        """Возвращает свободную инструкцию по интонации TTS."""
+        return self.reader_preferences.tts_config.tone_instruction
+
+    @property
     def reader_preprocess_enabled(self) -> bool:
         """Возвращает флаг LLM-предобработки reader."""
         return self.reader_preferences.preprocess_enabled
@@ -1978,6 +1983,7 @@ class DictationApp:
                 engine=self.reader_tts_engine,
                 mlx_model=self.reader_tts_mlx_model,
                 mlx_voice_description=self.reader_tts_mlx_voice_description,
+                tone_instruction=self.reader_tts_tone_instruction,
             )
         )
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_RATE_MULTIPLIER, self.reader_tts_rate_multiplier)
@@ -1994,6 +2000,7 @@ class DictationApp:
                 engine=self.reader_tts_engine,
                 mlx_model=self.reader_tts_mlx_model,
                 mlx_voice_description=self.reader_tts_mlx_voice_description,
+                tone_instruction=self.reader_tts_tone_instruction,
             )
         )
         if self.reader_tts_voice_id is None:
@@ -2013,6 +2020,7 @@ class DictationApp:
                 engine=self.reader_tts_engine,
                 mlx_model=self.reader_tts_mlx_model,
                 mlx_voice_description=self.reader_tts_mlx_voice_description,
+                tone_instruction=self.reader_tts_tone_instruction,
             )
         )
         self.settings_store.save_int(Config.DEFAULTS_KEY_READER_TTS_MAX_MINUTES, self.reader_tts_max_minutes)
@@ -2029,6 +2037,7 @@ class DictationApp:
                 engine=engine,
                 mlx_model=self.reader_tts_mlx_model,
                 mlx_voice_description=self.reader_tts_mlx_voice_description,
+                tone_instruction=self.reader_tts_tone_instruction,
             )
         )
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_ENGINE, self.reader_tts_engine)
@@ -2048,6 +2057,7 @@ class DictationApp:
                 engine=self.reader_tts_engine,
                 mlx_model=model_name,
                 mlx_voice_description=self.reader_tts_mlx_voice_description,
+                tone_instruction=self.reader_tts_tone_instruction,
             )
         )
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_MLX_MODEL, self.reader_tts_mlx_model)
@@ -2066,6 +2076,7 @@ class DictationApp:
                 engine=self.reader_tts_engine,
                 mlx_model=self.reader_tts_mlx_model,
                 mlx_voice_description=description,
+                tone_instruction=self.reader_tts_tone_instruction,
             )
         )
         self.settings_store.save_str(
@@ -2073,6 +2084,26 @@ class DictationApp:
             self.reader_tts_mlx_voice_description,
         )
         LOGGER.info("🔈 Описание MLX-голоса сохранено")
+        self._notify_subscribers()
+
+    def change_reader_tts_tone_instruction(self, tone_instruction: str) -> None:
+        """Меняет свободную инструкцию по интонации TTS."""
+        self.reader_preferences = self.reader_preferences.with_tts_config(
+            TTSConfig.from_values(
+                rate_multiplier=self.reader_tts_rate_multiplier,
+                voice_id=self.reader_tts_voice_id,
+                max_minutes=self.reader_tts_max_minutes,
+                engine=self.reader_tts_engine,
+                mlx_model=self.reader_tts_mlx_model,
+                mlx_voice_description=self.reader_tts_mlx_voice_description,
+                tone_instruction=tone_instruction,
+            )
+        )
+        if self.reader_tts_tone_instruction:
+            self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_TONE_INSTRUCTION, self.reader_tts_tone_instruction)
+        else:
+            self.settings_store.remove_key(Config.DEFAULTS_KEY_READER_TTS_TONE_INSTRUCTION)
+        LOGGER.info("🔈 Интонация TTS сохранена: %s", self.reader_tts_tone_instruction or "не задана")
         self._notify_subscribers()
 
     def toggle_reader_preprocess(self) -> None:

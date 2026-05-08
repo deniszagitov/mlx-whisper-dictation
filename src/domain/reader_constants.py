@@ -26,9 +26,13 @@ DEFAULT_TTS_RATE_MULTIPLIER: Final = 1.0
 DEFAULT_TTS_MAX_MINUTES: Final = 5
 DEFAULT_TTS_ENGINE: Final = "apple"
 DEFAULT_TTS_MLX_MODEL: Final = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit"
+DEFAULT_TTS_MLX_VOICE_NAME: Final = "Русский быстрый ассистент-робот"
 DEFAULT_TTS_MLX_VOICE_DESCRIPTION: Final = (
-    "Чёткий спокойный взрослый голос, нейтральная интонация, подходит для русского и английского текста."
+    "Быстрый русский голос ассистента-робота: чёткая дикция, собранная энергичная подача, "
+    "уверенный техничный тембр, короткие паузы, высокая разборчивость, без эмоциональной драматизации. "
+    "Всегда говорит по-русски."
 )
+DEFAULT_TTS_TONE_INSTRUCTION: Final = ""
 TTS_RATE_MULTIPLIER_MIN: Final = 0.1
 TTS_RATE_MULTIPLIER_MAX: Final = 3.0
 TTS_RATE_MULTIPLIER_STEP: Final = 0.1
@@ -42,6 +46,12 @@ TTS_ENGINE_LABELS: Final = {
 }
 TTS_MLX_MODEL_OPTIONS: Final = (DEFAULT_TTS_MLX_MODEL,)
 TTS_MLX_STREAMING_INTERVAL_SECONDS: Final = 0.32
+TTS_MLX_LANGUAGE_CODE: Final = "russian"
+TTS_MLX_GENERATION_SEED: Final = 42
+TTS_MLX_GENERATION_TEMPERATURE: Final = 0.7
+TTS_MLX_GENERATION_TOP_P: Final = 0.95
+TTS_MLX_GENERATION_TOP_K: Final = 40
+TTS_MLX_GENERATION_REPETITION_PENALTY: Final = 1.0
 TTS_BASE_WORDS_PER_MINUTE: Final = 170
 
 DEFAULT_READER_PREPROCESS_ENABLED: Final = True
@@ -126,10 +136,26 @@ def normalize_tts_mlx_model(value: object) -> str:
     return normalized or DEFAULT_TTS_MLX_MODEL
 
 
-def normalize_tts_mlx_voice_description(value: object) -> str:
+def normalize_tts_mlx_voice_description(value: object, *, mlx_model: object = DEFAULT_TTS_MLX_MODEL) -> str:
     """Возвращает описание голоса для VoiceDesign TTS-модели."""
+    if normalize_tts_mlx_model(mlx_model) == DEFAULT_TTS_MLX_MODEL:
+        return DEFAULT_TTS_MLX_VOICE_DESCRIPTION
     normalized = str(value or "").strip()
     return normalized or DEFAULT_TTS_MLX_VOICE_DESCRIPTION
+
+
+def normalize_tts_tone_instruction(value: object) -> str:
+    """Возвращает свободную инструкцию по интонации TTS."""
+    return " ".join(str(value or "").strip().split())
+
+
+def build_tts_mlx_instruct(voice_description: object, tone_instruction: object) -> str:
+    """Собирает итоговый VoiceDesign instruct для MLX TTS."""
+    voice = str(voice_description or DEFAULT_TTS_MLX_VOICE_DESCRIPTION).strip() or DEFAULT_TTS_MLX_VOICE_DESCRIPTION
+    tone = normalize_tts_tone_instruction(tone_instruction)
+    if not tone:
+        return voice
+    return f"{voice}\nИнтонация TTS: {tone}."
 
 
 def estimate_rsvp_duration_seconds(word_count: int, wpm: int) -> float:

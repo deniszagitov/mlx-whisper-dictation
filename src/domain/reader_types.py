@@ -23,6 +23,8 @@ from .reader_constants import (
     DEFAULT_TTS_MLX_MODEL,
     DEFAULT_TTS_MLX_VOICE_DESCRIPTION,
     DEFAULT_TTS_RATE_MULTIPLIER,
+    DEFAULT_TTS_TONE_INSTRUCTION,
+    build_tts_mlx_instruct,
     clamp_rsvp_chunk_size,
     clamp_rsvp_font_size,
     clamp_rsvp_wpm,
@@ -31,6 +33,7 @@ from .reader_constants import (
     clamp_tts_rate_multiplier,
     normalize_tts_mlx_model,
     normalize_tts_mlx_voice_description,
+    normalize_tts_tone_instruction,
     reader_orp_index,
     reader_words,
 )
@@ -135,6 +138,7 @@ class TTSConfig:
     engine: str = DEFAULT_TTS_ENGINE
     mlx_model: str = DEFAULT_TTS_MLX_MODEL
     mlx_voice_description: str = DEFAULT_TTS_MLX_VOICE_DESCRIPTION
+    tone_instruction: str = DEFAULT_TTS_TONE_INSTRUCTION
 
     @classmethod
     def from_values(
@@ -146,16 +150,39 @@ class TTSConfig:
         engine: object = DEFAULT_TTS_ENGINE,
         mlx_model: object = DEFAULT_TTS_MLX_MODEL,
         mlx_voice_description: object = DEFAULT_TTS_MLX_VOICE_DESCRIPTION,
+        tone_instruction: object = DEFAULT_TTS_TONE_INSTRUCTION,
     ) -> TTSConfig:
         """Создаёт валидный TTSConfig из сырых persistence-значений."""
         normalized_voice = None if voice_id is None else str(voice_id).strip() or None
+        normalized_mlx_model = normalize_tts_mlx_model(mlx_model)
         return cls(
             rate_multiplier=clamp_tts_rate_multiplier(rate_multiplier),
             voice_id=normalized_voice,
             max_minutes=clamp_tts_max_minutes(max_minutes),
             engine=clamp_tts_engine(engine),
-            mlx_model=normalize_tts_mlx_model(mlx_model),
-            mlx_voice_description=normalize_tts_mlx_voice_description(mlx_voice_description),
+            mlx_model=normalized_mlx_model,
+            mlx_voice_description=normalize_tts_mlx_voice_description(
+                mlx_voice_description,
+                mlx_model=normalized_mlx_model,
+            ),
+            tone_instruction=normalize_tts_tone_instruction(tone_instruction),
+        )
+
+    @property
+    def mlx_instruct(self) -> str:
+        """Возвращает итоговую VoiceDesign-инструкцию для MLX TTS."""
+        return build_tts_mlx_instruct(self.mlx_voice_description, self.tone_instruction)
+
+    def with_tone_instruction(self, tone_instruction: object) -> TTSConfig:
+        """Возвращает TTSConfig с обновлённой интонацией."""
+        return self.__class__.from_values(
+            rate_multiplier=self.rate_multiplier,
+            voice_id=self.voice_id,
+            max_minutes=self.max_minutes,
+            engine=self.engine,
+            mlx_model=self.mlx_model,
+            mlx_voice_description=self.mlx_voice_description,
+            tone_instruction=tone_instruction,
         )
 
 
@@ -221,6 +248,10 @@ class ReaderPreferences:
                 mlx_voice_description=settings_store.load_str(
                     Config.DEFAULTS_KEY_READER_TTS_MLX_VOICE_DESCRIPTION,
                     fallback=DEFAULT_TTS_MLX_VOICE_DESCRIPTION,
+                ),
+                tone_instruction=settings_store.load_str(
+                    Config.DEFAULTS_KEY_READER_TTS_TONE_INSTRUCTION,
+                    fallback=DEFAULT_TTS_TONE_INSTRUCTION,
                 ),
             ),
             preprocess_model=preprocess_model or llm_model,

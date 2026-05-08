@@ -91,6 +91,7 @@ class StatusBarControllerProtocol(Protocol):
     reader_tts_engine: str
     reader_tts_mlx_model: str
     reader_tts_mlx_voice_description: str
+    reader_tts_tone_instruction: str
     reader_preprocess_enabled: bool
     zipper_enabled: bool
     zipper_status: str
@@ -283,6 +284,10 @@ class StatusBarControllerProtocol(Protocol):
 
     def change_reader_tts_mlx_voice_description(self, description: str) -> None:
         """Меняет описание голоса MLX TTS."""
+        ...
+
+    def change_reader_tts_tone_instruction(self, tone_instruction: str) -> None:
+        """Меняет интонацию TTS."""
         ...
 
     def toggle_reader_preprocess(self) -> None:

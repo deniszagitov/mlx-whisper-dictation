@@ -8,7 +8,15 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..domain.reader_constants import TTS_MLX_STREAMING_INTERVAL_SECONDS
+from ..domain.reader_constants import (
+    TTS_MLX_GENERATION_REPETITION_PENALTY,
+    TTS_MLX_GENERATION_SEED,
+    TTS_MLX_GENERATION_TEMPERATURE,
+    TTS_MLX_GENERATION_TOP_K,
+    TTS_MLX_GENERATION_TOP_P,
+    TTS_MLX_LANGUAGE_CODE,
+    TTS_MLX_STREAMING_INTERVAL_SECONDS,
+)
 from .model_manager import default_model_manager
 
 if TYPE_CHECKING:
@@ -63,13 +71,19 @@ class MlxStreamingTTSController:
                 self._player = player
 
             LOGGER.info("🔈 MLX TTS запускает поток: model=%s, chars=%d", model_name, len(text))
+            self._seed_mlx_random()
             results = model.generate(
                 text=text,
-                instruct=config.mlx_voice_description,
+                voice=None,
+                instruct=config.mlx_instruct,
                 stream=True,
                 streaming_interval=TTS_MLX_STREAMING_INTERVAL_SECONDS,
                 speed=max(config.rate_multiplier, 0.1),
-                lang_code="auto",
+                lang_code=TTS_MLX_LANGUAGE_CODE,
+                temperature=TTS_MLX_GENERATION_TEMPERATURE,
+                top_p=TTS_MLX_GENERATION_TOP_P,
+                top_k=TTS_MLX_GENERATION_TOP_K,
+                repetition_penalty=TTS_MLX_GENERATION_REPETITION_PENALTY,
                 verbose=False,
             )
             for result in results:
@@ -147,6 +161,20 @@ class MlxStreamingTTSController:
         clear_cache = getattr(mx_module, "clear_cache", None)
         if callable(clear_cache):
             clear_cache()
+
+    def _seed_mlx_random(self) -> None:
+        """Фиксирует seed MLX RNG перед генерацией TTS."""
+        mx_module = self._mx
+        if mx_module is None:
+            try:
+                import mlx.core as mx_module  # noqa: PLC0415
+            except ImportError:
+                return
+            self._mx = mx_module
+        random_module = getattr(mx_module, "random", None)
+        seed = getattr(random_module, "seed", None)
+        if callable(seed):
+            seed(TTS_MLX_GENERATION_SEED)
 
     def _drain_player(self, player: Any) -> None:
         """Дожидается воспроизведения накопленных chunk-ов."""
