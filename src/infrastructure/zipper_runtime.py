@@ -44,9 +44,12 @@ _ZIPPER_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTA
 _ZIPPER_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 _ZIPPER_FINAL_ANSWER_RE = re.compile(r"Final Answer\s*:\s*", re.IGNORECASE)
 _ZIPPER_SPEAK_TEXT_CONTRACT = (
-    "Передавай только готовую фразу для озвучивания: обычные слова буквами, числа словами, "
-    "без цифр, markdown, URL, кода, JSON и технических идентификаторов. "
-    "Для длинного или технического текста используй show_text или output_mode: window."
+    "Передавай уже готовую фразу для TTS без дополнительной обработки в коде. "
+    "Основная речь должна быть на русском; русские числа, время, даты, проценты и суммы пиши словами "
+    "без цифр. English terms, API names, CLI commands and short code tokens stay in English. "
+    "Не используй markdown, JSON, code block, URL и технические дампы в голосовом тексте. "
+    "Для длинного кода, URL, таблиц, логов и технических деталей используй show_text или output_mode: window, "
+    "а голосом дай короткое резюме. Пример: 22:56 -> двадцать два часа пятьдесят шесть минут."
 )
 _ZIPPER_SYSTEM_MESSAGE = (
     "Ты Zipper, локальный голосовой агент Dictator. "

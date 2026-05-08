@@ -30,7 +30,6 @@
 - [Reader RSVP](modules/reader_rsvp.md) — Use case запуска RSVP-чтения текста из буфера обмена.
 - [Reader TTS](modules/reader_tts.md) — Use case запуска ускоренного TTS из буфера обмена.
 - [Zipper use case](modules/zipper.md) — Use case-сценарии голосового агента Zipper.
-- [Zipper TTS](modules/zipper_tts.md) — Правила подготовки голосовых ответов Zipper для локального TTS.
 - [Zipper config](modules/zipper_config.md) — Загрузка и нормализация TOML-конфига Zipper.
 - [Zipper runtime](modules/zipper_runtime.md) — Инфраструктурные адаптеры Zipper: память, инструменты, URL и агент.
 - [Menu bar UI](modules/ui.md) — UI menu bar приложения Dictator.
