@@ -189,7 +189,7 @@ class HuggingFaceModelDownloader:
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         """Скачивает модель через общий механизм с progress bar и событиями."""
-        LOGGER.info("📥 Проверяю загрузку модели: label=%s, model=%s", label, model_name)
+        LOGGER.info("📥 Проверяю локальную доступность модели: label=%s, model=%s", label, model_name)
         if _is_local_model_path(model_name):
             self._emit(
                 progress_callback,
@@ -603,6 +603,10 @@ class ModelManager:
     ) -> None:
         """Скачивает LLM-модель через общий менеджер."""
         self.ensure_model_downloaded(model_name, label="LLM-модель", progress_callback=progress_callback)
+
+    def set_model_memory_loading_callback(self, callback: Callable[[bool, str, str], None] | None) -> None:
+        """Назначает callback фактической загрузки runtime-модели в память."""
+        self._runtime_service.set_model_memory_loading_callback(callback)
 
     def load_llm_runtime_objects(self, model_name: str) -> tuple[Any, Any]:
         """Возвращает MLX LLM-модель из единого runtime-cache."""

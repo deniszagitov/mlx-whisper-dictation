@@ -112,8 +112,25 @@ class LlmGateway:
         self._apply_backend_for_model(model_name)
 
     def set_model_memory_loading_callback(self, callback: Callable[[bool, str, str], None] | None) -> None:
-        """Назначает callback статуса загрузки LLM/VLM в память."""
+        """Назначает callback фактической загрузки LLM/VLM в общий runtime-cache."""
         self._model_memory_loading_callback = callback
+        self._propagate_model_memory_loading_callback(callback)
+
+    def _propagate_model_memory_loading_callback(self, callback: Callable[[bool, str, str], None] | None) -> None:
+        """Передаёт callback владельцу runtime-loader-а, где известны cache hit и реальная загрузка."""
+        seen_owner_ids: set[int] = set()
+        for loader in (self._lm_runtime_loader, self._vlm_runtime_loader):
+            owner = getattr(loader, "__self__", None)
+            if owner is None or id(owner) in seen_owner_ids:
+                continue
+            seen_owner_ids.add(id(owner))
+            setter = getattr(owner, "set_model_memory_loading_callback", None)
+            if not callable(setter):
+                continue
+            try:
+                setter(callback)
+            except Exception:
+                LOGGER.exception("⚠️ Ошибка установки callback статуса загрузки LLM/VLM в память")
 
     def _apply_backend_for_model(self, model_name: str) -> None:
         """Выбирает правильный backend (LM или VLM) для модели."""
@@ -135,21 +152,7 @@ class LlmGateway:
             raise RuntimeError("LLM runtime не настроен")
 
         LOGGER.info("🤖 Запрашиваю LLM через единый runtime-cache: %s", self.model_name)
-        self._emit_model_memory_loading(True)
-        try:
-            return self._runtime_loader(self.model_name)
-        finally:
-            self._emit_model_memory_loading(False)
-
-    def _emit_model_memory_loading(self, active: bool) -> None:
-        """Сообщает управляющему слою, что MLX загружает модель в память."""
-        callback = self._model_memory_loading_callback
-        if callback is None:
-            return
-        try:
-            callback(active, self.model_name, self.model_download_label())
-        except Exception:
-            LOGGER.exception("⚠️ Ошибка callback статуса загрузки LLM в память")
+        return self._runtime_loader(self.model_name)
 
     def change_model(self, model_name: str) -> None:
         """Переключает LLM-модель и автоматически выбирает backend."""

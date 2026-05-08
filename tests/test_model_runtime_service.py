@@ -90,6 +90,28 @@ def test_lm_gateway_reader_and_zipper_share_runtime_loader() -> None:
     assert load_calls == ["shared-llm"]
 
 
+def test_memory_loading_callback_fires_only_for_real_runtime_load() -> None:
+    """Статус загрузки в память должен соответствовать реальному cache miss, а не каждому запросу."""
+    load_calls: list[str] = []
+    events: list[tuple[bool, str, str]] = []
+
+    def load_model(model_name: str):
+        load_calls.append(model_name)
+        return object(), FakeTokenizer()
+
+    service = ModelRuntimeService(lm_loader=load_model)
+    service.set_model_memory_loading_callback(lambda active, model_name, label: events.append((active, model_name, label)))
+
+    service.get_lm("model-a")
+    service.get_lm("model-a")
+
+    assert load_calls == ["model-a"]
+    assert events == [
+        (True, "model-a", "LLM-модель"),
+        (False, "model-a", "LLM-модель"),
+    ]
+
+
 def test_release_model_removes_only_selected_model() -> None:
     """release_model должен очищать только указанный model_id."""
     load_calls: list[str] = []

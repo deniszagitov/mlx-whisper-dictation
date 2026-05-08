@@ -105,13 +105,14 @@ def test_keep_loaded_is_compatible_with_shared_runtime():
     assert cleanup_calls == []
 
 
-def test_process_text_reports_model_memory_loading_status():
-    """Gateway должен публиковать начало и конец синхронной загрузки модели в память."""
+def test_process_text_reports_model_memory_loading_status_only_for_real_load():
+    """Gateway должен публиковать статус только для фактической загрузки модели в память."""
     events: list[tuple[bool, str, str]] = []
     processor = make_processor()
     processor.set_model_memory_loading_callback(lambda active, model_name, label: events.append((active, model_name, label)))
 
     assert processor.process_text("текст", "система") == "готово"
+    assert processor.process_text("ещё текст", "система") == "готово"
 
     assert events == [
         (True, "fake-model", "LLM-модель"),

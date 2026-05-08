@@ -21,6 +21,13 @@ BACKEND_MLX_TTS = "mlx-tts"
 BACKEND_WHISPER = "whisper"
 
 _VLM_MODEL_INDICATORS = ("gemma-4", "gemma4", "-vlm", "vision")
+_BACKEND_LABELS = {
+    BACKEND_LM: "LLM-модель",
+    BACKEND_VLM: "VLM-модель",
+    BACKEND_QWEN_ASR: "ASR-модель",
+    BACKEND_MLX_TTS: "TTS-модель",
+    BACKEND_WHISPER: "ASR-модель",
+}
 
 
 def is_vlm_model(model_name: str) -> bool:
@@ -129,6 +136,7 @@ class ModelRuntimeService:
         mlx_tts_loader: Callable[[str], Any] | None = None,
         whisper_loader: Callable[[str], Any] | None = None,
         memory_cleanup: Callable[[], None] | None = None,
+        model_memory_loading_callback: Callable[[bool, str, str], None] | None = None,
     ) -> None:
         self._lm_loader = lm_loader or _default_lm_loader
         self._vlm_loader = vlm_loader or _default_vlm_loader
@@ -141,6 +149,11 @@ class ModelRuntimeService:
         self._model_generations: dict[str, int] = {}
         self._lock = threading.RLock()
         self._loader_lock = threading.Lock()
+        self._model_memory_loading_callback = model_memory_loading_callback
+
+    def set_model_memory_loading_callback(self, callback: Callable[[bool, str, str], None] | None) -> None:
+        """Назначает callback фактической загрузки runtime-модели в память."""
+        self._model_memory_loading_callback = callback
 
     def get_lm(self, model_id: str) -> tuple[Any, Any]:
         """Возвращает загруженную LM-модель и tokenizer через общий cache."""
@@ -267,15 +280,20 @@ class ModelRuntimeService:
                 raise inflight.error
             return inflight.value
 
+        loading_event_emitted = False
         try:
-            LOGGER.info("🧠 Загружаю модель в общий runtime-cache: backend=%s, model=%s", key.backend, key.model_id)
             with self._loader_lock:
+                LOGGER.info("🧠 Загружаю модель в общий runtime-cache: backend=%s, model=%s", key.backend, key.model_id)
+                self._emit_model_memory_loading(True, key)
+                loading_event_emitted = True
                 value = loader(key.model_id)
         except BaseException as error:
             with self._lock:
                 inflight.error = error
                 self._inflight.pop(key, None)
                 inflight.event.set()
+            if loading_event_emitted:
+                self._emit_model_memory_loading(False, key)
             raise
 
         with self._lock:
@@ -285,4 +303,16 @@ class ModelRuntimeService:
             self._inflight.pop(key, None)
             inflight.event.set()
         LOGGER.info("🧠 Модель прогрета: backend=%s, model=%s", key.backend, key.model_id)
+        if loading_event_emitted:
+            self._emit_model_memory_loading(False, key)
         return value
+
+    def _emit_model_memory_loading(self, active: bool, key: ModelRuntimeKey) -> None:
+        """Публикует статус только для фактической загрузки runtime-модели."""
+        callback = self._model_memory_loading_callback
+        if callback is None:
+            return
+        try:
+            callback(active, key.model_id, _BACKEND_LABELS.get(key.backend, "Модель"))
+        except Exception:
+            LOGGER.exception("⚠️ Ошибка callback статуса загрузки модели в память")
