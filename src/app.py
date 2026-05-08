@@ -1732,6 +1732,13 @@ class DictationApp:
 
     def toggle_zipper(self) -> None:
         """Переключает сценарий голосового агента Zipper."""
+        LOGGER.info(
+            "🧷 toggle_zipper вызван: enabled=%s, recording_active=%s, started=%s, state=%s",
+            self.zipper_enabled,
+            self.zipper_recording_active,
+            self.started,
+            self.state,
+        )
         self.zipper_use_cases.toggle()
 
     def toggle_zipper_enabled(self) -> None:

@@ -33,6 +33,7 @@ class FakeRuntime:
         self.elapsed_time = 0
         self.max_time = 30
         self.snapshots = 0
+        self.download_requests = 0
 
     def prepare_recording(self) -> bool:
         """Разрешает запись."""
@@ -45,6 +46,10 @@ class FakeRuntime:
     def release_display_sleep_for_active_session(self, *, immediate: bool = False, reason: str = "unknown") -> None:
         """Заглушка отпускания power assertion."""
         return None
+
+    def download_llm_model(self) -> None:
+        """Фиксирует запрос загрузки LLM-модели."""
+        self.download_requests += 1
 
 
 class FakeRecorder:
@@ -94,9 +99,12 @@ class FakeLLM:
 
     last_token_usage = 0
 
+    def __init__(self, cached: bool = True) -> None:
+        self.cached = cached
+
     def is_model_cached(self) -> bool:
         """Считает модель доступной локально."""
-        return True
+        return self.cached
 
     def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
         """Возвращает краткое резюме для тестов памяти."""
@@ -285,7 +293,7 @@ class FakeUrlOpener:
         return True
 
 
-def make_use_case(config: ZipperConfig | None = None, agent: FakeAgent | None = None):
+def make_use_case(config: ZipperConfig | None = None, agent: FakeAgent | None = None, llm_cached: bool = True):
     """Создаёт ZipperUseCases с фейковыми зависимостями."""
     runtime = FakeRuntime()
     recorder = FakeRecorder()
@@ -295,7 +303,7 @@ def make_use_case(config: ZipperConfig | None = None, agent: FakeAgent | None = 
         runtime=runtime,
         recorder=recorder,
         transcriber=FakeTranscriber(),
-        llm_processor=FakeLLM(),
+        llm_processor=FakeLLM(cached=llm_cached),
         config_provider=FakeConfigProvider(config),
         memory_store=memory,
         agent_service=agent or FakeAgent(),
@@ -335,6 +343,18 @@ def test_zipper_records_voice_command_without_regular_insertion():
     assert text_output.messages[-1] == ("Zipper", "Показал результат")
     assert runtime.state == Config.STATUS_IDLE
     assert len(memory.snapshot.events) > 0
+
+
+def test_zipper_hotkey_reports_uncached_llm_and_starts_download():
+    """Если LLM не скачана, Zipper пишет причину в debug-поток и запускает загрузку."""
+    use_case, runtime, recorder, text_output, _memory = make_use_case(llm_cached=False)
+
+    use_case.toggle()
+
+    assert recorder.started is False
+    assert runtime.download_requests == 1
+    assert any(event.kind == "toggle" for event in text_output.events)
+    assert any(event.kind == "error" and "LLM-модель ещё не скачана" in event.message for event in text_output.events)
 
 
 def test_zipper_builtin_tools_keep_clipboard_and_cli_explicitly_configured():

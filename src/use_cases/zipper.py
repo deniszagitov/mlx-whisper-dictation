@@ -156,29 +156,52 @@ class ZipperUseCases:
 
     def toggle(self) -> None:
         """Переключает сценарий записи голосовой команды Zipper."""
+        self._event(
+            "toggle",
+            "Получен запрос на переключение Zipper",
+            {
+                "enabled": self.runtime.zipper_enabled,
+                "recording_active": self.runtime.zipper_recording_active,
+                "started": self.runtime.started,
+                "state": self.runtime.state,
+            },
+        )
         if not self.runtime.zipper_enabled:
-            self.system_integration_service.notify("MLX Whisper Dictation", "Zipper выключен.")
+            self._show_error("Zipper выключен.")
             return
         if self.runtime.zipper_recording_active:
             self.stop_recording()
             return
         if self.runtime.started:
-            self.system_integration_service.notify("MLX Whisper Dictation", "Другая запись уже активна.")
+            self._show_error("Другая запись уже активна.")
             return
         self.start_recording()
 
     def start_recording(self) -> None:
         """Запускает запись голосовой команды Zipper."""
+        LOGGER.info(
+            "🧷 Проверяю готовность Zipper перед записью: enabled=%s, state=%s, started=%s",
+            self.runtime.zipper_enabled,
+            self.runtime.state,
+            self.runtime.started,
+        )
+        self._event("recording_prepare", "Zipper проверяет готовность к записи")
         if self.llm_processor is None:
             self._show_error("LLM-процессор не инициализирован.")
             return
         if not self.llm_processor.is_model_cached():
-            self._show_error("LLM-модель ещё не скачана. Сначала скачайте модель в разделе LLM.")
+            message = "LLM-модель ещё не скачана. Запускаю загрузку; после завершения нажмите хоткей Zipper ещё раз."
+            self._show_error(message)
+            download = getattr(self.runtime, "download_llm_model", None)
+            if callable(download):
+                download()
             return
         if not self.runtime.prepare_recording():
+            self._show_error("Zipper не смог начать запись: нет доступного микрофона или приложение не готово к записи.")
             return
 
         LOGGER.info("🧷 Запуск записи команды Zipper")
+        self._event("recording_started", "Zipper начал запись голосовой команды")
         self.runtime.started = True
         self.runtime.zipper_recording_active = True
         self.runtime.state = Config.STATUS_RECORDING
@@ -429,6 +452,8 @@ class ZipperUseCases:
             self.text_output.show_text("Zipper", text)
 
     def _show_error(self, message: str) -> None:
+        LOGGER.warning("🧷 %s", message)
+        self._event("error", message)
         self.system_integration_service.notify("MLX Whisper Dictation", message)
         self.text_output.show_text("Zipper: ошибка", message)
 

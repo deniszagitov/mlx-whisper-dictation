@@ -330,6 +330,25 @@ class HotkeyDispatcher:
             binding.triggered = False
             binding.suppress_key_up = False
 
+    def _invoke_binding_callback(self, binding: _HotkeyBinding) -> None:
+        """Логирует и вызывает callback хоткея с защитой от тихих падений."""
+        callback_name = getattr(binding.callback, "__name__", repr(binding.callback))
+        LOGGER.info(
+            "⌨️ Сработал глобальный хоткей: name=%s, combination=%s, callback=%s",
+            binding.name,
+            binding.key_combination,
+            callback_name,
+        )
+        try:
+            binding.callback()
+        except Exception:
+            LOGGER.exception(
+                "⌨️ Ошибка callback-а хоткея: name=%s, combination=%s, callback=%s",
+                binding.name,
+                binding.key_combination,
+                callback_name,
+            )
+
     def _has_regular_extension(self, modifier_binding: _HotkeyBinding) -> bool:
         """Проверяет, есть ли обычный хоткей с теми же модификаторами."""
         if not modifier_binding.modifier_only:
@@ -393,9 +412,8 @@ class HotkeyDispatcher:
                             self._pending_modifier_only_binding = binding
                             should_suppress = True
                             continue
-                        LOGGER.info("⌨️ Сработал глобальный хоткей: %s", binding.key_combination)
                         binding.triggered = True
-                        binding.callback()
+                        self._invoke_binding_callback(binding)
                         should_suppress = True
                 else:
                     if binding.triggered and any(
@@ -406,7 +424,7 @@ class HotkeyDispatcher:
                     elif self._pending_modifier_only_binding is binding:
                         LOGGER.info("⌨️ Сработал modifier-only хоткей после отпускания: %s", binding.key_combination)
                         binding.triggered = True
-                        binding.callback()
+                        self._invoke_binding_callback(binding)
                         should_suppress = True
                         self._pending_modifier_only_binding = None
                     binding.triggered = False
@@ -442,10 +460,9 @@ class HotkeyDispatcher:
                 continue
             if hotkey_name_matches(binding.required_key, event_key_name) and not binding.triggered:
                 self._pending_modifier_only_binding = None
-                LOGGER.info("⌨️ Сработал глобальный хоткей: %s", binding.key_combination)
                 binding.triggered = True
                 binding.suppress_key_up = True
-                binding.callback()
+                self._invoke_binding_callback(binding)
                 return True
             if event_key_name != binding.required_key:
                 binding.triggered = False
