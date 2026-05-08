@@ -320,6 +320,51 @@ def _stop_runtime_for_cli_shutdown(
     _safe_shutdown_call("отпускание защиты дисплея", display_sleep_prevention_service.release)
 
 
+def _install_cli_signal_wait_thread(
+    handler: Any,
+    *,
+    signals: tuple[int, ...] = (signal.SIGINT, signal.SIGTERM),
+    pthread_sigmask: Any = signal.pthread_sigmask,
+    sigwait: Any = signal.sigwait,
+    stdin_isatty: Any = None,
+) -> Any | None:
+    """Обрабатывает CLI-сигналы из отдельного потока, не полагаясь на Cocoa run loop."""
+    isatty = stdin_isatty or sys.stdin.isatty
+    if not isatty():
+        return None
+
+    watched_signals = tuple(int(signum) for signum in signals)
+    try:
+        previous_mask = pthread_sigmask(signal.SIG_BLOCK, watched_signals)
+    except (AttributeError, OSError, ValueError):
+        LOGGER.exception("⚠️ Не удалось включить sigwait для CLI-сигналов")
+        return None
+
+    active = True
+
+    def wait_for_signals() -> None:
+        while active:
+            try:
+                signum = int(sigwait(watched_signals))
+            except OSError:
+                break
+            if signum in watched_signals:
+                handler(signum, None)
+
+    thread = threading.Thread(target=wait_for_signals, name="cli-signal-wait", daemon=True)
+    thread.start()
+
+    def cleanup() -> None:
+        nonlocal active
+        active = False
+        try:
+            pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        except (OSError, ValueError):
+            LOGGER.exception("⚠️ Не удалось восстановить mask CLI-сигналов")
+
+    return cleanup
+
+
 def _build_cli_shutdown_handler(
     *,
     app_controller: DictationApp,
@@ -377,15 +422,20 @@ def _install_cli_shutdown_handlers(
         rsvp_display=rsvp_display,
         display_sleep_prevention_service=display_sleep_prevention_service,
     )
-    signal.signal(signal.SIGINT, handler)
-    signal.signal(signal.SIGTERM, handler)
+    signal_wait_cleanup = _install_cli_signal_wait_thread(handler)
+    standard_handler = (lambda _signum, _frame: None) if signal_wait_cleanup is not None else handler
+    signal.signal(signal.SIGINT, standard_handler)
+    signal.signal(signal.SIGTERM, standard_handler)
 
     def install_mach_signal_handlers() -> None:
         try:
             from PyObjCTools import MachSignals  # type: ignore[import-untyped]  # noqa: PLC0415
 
-            MachSignals.signal(signal.SIGINT, lambda signum: handler(signum, None))
-            MachSignals.signal(signal.SIGTERM, lambda signum: handler(signum, None))
+            def shutdown_mach_handler(signum: int) -> None:
+                handler(signum, None)
+
+            MachSignals.signal(signal.SIGINT, shutdown_mach_handler)
+            MachSignals.signal(signal.SIGTERM, shutdown_mach_handler)
         except Exception:
             LOGGER.exception("⚠️ Не удалось зарегистрировать Mach signal handlers для CLI")
 
@@ -397,6 +447,8 @@ def _install_cli_shutdown_handlers(
             rsvp_display=rsvp_display,
             display_sleep_prevention_service=display_sleep_prevention_service,
         )
+        if callable(signal_wait_cleanup):
+            signal_wait_cleanup()
 
     rumps.events.before_start.register(install_mach_signal_handlers)
     rumps.events.before_quit.register(cleanup_before_quit)
@@ -570,7 +622,6 @@ def main() -> None:
     app_controller_holder["controller"] = app_controller
     app = StatusBarApp(cast("Any", app_controller))
     key_listener = hotkey_listener_factory.create_listener(app_controller)
-    key_listener.start()
     app_controller.key_listener = key_listener
     _install_cli_shutdown_handlers(
         app_controller=app_controller,
@@ -579,6 +630,7 @@ def main() -> None:
         rsvp_display=rsvp_display,
         display_sleep_prevention_service=display_sleep_prevention_service,
     )
+    key_listener.start()
     app_controller.system_event_observer = register_system_event_observer(app_controller.handle_system_power_event)
     app_controller.wake_observer = app_controller.system_event_observer
     app_controller.application_activation_observer = register_application_activation_observer(

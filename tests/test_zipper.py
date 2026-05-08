@@ -13,8 +13,11 @@ from src.domain.zipper import (
     ZipperConfig,
     ZipperCustomTool,
     ZipperMemorySnapshot,
+    ZipperToolSpec,
 )
+from src.infrastructure.llm_runtime import LlmGateway
 from src.infrastructure.zipper_config import ZipperConfigProvider
+from src.infrastructure.zipper_runtime import LangChainZipperAgent
 from src.use_cases.zipper import ZipperUseCases
 
 
@@ -115,6 +118,33 @@ class FakeLLM:
     def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
         """Возвращает краткое резюме для тестов памяти."""
         return "пользователь часто просит заметки"
+
+
+class FakeCachedLLM(LlmGateway):
+    """Тестовый LlmGateway, который считает модель доступной локально."""
+
+    def is_model_cached(self) -> bool:
+        """Не запускает downloader перед E2E-сценарием."""
+        return True
+
+
+class FakeAgentTokenizer:
+    """Простой tokenizer для e2e-проверки Zipper agent runtime."""
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        tokenize: bool = False,
+        add_generation_prompt: bool = True,
+        **kwargs: Any,
+    ) -> str:
+        """Возвращает текстовый prompt без настоящей токенизации."""
+        del tokenize, add_generation_prompt, kwargs
+        return "\n\n".join(message["content"] for message in messages)
+
+    def encode(self, text: str) -> list[str]:
+        """Считает токены словами."""
+        return text.split()
 
 
 class FakeConfigProvider:
@@ -349,6 +379,26 @@ def test_zipper_records_voice_command_without_regular_insertion():
     assert text_output.messages[-1] == ("Zipper", "Показал результат")
     assert runtime.state == Config.STATUS_IDLE
     assert len(memory.snapshot.events) > 0
+    assert any(event.kind == "user_speech" for event in memory.snapshot.events)
+
+
+def test_zipper_debug_panel_toggle_updates_state_and_stream():
+    """Debug-панель Zipper должна менять состояние runtime и получать событие."""
+    use_case, runtime, _recorder, text_output, _memory = make_use_case()
+
+    use_case.toggle_debug_panel()
+
+    assert runtime.zipper_debug_panel_enabled is True
+    assert text_output.debug_visible is True
+    assert text_output.events[-1].kind == "debug_panel"
+    assert text_output.events[-1].payload == {"enabled": True}
+    assert runtime.snapshots == 1
+
+    use_case.toggle_debug_panel()
+
+    assert runtime.zipper_debug_panel_enabled is False
+    assert text_output.debug_visible is False
+    assert text_output.events[-1].payload == {"enabled": False}
 
 
 def test_zipper_hotkey_reports_uncached_llm_and_starts_download():
@@ -486,3 +536,132 @@ def test_zipper_summarizes_context_to_persistent_memory():
 
     assert "пользователь часто просит заметки" in memory.snapshot.memory
     assert len(memory.snapshot.events) <= 40
+
+
+def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool():
+    """E2E: Zipper agent загружает модель один раз, генерирует ответ и вызывает инструмент."""
+    load_calls: list[str] = []
+    cleanup_calls: list[bool] = []
+    generation_prompts: list[str] = []
+    tool_calls: list[str] = []
+    responses = iter(
+        (
+            "Thought: нужно узнать дату\nAction: current_datetime\nAction Input: сейчас",
+            "Thought: дата получена\nFinal Answer: Сейчас 2026-05-08.\noutput_mode: window",
+        )
+    )
+
+    def load_runtime(model_name: str) -> tuple[object, FakeAgentTokenizer]:
+        load_calls.append(model_name)
+        return object(), FakeAgentTokenizer()
+
+    def generate(_model: object, _tokenizer: FakeAgentTokenizer, prompt: str, max_tokens: int) -> str:
+        generation_prompts.append(prompt)
+        assert max_tokens == 1000
+        return next(responses)
+
+    def tool(argument: str) -> str:
+        tool_calls.append(argument)
+        return "2026-05-08T15:00:00+03:00"
+
+    processor = LlmGateway(
+        "fake-agent-model",
+        runtime_loader=load_runtime,
+        generation_runner=generate,
+        memory_cleanup=lambda: cleanup_calls.append(True),
+    )
+    agent = LangChainZipperAgent(processor)
+
+    result = agent.invoke(
+        "скажи дату",
+        system_message="Ты тестовый Zipper.",
+        memory="",
+        events=(),
+        tools=[ZipperToolSpec("current_datetime", "Получить текущие дату и время.", tool)],
+        config=ZipperConfig(),
+    )
+
+    assert result == ZipperAgentResult(text="Сейчас 2026-05-08.", output_mode="window")
+    assert tool_calls == ["сейчас"]
+    assert load_calls == ["fake-agent-model"]
+    assert len(generation_prompts) == 2
+    assert cleanup_calls == [True]
+
+
+def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
+    """E2E: hotkey-сценарий Zipper доходит до LLM, вызывает tool и сохраняет debug-контекст."""
+    load_calls: list[str] = []
+    cleanup_calls: list[bool] = []
+    generation_prompts: list[str] = []
+    responses = iter(
+        (
+            "Thought: нужно узнать текущую дату\nAction: current_datetime\nAction Input: сейчас",
+            "Thought: инструмент вернул дату\nFinal Answer: Сейчас 2026-05-08.\noutput_mode: window",
+        )
+    )
+
+    def load_runtime(model_name: str) -> tuple[object, FakeAgentTokenizer]:
+        load_calls.append(model_name)
+        return object(), FakeAgentTokenizer()
+
+    def generate(_model: object, _tokenizer: FakeAgentTokenizer, prompt: str, max_tokens: int) -> str:
+        generation_prompts.append(prompt)
+        assert max_tokens == 1000
+        return next(responses)
+
+    processor = FakeCachedLLM(
+        "fake-agent-model",
+        runtime_loader=load_runtime,
+        generation_runner=generate,
+        memory_cleanup=lambda: cleanup_calls.append(True),
+    )
+    runtime = FakeRuntime()
+    recorder = FakeRecorder()
+    text_output = FakeTextOutput()
+    memory = FakeMemoryStore()
+    use_case = ZipperUseCases(
+        runtime=runtime,
+        recorder=recorder,
+        transcriber=FakeTranscriber("скажи дату"),
+        llm_processor=processor,
+        config_provider=FakeConfigProvider(ZipperConfig()),
+        memory_store=memory,
+        agent_service=LangChainZipperAgent(processor),
+        clipboard_service=FakeClipboard(),
+        text_output=text_output,
+        voice_output=FakeVoiceOutput(),
+        url_opener=FakeUrlOpener(),
+        command_runner=FakeCommandRunner(),
+        custom_tool_runner=FakeCustomToolRunner(),
+        mcp_tool_provider=FakeMCPProvider(),
+        note_writer=FakeNoteWriter(),
+        system_integration_service=FakeNotify(),
+        recording_overlay=FakeOverlay(),
+        publish_snapshot=lambda: setattr(runtime, "snapshots", runtime.snapshots + 1),
+    )
+
+    use_case.toggle()
+    use_case.stop_recording()
+    assert recorder.callback is not None
+    recorder.callback(object(), "ru", lambda status: None, lambda: True)
+    assert use_case._worker is not None
+    use_case._worker.join(timeout=2)
+
+    assert use_case._worker.is_alive() is False
+    assert runtime.state == Config.STATUS_IDLE
+    assert recorder.started is True
+    assert recorder.stopped is True
+    assert use_case.transcriber.transcribe_called is False
+    assert use_case.transcriber.transcribe_to_text_called is True
+    assert load_calls == ["fake-agent-model"]
+    assert len(generation_prompts) == 2
+    assert cleanup_calls == [True]
+    assert text_output.messages[-1] == ("Zipper", "Сейчас 2026-05-08.")
+
+    event_kinds = [event.kind for event in text_output.events]
+    assert "user_speech" in event_kinds
+    assert "agent_input" in event_kinds
+    assert "tool" in event_kinds
+    assert "agent_output" in event_kinds
+    assert any(event.kind == "tool" and event.message == "current_datetime" for event in text_output.events)
+    assert any(event.kind == "agent_output" and event.payload["text"] == "Сейчас 2026-05-08." for event in memory.snapshot.events)

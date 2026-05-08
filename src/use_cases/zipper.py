@@ -276,6 +276,7 @@ class ZipperUseCases:
             self._finish_processing()
             return
 
+        self._session_events = []
         self._event("user_speech", "Пользователь сказал", {"text": whisper_text})
         self._start_worker(lambda: self._run_agent(whisper_text, is_current))
 
@@ -289,7 +290,8 @@ class ZipperUseCases:
 
     def _run_agent(self, command_text: str, is_current: Any) -> None:
         self.runtime.state = Config.STATUS_ZIPPER_PROCESSING
-        self._session_events = []
+        if not self._session_events or self._session_events[-1].kind != "user_speech":
+            self._session_events = []
         self.publish_snapshot()
         try:
             snapshot = self.memory_store.load()

@@ -32,11 +32,23 @@ def load_llm_runtime_objects(model_name: str) -> tuple[Any, Any]:
     return default_model_manager().load_llm_runtime_objects(model_name)
 
 
+def _coerce_generated_text(result: Any) -> str:
+    """Достаёт текст из ответа MLX runtime без служебного repr объекта."""
+    if isinstance(result, str):
+        return result
+    text = getattr(result, "text", None)
+    if isinstance(text, str):
+        return text
+    if isinstance(result, dict) and isinstance(result.get("text"), str):
+        return str(result["text"])
+    return str(result)
+
+
 def generate_llm_text(model: Any, tokenizer: Any, prompt: str, max_tokens: int = Config.LLM_MAX_TOKENS) -> str:
     """Генерирует текст через загруженные runtime-объекты MLX LLM."""
     from mlx_lm import generate
 
-    return generate(model, tokenizer, prompt=prompt, max_tokens=max_tokens)
+    return _coerce_generated_text(generate(model, tokenizer, prompt=prompt, max_tokens=max_tokens))
 
 
 def load_vlm_runtime_objects(model_name: str) -> tuple[Any, Any]:
@@ -48,7 +60,7 @@ def generate_vlm_text(model: Any, processor: Any, prompt: str, max_tokens: int =
     """Генерирует текст через загруженные runtime-объекты MLX VLM."""
     from mlx_vlm import generate
 
-    return str(generate(model, processor, prompt, max_tokens=max_tokens))
+    return _coerce_generated_text(generate(model, processor, prompt, max_tokens=max_tokens))
 
 
 def cleanup_llm_runtime_memory() -> None:
@@ -76,12 +88,12 @@ class LlmGateway:
         self,
         model_name: str = Config.DEFAULT_LLM_MODEL_NAME,
         runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
-        generation_runner: Callable[[Any, Any, str, int], str] | None = None,
+        generation_runner: Callable[[Any, Any, str, int], Any] | None = None,
         model_cache_checker: Callable[[str], bool] | None = None,
         model_downloader: Callable[..., None] | None = None,
         memory_cleanup: Callable[[], None] | None = None,
         vlm_runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
-        vlm_generation_runner: Callable[[Any, Any, str, int], str] | None = None,
+        vlm_generation_runner: Callable[[Any, Any, str, int], Any] | None = None,
     ) -> None:
         """Создаёт gateway к LLM runtime."""
         self.model_name = model_name
@@ -190,7 +202,15 @@ class LlmGateway:
             return len(encoded)
         return 0
 
-    def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
+    def process_text(
+        self,
+        text: str,
+        system_prompt: str,
+        *,
+        context: str | None = None,
+        max_tokens: int | None = None,
+        sanitize: bool = True,
+    ) -> str:
         """Отправляет текст в LLM и возвращает очищенный ответ."""
         effective_max_tokens = max_tokens if max_tokens is not None else Config.LLM_MAX_TOKENS
         self.last_token_usage = 0
@@ -221,9 +241,9 @@ class LlmGateway:
 
             prompt_tokens = self._count_tokens(tokenizer, prompt)
             LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", effective_max_tokens)
-            raw_response = self._generation_runner(model, tokenizer, prompt, effective_max_tokens)
+            raw_response = _coerce_generated_text(self._generation_runner(model, tokenizer, prompt, effective_max_tokens))
             LOGGER.info("🤖 Сырой ответ LLM от модели: длина=%d, текст=%r", len(raw_response), raw_response)
-            response = sanitize_llm_response(raw_response)
+            response = sanitize_llm_response(raw_response) if sanitize else raw_response.strip()
             response_tokens = self._count_tokens(tokenizer, response)
             self.last_token_usage = prompt_tokens + response_tokens
             LOGGER.info("🤖 Очищенный ответ LLM: длина=%d, текст=%r", len(response), response)

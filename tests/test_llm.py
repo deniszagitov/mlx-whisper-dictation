@@ -24,12 +24,19 @@ class FakeTokenizer:
         return text.split()
 
 
+class FakeGenerationResult:
+    """Минимальный объект ответа MLX/VLM runtime с полем text."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
 def make_processor(
     *,
     generated_response: str = "готово",
     load_calls: list[str] | None = None,
     cleanup_calls: list[bool] | None = None,
-    generation_runner: Callable[[object, FakeTokenizer, str, int], str] | None = None,
+    generation_runner: Callable[[object, FakeTokenizer, str, int], object] | None = None,
 ) -> llm_runtime.LlmGateway:
     """Создаёт LLMProcessor с подменённым runtime-слоем."""
     actual_load_calls = load_calls if load_calls is not None else []
@@ -121,6 +128,21 @@ def test_process_text_sanitizes_reasoning_response():
     )
 
     assert processor.process_text("текст", "система") == "Готово."
+
+
+def test_process_text_can_return_raw_agent_response_without_sanitize():
+    """Zipper-агент должен получать ReAct-разметку без UI-фильтрации."""
+    raw = "Thought: нужно вызвать инструмент\nAction: current_datetime\nAction Input: сейчас"
+    processor = make_processor(generated_response=raw)
+
+    assert processor.process_text("текст", "система", sanitize=False) == raw
+
+
+def test_process_text_extracts_text_from_generation_result_object():
+    """Runtime должен брать поле text из GenerationResult, а не repr всего объекта."""
+    processor = make_processor(generation_runner=lambda _model, _tokenizer, _prompt, _max_tokens: FakeGenerationResult("готово"))
+
+    assert processor.process_text("текст", "система") == "готово"
 
 
 def test_sanitize_llm_response_extracts_russian_draft_section():

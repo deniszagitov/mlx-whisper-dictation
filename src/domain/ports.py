@@ -666,6 +666,7 @@ class LlmGatewayProtocol(Protocol):
         *,
         context: str | None = None,
         max_tokens: int | None = None,
+        sanitize: bool = True,
     ) -> str:
         """Обрабатывает текст через LLM."""
         ...

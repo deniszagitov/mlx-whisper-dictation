@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import queue
 import signal
+import subprocess
+import sys
+import textwrap
+import time
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
@@ -86,6 +91,79 @@ def test_cli_shutdown_handler_forces_exit_on_second_signal(app_module):
     handler(signal.SIGINT, None)
 
     assert forced_exits == [130]
+
+
+def test_cli_signal_wait_thread_dispatches_sigint(app_module):
+    """sigwait-поток должен доставлять Ctrl-C из Cocoa run loop в shutdown handler."""
+    signal_queue: queue.Queue[int] = queue.Queue()
+    received_signals: list[int] = []
+    masks: list[tuple[int, tuple[int, ...] | set[int]]] = []
+
+    def fake_pthread_sigmask(how: int, mask: tuple[int, ...] | set[int]) -> set[int]:
+        masks.append((how, mask))
+        return set()
+
+    def fake_sigwait(_signals: tuple[int, ...]) -> int:
+        return signal_queue.get(timeout=1)
+
+    cleanup = app_module._install_cli_signal_wait_thread(
+        lambda signum, _frame: received_signals.append(signum),
+        pthread_sigmask=fake_pthread_sigmask,
+        sigwait=fake_sigwait,
+        stdin_isatty=lambda: True,
+    )
+    assert cleanup is not None
+
+    signal_queue.put(signal.SIGINT)
+    deadline = time.time() + 1.0
+    while not received_signals and time.time() < deadline:
+        time.sleep(0.01)
+    cleanup()
+    signal_queue.put(0)
+
+    assert received_signals == [signal.SIGINT]
+    assert masks == [
+        (signal.SIG_BLOCK, (signal.SIGINT, signal.SIGTERM)),
+        (signal.SIG_SETMASK, set()),
+    ]
+
+
+def test_cli_ctrl_c_e2e_subprocess_reaches_shutdown_handler():
+    """E2E: реальный SIGINT в отдельном процессе должен попасть в shutdown handler."""
+    script = textwrap.dedent(
+        """
+        import os
+        import signal
+        import time
+
+        from PyObjCTools import MachSignals
+
+        import main
+
+        def handler(signum, _frame=None):
+            print(f"handled {signum}", flush=True)
+            os._exit(0)
+
+        main._install_cli_signal_wait_thread(handler, stdin_isatty=lambda: True)
+        signal.signal(signal.SIGINT, lambda _signum, _frame: None)
+        MachSignals.signal(signal.SIGINT, lambda signum: handler(signum, None))
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(2)
+        print("missed", flush=True)
+        os._exit(1)
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert "handled 2" in completed.stdout
 
 
 def test_install_cli_shutdown_handlers_reinstalls_mach_signal_after_rumps(app_module, monkeypatch):
