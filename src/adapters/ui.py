@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import AppKit
 import rumps
-from PyObjCTools.AppHelper import callAfter  # type: ignore[import-untyped]
+from PyObjCTools.AppHelper import callAfter, callLater  # type: ignore[import-untyped]
 
 from ..domain.constants import Config
 from ..domain.reader_constants import (
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from ..domain.types import AppSnapshot, MicrophoneProfile
 
 LOGGER = logging.getLogger(__name__)
+APPKIT_QUIT_DEFER_SECONDS = 0.01
 
 
 def _call_on_main_thread(callback: Any, *args: Any) -> None:
@@ -42,14 +43,14 @@ def _call_on_main_thread(callback: Any, *args: Any) -> None:
 
 
 def request_application_quit(sender: object | None = None, *, emit_before_quit: bool = True) -> None:
-    """Запрашивает выход из AppKit после явного rumps before_quit cleanup."""
+    """Запрашивает выход из AppKit на следующем проходе run loop."""
 
     def terminate_application() -> None:
         if emit_before_quit:
             rumps.events.before_quit.emit()
         AppKit.NSApplication.sharedApplication().terminate_(sender)
 
-    _call_on_main_thread(terminate_application)
+    callLater(APPKIT_QUIT_DEFER_SECONDS, terminate_application)
 
 
 def prompt_text(title: str, message: str, default_text: str = "") -> str | None:

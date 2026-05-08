@@ -1110,9 +1110,10 @@ class TestStatusBarMenuSelections:
         assert calls["buttons"] == ["Сохранить", "Отмена"]
         assert calls["accessory"] is calls["first_responder"]
 
-    def test_request_application_quit_emits_cleanup_before_terminate(self, monkeypatch):
-        """Управляемый выход сначала запускает cleanup, затем просит AppKit завершиться."""
+    def test_request_application_quit_defers_cleanup_and_terminate(self, monkeypatch):
+        """Управляемый выход планируется на следующий проход AppKit run loop."""
         events = []
+        scheduled_callbacks = []
 
         class FakeApplication:
             @staticmethod
@@ -1123,13 +1124,46 @@ class TestStatusBarMenuSelections:
 
                 return App()
 
-        monkeypatch.setattr(ui_module, "_call_on_main_thread", lambda callback, *args: callback(*args))
+        def defer(delay, callback, *args):
+            scheduled_callbacks.append((delay, callback, args))
+
+        monkeypatch.setattr(ui_module, "callLater", defer)
         monkeypatch.setattr(ui_module.rumps.events.before_quit, "emit", lambda: events.append(("before_quit", None)))
         monkeypatch.setattr(ui_module.AppKit, "NSApplication", FakeApplication)
 
         ui_module.request_application_quit("sender")
 
+        assert events == []
+        assert len(scheduled_callbacks) == 1
+        delay, callback, args = scheduled_callbacks.pop(0)
+        assert delay == ui_module.APPKIT_QUIT_DEFER_SECONDS
+        callback(*args)
+
         assert events == [("before_quit", None), ("terminate", "sender")]
+
+    def test_request_application_quit_can_skip_before_quit_event(self, monkeypatch):
+        """CLI shutdown может завершить AppKit без повторного rumps cleanup."""
+        events = []
+        scheduled_callbacks = []
+
+        class FakeApplication:
+            @staticmethod
+            def sharedApplication():
+                class App:
+                    def terminate_(self, sender):
+                        events.append(("terminate", sender))
+
+                return App()
+
+        monkeypatch.setattr(ui_module, "callLater", lambda _delay, callback, *args: scheduled_callbacks.append((callback, args)))
+        monkeypatch.setattr(ui_module.rumps.events.before_quit, "emit", lambda: events.append(("before_quit", None)))
+        monkeypatch.setattr(ui_module.AppKit, "NSApplication", FakeApplication)
+
+        ui_module.request_application_quit("sender", emit_before_quit=False)
+        callback, args = scheduled_callbacks.pop(0)
+        callback(*args)
+
+        assert events == [("terminate", "sender")]
 
     def test_change_max_time_from_menu_updates_state(self, make_app):
         """Выбор лимита записи из меню должен обновлять max_time и заголовок."""

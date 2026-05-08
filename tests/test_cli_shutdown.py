@@ -8,8 +8,13 @@ import subprocess
 import sys
 import textwrap
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
+
+import pytest
+
+CHECK_SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "check_cli_signal_shutdown.py"
 
 
 class FakeTimer:
@@ -164,6 +169,22 @@ def test_cli_ctrl_c_e2e_subprocess_reaches_shutdown_handler():
 
     assert completed.returncode == 0
     assert "handled 2" in completed.stdout
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(sys.platform != "darwin", reason="AppKit run loop и MachSignals доступны только на macOS")
+def test_cli_signal_shutdown_reproducer_exits_without_pyobjc_abort():
+    """Разовый reproducer должен штатно выходить из AppKit run loop после SIGINT."""
+    completed = subprocess.run(
+        [sys.executable, str(CHECK_SCRIPT_PATH), "--timeout", "10"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=12,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "will_terminate" in completed.stdout
 
 
 def test_install_cli_shutdown_handlers_reinstalls_mach_signal_after_rumps(app_module, monkeypatch):
