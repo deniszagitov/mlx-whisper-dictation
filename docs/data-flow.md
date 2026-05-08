@@ -157,9 +157,15 @@ flowchart TD
 
 ## Загрузка моделей
 
+При запуске приложения стартовый preload касается только настроенной MLX
+TTS-модели reader. Выбранные ASR и LLM/VLM не загружаются в память до первого
+реального сценария, если пользователь не менял модель после запуска. Смена
+ASR, LLM/VLM или MLX TTS освобождает старый `model_id` и запускает фоновый
+прогрев новой выбранной модели.
+
 ```mermaid
 flowchart TD
-    Request["ASR / LLM / TTS / Zipper<br/>запрос модели"] --> Cached{"Snapshot есть<br/>в Hugging Face cache?"}
+    Request["ASR / LLM / TTS / Zipper<br/>первое использование или смена модели"] --> Cached{"Snapshot есть<br/>в Hugging Face cache?"}
     Cached -->|да| Shared{"Модель уже есть<br/>в runtime-cache?"}
     Shared -->|да| Runtime["Runtime продолжает сценарий<br/>с тем же экземпляром"]
     Shared -->|нет| Inflight{"Такая загрузка<br/>уже идёт?"}

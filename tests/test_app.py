@@ -316,6 +316,49 @@ def make_controller(monkeypatch, *, system_integration_service=None):
     return controller, recorder, transcriber
 
 
+def test_change_model_releases_old_asr_and_preloads_new(monkeypatch):
+    """Смена ASR должна освободить старую модель и прогреть новую."""
+    controller, _recorder, transcriber = make_controller(monkeypatch)
+    calls: list[tuple[str, str]] = []
+    controller.model_runtime_service = app_module.ModelRuntimeControlService(
+        release_model=lambda model_name: calls.append(("release", model_name)),
+        preload_asr_model=lambda model_name: calls.append(("asr", model_name)),
+        preload_llm_model=lambda model_name: calls.append(("llm", model_name)),
+        preload_tts_model=lambda model_name: calls.append(("tts", model_name)),
+        shutdown=lambda: None,
+    )
+
+    controller.change_model("mlx-community/whisper-turbo")
+
+    assert transcriber.model_name == "mlx-community/whisper-turbo"
+    assert calls == [
+        ("release", "mlx-community/whisper-large-v3-turbo"),
+        ("asr", "mlx-community/whisper-turbo"),
+    ]
+
+
+def test_change_reader_tts_mlx_model_releases_old_tts_and_preloads_new(monkeypatch):
+    """Смена MLX TTS должна освободить старую модель и прогреть новую."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    previous_model = controller.reader_tts_mlx_model
+    calls: list[tuple[str, str]] = []
+    controller.model_runtime_service = app_module.ModelRuntimeControlService(
+        release_model=lambda model_name: calls.append(("release", model_name)),
+        preload_asr_model=lambda model_name: calls.append(("asr", model_name)),
+        preload_llm_model=lambda model_name: calls.append(("llm", model_name)),
+        preload_tts_model=lambda model_name: calls.append(("tts", model_name)),
+        shutdown=lambda: None,
+    )
+
+    controller.change_reader_tts_mlx_model("mlx-community/custom-streaming-tts")
+
+    assert controller.reader_tts_mlx_model == "mlx-community/custom-streaming-tts"
+    assert calls == [
+        ("release", previous_model),
+        ("tts", "mlx-community/custom-streaming-tts"),
+    ]
+
+
 def test_shutdown_reader_stops_outputs_and_waits_for_worker(monkeypatch):
     """При выходе reader worker должен получить stop и успеть завершиться."""
     controller, _recorder, _transcriber = make_controller(monkeypatch)

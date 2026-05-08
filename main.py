@@ -284,6 +284,11 @@ def _log_startup_configuration(args: LaunchConfig) -> None:
     LOGGER.info("Reader RSVP/TTS хоткеи читаются из NSUserDefaults с безопасными дефолтами")
 
 
+def _preload_startup_models(*, model_manager: ModelManager, app_controller: DictationApp) -> None:
+    """На старте прогревает только настроенную MLX TTS-модель."""
+    model_manager.preload_tts_model(app_controller.reader_tts_mlx_model)
+
+
 def _safe_shutdown_call(label: str, callback: Any) -> None:
     """Выполняет шаг остановки приложения, не срывая общий shutdown."""
     if not callable(callback):
@@ -659,11 +664,7 @@ def main() -> None:
     )
     model_manager.set_progress_callback(app_controller.handle_model_download_progress)
     app_controller_holder["controller"] = app_controller
-    model_manager.preload_selected_models(
-        asr_model=args.model,
-        llm_model=args.llm_model,
-        tts_model=app_controller.reader_tts_mlx_model,
-    )
+    _preload_startup_models(model_manager=model_manager, app_controller=app_controller)
     app = StatusBarApp(cast("Any", app_controller))
     key_listener = hotkey_listener_factory.create_listener(app_controller)
     app_controller.key_listener = key_listener

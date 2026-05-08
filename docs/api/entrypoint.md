@@ -69,6 +69,16 @@ _Внутренняя функция._
 
 Пишет в лог итоговую конфигурацию запуска приложения.
 
+### `_preload_startup_models`
+
+```python
+_preload_startup_models(*, model_manager: ModelManager, app_controller: DictationApp) -> None
+```
+
+_Внутренняя функция._
+
+На старте прогревает только настроенную MLX TTS-модель.
+
 ### `_safe_shutdown_call`
 
 ```python
