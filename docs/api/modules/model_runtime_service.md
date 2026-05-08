@@ -13,6 +13,7 @@
 - `BACKEND_MLX_TTS` = `'mlx-tts'`
 - `BACKEND_WHISPER` = `'whisper'`
 - `_VLM_MODEL_INDICATORS` = `('gemma-4', 'gemma4', '-vlm', 'vision')`
+- `_BACKEND_LABELS` = `{BACKEND_LM: 'LLM-модель', BACKEND_VLM: 'VLM-модель', BACKEND_QWEN_ASR: 'ASR-модель', BACKEND_MLX_TTS: 'TTS-модель', BACKEND_WHISPER: 'ASR-модель'}`
 
 ## Классы
 
@@ -33,10 +34,18 @@
 #### `__init__`
 
 ```python
-__init__(*, lm_loader: Callable[[str], tuple[Any, Any]] | None = None, vlm_loader: Callable[[str], tuple[Any, Any]] | None = None, qwen_asr_loader: Callable[[str], Any] | None = None, mlx_tts_loader: Callable[[str], Any] | None = None, whisper_loader: Callable[[str], Any] | None = None, memory_cleanup: Callable[[], None] | None = None) -> None
+__init__(*, lm_loader: Callable[[str], tuple[Any, Any]] | None = None, vlm_loader: Callable[[str], tuple[Any, Any]] | None = None, qwen_asr_loader: Callable[[str], Any] | None = None, mlx_tts_loader: Callable[[str], Any] | None = None, whisper_loader: Callable[[str], Any] | None = None, memory_cleanup: Callable[[], None] | None = None, model_memory_loading_callback: Callable[[bool, str, str], None] | None = None) -> None
 ```
 
 Конструктор класса.
+
+#### `set_model_memory_loading_callback`
+
+```python
+set_model_memory_loading_callback(callback: Callable[[bool, str, str], None] | None) -> None
+```
+
+Назначает callback фактической загрузки runtime-модели в память.
 
 #### `get_lm`
 
@@ -143,6 +152,16 @@ _get_or_load(key: ModelRuntimeKey, loader: Callable[[str], Any]) -> Any
 _Внутренняя функция._
 
 Возвращает модель из cache или ждёт единственную текущую загрузку.
+
+#### `_emit_model_memory_loading`
+
+```python
+_emit_model_memory_loading(active: bool, key: ModelRuntimeKey) -> None
+```
+
+_Внутренняя функция._
+
+Публикует статус только для фактической загрузки runtime-модели.
 
 ## Публичные функции
 

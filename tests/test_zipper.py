@@ -14,6 +14,7 @@ from src.domain.zipper import (
     ZipperConfig,
     ZipperMemorySnapshot,
 )
+from src.domain.zipper_tts import normalize_zipper_voice_text
 from src.infrastructure.llm_runtime import LlmGateway
 from src.infrastructure.model_runtime_service import ModelRuntimeService
 from src.infrastructure.zipper_config import ZipperConfigProvider, normalize_config
@@ -327,6 +328,9 @@ def test_zipper_agent_runtime_keeps_prompts_and_tools_together():
         "show_text",
         "speak_text",
     ]
+    speak_text = next(tool for tool in tools if tool.name == "speak_text")
+    assert "числа словами" in speak_text.description
+    assert "без цифр" in speak_text.description
 
 
 def test_zipper_records_voice_command_without_regular_insertion():
@@ -365,6 +369,16 @@ def test_zipper_speaks_voice_result_through_voice_output():
     assert use_case.voice_output.spoken == ["Готово"]
 
 
+def test_zipper_window_result_keeps_raw_text():
+    """Оконный вывод Zipper не применяет голосовую TTS-нормализацию."""
+    agent = FakeAgent(ZipperAgentResult(text="Версия 2.0: https://example.test", output_mode="window"))
+    use_case, _runtime, _recorder, text_output, _memory = make_use_case(agent=agent)
+
+    use_case._run_agent("покажи версию", lambda: True)
+
+    assert text_output.messages[-1] == ("Zipper", "Версия 2.0: https://example.test")
+
+
 def test_zipper_voice_output_uses_current_tts_config():
     """Адаптер голосового вывода Zipper использует текущую настройку TTS."""
 
@@ -382,6 +396,50 @@ def test_zipper_voice_output_uses_current_tts_config():
 
     assert speaker.spoken[0][0] == "Готово"
     assert speaker.spoken[0][1].tone_instruction == "утвердительно"
+
+
+def test_zipper_voice_output_converts_numbers_to_words_for_tts():
+    """Голосовой вывод Zipper передаёт в TTS слова вместо цифр."""
+
+    class FakeSpeaker:
+        def __init__(self) -> None:
+            self.spoken: list[tuple[str, TTSConfig]] = []
+
+        def speak(self, text: str, config: TTSConfig) -> None:
+            self.spoken.append((text, config))
+
+    speaker = FakeSpeaker()
+    output = ZipperVoiceOutput(speaker, config_factory=TTSConfig)
+
+    output.speak("купи 2 печенья")
+
+    spoken_text = speaker.spoken[0][0]
+    assert "два печенья" in spoken_text
+    assert not any(character.isdigit() for character in spoken_text)
+
+
+def test_zipper_voice_normalizer_removes_markup_urls_code_and_identifiers():
+    """Zipper чистит технический мусор перед голосовым TTS."""
+    raw = (
+        "# Итог\n"
+        "- **API** доступен по https://example.test/path?q=1\n"
+        "`token_123`\n"
+        "abcdef1234567890abcdef1234567890\n"
+        "```python\nprint(42)\n```"
+    )
+
+    result = normalize_zipper_voice_text(raw)
+
+    assert "эй пи ай" in result
+    assert "ссылка" in result
+    assert "идентификатор" in result
+    assert "дальше блок кода" in result
+    assert "https" not in result
+    assert "token" not in result
+    assert "#" not in result
+    assert "*" not in result
+    assert "`" not in result
+    assert not any(character.isdigit() for character in result)
 
 
 def test_zipper_debug_panel_toggle_updates_state_and_stream():
@@ -644,6 +702,8 @@ def test_zipper_qwen_uses_hermes_tool_calls_without_react_iteration_limit():
     assert len(generation_prompts) == 2
     assert "Action:" not in generation_prompts[0]
     assert "<tool_call>" in generation_prompts[0]
+    assert "числа словами" in generation_prompts[0]
+    assert "без цифр" in generation_prompts[0]
     assert "tone_instruction" not in generation_prompts[0]
     assert "tool current_datetime" in generation_prompts[1]
     assert any(kind == "tool" and message == "current_datetime" for kind, message, _payload in events)

@@ -214,6 +214,14 @@ ensure_llm_model_downloaded(model_name: str, progress_callback: LegacyProgressCa
 
 Скачивает LLM-модель через общий менеджер.
 
+#### `set_model_memory_loading_callback`
+
+```python
+set_model_memory_loading_callback(callback: Callable[[bool, str, str], None] | None) -> None
+```
+
+Назначает callback фактической загрузки runtime-модели в память.
+
 #### `load_llm_runtime_objects`
 
 ```python

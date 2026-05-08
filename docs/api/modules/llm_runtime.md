@@ -32,7 +32,17 @@ __init__(model_name: str = Config.DEFAULT_LLM_MODEL_NAME, runtime_loader: Callab
 set_model_memory_loading_callback(callback: Callable[[bool, str, str], None] | None) -> None
 ```
 
-Назначает callback статуса загрузки LLM/VLM в память.
+Назначает callback фактической загрузки LLM/VLM в общий runtime-cache.
+
+#### `_propagate_model_memory_loading_callback`
+
+```python
+_propagate_model_memory_loading_callback(callback: Callable[[bool, str, str], None] | None) -> None
+```
+
+_Внутренняя функция._
+
+Передаёт callback владельцу runtime-loader-а, где известны cache hit и реальная загрузка.
 
 #### `_apply_backend_for_model`
 
@@ -61,16 +71,6 @@ _load_runtime_objects() -> tuple[Any, Any]
 _Внутренняя функция._
 
 Возвращает модель и токенизатор через единый runtime-cache.
-
-#### `_emit_model_memory_loading`
-
-```python
-_emit_model_memory_loading(active: bool) -> None
-```
-
-_Внутренняя функция._
-
-Сообщает управляющему слою, что MLX загружает модель в память.
 
 #### `change_model`
 

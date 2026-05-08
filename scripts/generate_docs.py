@@ -76,6 +76,7 @@ RUNTIME_TARGETS = (
     ModuleTarget("Reader RSVP", ROOT / "src/use_cases/play_rsvp.py", "api/modules/reader_rsvp.md"),
     ModuleTarget("Reader TTS", ROOT / "src/use_cases/play_tts.py", "api/modules/reader_tts.md"),
     ModuleTarget("Zipper use case", ROOT / "src/use_cases/zipper.py", "api/modules/zipper.md"),
+    ModuleTarget("Zipper TTS", ROOT / "src/domain/zipper_tts.py", "api/modules/zipper_tts.md"),
     ModuleTarget("Zipper config", ROOT / "src/infrastructure/zipper_config.py", "api/modules/zipper_config.md"),
     ModuleTarget("Zipper runtime", ROOT / "src/infrastructure/zipper_runtime.py", "api/modules/zipper_runtime.md"),
     ModuleTarget("Menu bar UI", ROOT / "src/adapters/ui.py", "api/modules/ui.md"),

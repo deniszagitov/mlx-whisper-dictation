@@ -43,6 +43,11 @@ _ZIPPER_QWEN_MODEL_MARKER = "qwen"
 _ZIPPER_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
 _ZIPPER_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
 _ZIPPER_FINAL_ANSWER_RE = re.compile(r"Final Answer\s*:\s*", re.IGNORECASE)
+_ZIPPER_SPEAK_TEXT_CONTRACT = (
+    "Передавай только готовую фразу для озвучивания: обычные слова буквами, числа словами, "
+    "без цифр, markdown, URL, кода, JSON и технических идентификаторов. "
+    "Для длинного или технического текста используй show_text или output_mode: window."
+)
 _ZIPPER_SYSTEM_MESSAGE = (
     "Ты Zipper, локальный голосовой агент Dictator. "
     "Выполняй только безопасные действия через доступные инструменты. "
@@ -52,6 +57,8 @@ _ZIPPER_PROMPT_TEMPLATE = (
     "{system_message}\n\n"
     "Используй только перечисленные инструменты и не выполняй произвольный shell.\n"
     "Для финального ответа обязательно добавь строку output_mode: voice|window|both.\n"
+    "Для output_mode: voice и инструмента speak_text действует правило: "
+    f"{_ZIPPER_SPEAK_TEXT_CONTRACT}\n"
     "Память:\n"
     "{memory}\n\n"
     "Последние события:\n"
@@ -79,6 +86,8 @@ _ZIPPER_HERMES_PROMPT_TEMPLATE = (
     "output_mode: voice|window|both.\n"
     "Для обычного ответа не вызывай show_text или speak_text: выбери output_mode. "
     "Эти инструменты используй только когда пользователь явно просит показать или озвучить отдельный текст.\n\n"
+    "Для output_mode: voice и инструмента speak_text действует правило: "
+    f"{_ZIPPER_SPEAK_TEXT_CONTRACT}\n\n"
     "Доступные инструменты в JSON Schema:\n"
     "{tools_json}\n\n"
     "Последние события:\n"
@@ -467,7 +476,7 @@ class LangChainZipperAgent:
             ),
             Tool(
                 name="speak_text",
-                description="Озвучить переданный текст.",
+                description=f"Озвучить переданный текст. {_ZIPPER_SPEAK_TEXT_CONTRACT}",
                 func=lambda arg: self._tool_speak_text(arg, event),
             ),
         ]
