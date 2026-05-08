@@ -132,12 +132,39 @@ class HuggingFaceModelDownloader:
         self._stall_timeout_seconds = max(stall_timeout_seconds, 0.0)
         self._health_monitor_interval_seconds = max(health_monitor_interval_seconds, 0.0)
         self._completed_models: set[str] = set()
+        self._local_model_paths: dict[str, str] = {}
         self._completed_models_lock = threading.Lock()
 
     def is_model_cached(self, model_name: str) -> bool:
         """Проверяет, есть ли модель в локальном cache Hugging Face."""
+        return self.get_local_model_path(model_name) is not None
+
+    def get_local_model_path(self, model_name: str) -> str | None:
+        """Возвращает локальный snapshot модели Hugging Face без обращения к сети."""
         if _is_local_model_path(model_name):
-            return True
+            return str(Path(model_name).expanduser())
+        with self._completed_models_lock:
+            cached_path = self._local_model_paths.get(model_name)
+        if cached_path is not None:
+            return cached_path
+        try:
+            snapshot_downloader = self._snapshot_downloader
+            if snapshot_downloader is None:
+                from huggingface_hub import snapshot_download  # noqa: PLC0415
+
+                snapshot_downloader = snapshot_download
+            local_path = snapshot_downloader(model_name, local_files_only=True)
+        except TypeError:
+            return self._local_path_from_cached_config(model_name)
+        except Exception:
+            return None
+        if isinstance(local_path, str) and local_path:
+            self._remember_local_model_path(model_name, local_path)
+            return local_path
+        return None
+
+    def _local_path_from_cached_config(self, model_name: str) -> str | None:
+        """Проверяет cache старым способом, не запуская сетевую загрузку."""
         try:
             checker = self._cache_checker
             if checker is None:
@@ -145,9 +172,13 @@ class HuggingFaceModelDownloader:
 
                 checker = try_to_load_from_cache
             result = checker(model_name, "config.json")
-            return result is not None and not isinstance(result, type)
         except Exception:
-            return False
+            return None
+        if isinstance(result, str) and result:
+            local_path = str(Path(result).parent)
+            self._remember_local_model_path(model_name, local_path)
+            return local_path
+        return None
 
     def ensure_downloaded(
         self,
@@ -184,6 +215,27 @@ class HuggingFaceModelDownloader:
             )
             return
 
+        cached_path = self.get_local_model_path(model_name)
+        if cached_path is not None:
+            LOGGER.info(
+                "📦 Модель найдена в локальном cache Hugging Face: label=%s, model=%s, path=%s",
+                label,
+                model_name,
+                cached_path,
+            )
+            self._mark_completed_in_process(model_name)
+            self._emit(
+                progress_callback,
+                ModelDownloadProgress(
+                    label=label,
+                    model_name=model_name,
+                    stage="уже в cache",
+                    percent=Config.DOWNLOAD_COMPLETE_PCT,
+                    complete=True,
+                ),
+            )
+            return
+
         self._emit(
             progress_callback,
             ModelDownloadProgress(label=label, model_name=model_name, stage="Подготовка…"),
@@ -201,11 +253,13 @@ class HuggingFaceModelDownloader:
                 model_name,
                 self._max_workers,
             )
-            snapshot_downloader(
+            downloaded_path = snapshot_downloader(
                 model_name,
                 max_workers=self._max_workers,
                 tqdm_class=self._build_tqdm_class(label, model_name, progress_callback),
             )
+            if isinstance(downloaded_path, str) and downloaded_path:
+                self._remember_local_model_path(model_name, downloaded_path)
         except ModelDownloadHealthError as exc:
             self._emit(
                 progress_callback,
@@ -453,6 +507,11 @@ class HuggingFaceModelDownloader:
         with self._completed_models_lock:
             self._completed_models.add(model_name)
 
+    def _remember_local_model_path(self, model_name: str, local_path: str) -> None:
+        """Запоминает локальный snapshot path для runtime-loader-ов."""
+        with self._completed_models_lock:
+            self._local_model_paths[model_name] = local_path
+
     def _emit(self, progress_callback: ProgressCallback | None, progress: ModelDownloadProgress) -> None:
         """Отправляет событие прогресса, изолируя ошибки подписчика."""
         if progress_callback is None:
@@ -534,28 +593,31 @@ class ModelManager:
     def load_llm_runtime_objects(self, model_name: str) -> tuple[Any, Any]:
         """Загружает MLX LLM-модель после проверки общим downloader-ом."""
         self.require_model_ready(model_name, label="LLM-модель")
+        runtime_model_name = self._runtime_model_name(model_name)
         if self._lm_loader is None:
             from mlx_lm import load  # noqa: PLC0415
 
-            loaded = load(model_name)
+            loaded = load(runtime_model_name)
         else:
-            loaded = self._lm_loader(model_name)
+            loaded = self._lm_loader(runtime_model_name)
         return loaded[0], loaded[1]
 
     def load_vlm_runtime_objects(self, model_name: str) -> tuple[Any, Any]:
         """Загружает MLX VLM-модель после проверки общим downloader-ом."""
         self.require_model_ready(model_name, label="VLM-модель")
+        runtime_model_name = self._runtime_model_name(model_name)
         loader = self._vlm_loader
         if loader is None:
             from mlx_vlm import load  # noqa: PLC0415
 
             loader = load
-        model, processor = loader(model_name)
+        model, processor = loader(runtime_model_name)
         return model, processor
 
     def load_qwen_asr_model(self, model_name: str) -> Any:
         """Скачивает и загружает Qwen3-ASR модель через mlx-audio."""
         self.ensure_model_downloaded(model_name, label="ASR-модель")
+        runtime_model_name = self._runtime_model_name(model_name)
         loader = self._qwen_asr_loader
         if loader is None:
             try:
@@ -563,11 +625,12 @@ class ModelManager:
             except ImportError as exc:
                 raise RuntimeError("Для модели Qwen3-ASR нужна зависимость mlx-audio. Выполните `uv sync --dev`.") from exc
             loader = load_mlx_audio_stt_model
-        return loader(model_name)
+        return loader(runtime_model_name)
 
     def load_tts_model(self, model_name: str) -> Any:
         """Загружает streaming MLX TTS-модель после проверки общим downloader-ом."""
         self.require_model_ready(model_name, label="TTS-модель")
+        runtime_model_name = self._runtime_model_name(model_name)
         loader = self._tts_loader
         if loader is None:
             try:
@@ -575,7 +638,7 @@ class ModelManager:
             except ImportError as exc:
                 raise RuntimeError("Для MLX TTS нужна зависимость mlx-audio. Выполните uv sync --dev.") from exc
             loader = load_mlx_audio_tts_model
-        return loader(model_name)
+        return loader(runtime_model_name)
 
     def run_asr_transcription(
         self,
@@ -594,12 +657,22 @@ class ModelManager:
                 model_loader=self.load_qwen_asr_model,
             )
         self.ensure_model_downloaded(model_name, label="ASR-модель")
-        return asr_runtime.run_whisper_transcription(audio_data, model_name, language)
+        return asr_runtime.run_whisper_transcription(audio_data, self._runtime_model_name(model_name), language)
 
     def _mark_model_ready(self, model_name: str) -> None:
         """Запоминает успешную проверку модели для последующих runtime-load вызовов."""
         with self._verified_models_lock:
             self._verified_models.add(model_name)
+
+    def _runtime_model_name(self, model_name: str) -> str:
+        """Подменяет HF repo id на локальный snapshot path, если он уже есть в cache."""
+        if _is_local_model_path(model_name):
+            return str(Path(model_name).expanduser())
+        resolver = getattr(self._downloader, "get_local_model_path", None)
+        if not callable(resolver):
+            return model_name
+        local_path = resolver(model_name)
+        return local_path or model_name
 
 
 _DEFAULT_MODEL_MANAGER: ModelManager | None = None

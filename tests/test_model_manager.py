@@ -210,6 +210,35 @@ def test_huggingface_downloader_skips_model_verified_in_current_process() -> Non
     assert progress_events[-1].complete is True
 
 
+def test_huggingface_downloader_uses_local_snapshot_without_network() -> None:
+    """Если snapshot уже есть в HF cache, downloader не должен обращаться к сети."""
+    snapshot_calls: list[tuple[str, bool, int | None]] = []
+    progress_events: list[ModelDownloadProgress] = []
+
+    def fake_snapshot_download(
+        model_name: str,
+        *,
+        local_files_only: bool = False,
+        max_workers: int | None = None,
+        tqdm_class: type[Any] | None = None,
+    ) -> str:
+        del tqdm_class
+        snapshot_calls.append((model_name, local_files_only, max_workers))
+        if local_files_only:
+            return "/tmp/hf-cache/test-model"
+        raise AssertionError("Сетевой snapshot_download не должен вызываться для готового cache")
+
+    downloader = HuggingFaceModelDownloader(snapshot_downloader=fake_snapshot_download)
+
+    downloader.ensure_downloaded("mlx-community/test-model", label="ASR-модель", progress_callback=progress_events.append)
+
+    assert snapshot_calls == [("mlx-community/test-model", True, None)]
+    assert progress_events[-1].stage == "уже в cache"
+    assert progress_events[-1].complete is True
+    assert downloader.get_local_model_path("mlx-community/test-model") == "/tmp/hf-cache/test-model"
+    assert snapshot_calls == [("mlx-community/test-model", True, None)]
+
+
 def test_model_manager_routes_downloads_through_single_downloader(monkeypatch) -> None:
     """LLM, TTS и Whisper-ASR должны проверяться через один downloader."""
     download_calls: list[tuple[str, str]] = []
@@ -255,6 +284,57 @@ def test_model_manager_routes_downloads_through_single_downloader(monkeypatch) -
         ("llm", "mlx-community/llm"),
         ("tts", "mlx-community/tts"),
         ("asr", "mlx-community/whisper-turbo"),
+    ]
+
+
+def test_model_manager_passes_local_snapshot_paths_to_runtime_loaders(monkeypatch) -> None:
+    """Runtime-loader-ы должны получать локальные snapshot paths вместо HF repo id."""
+    download_calls: list[tuple[str, str]] = []
+    load_calls: list[tuple[str, str]] = []
+
+    class FakeDownloader:
+        def is_model_cached(self, _model_name: str) -> bool:
+            return True
+
+        def get_local_model_path(self, model_name: str) -> str:
+            return f"/tmp/hf-cache/{model_name.replace('/', '--')}"
+
+        def ensure_downloaded(self, model_name: str, *, label: str, progress_callback: Any = None) -> None:
+            del progress_callback
+            download_calls.append((label, model_name))
+
+    def fake_lm_loader(model_name: str) -> tuple[object, object]:
+        load_calls.append(("llm", model_name))
+        return object(), object()
+
+    def fake_tts_loader(model_name: str) -> object:
+        load_calls.append(("tts", model_name))
+        return object()
+
+    def fake_whisper(audio_data: object, model_name: str, language: str | None) -> dict[str, str | None]:
+        del audio_data
+        load_calls.append(("asr", model_name))
+        return {"text": language}
+
+    monkeypatch.setattr(asr_runtime, "run_whisper_transcription", fake_whisper)
+    manager = ModelManager(downloader=FakeDownloader(), lm_loader=fake_lm_loader, tts_loader=fake_tts_loader)
+
+    manager.ensure_model_downloaded("mlx-community/llm", label="LLM-модель")
+    manager.load_llm_runtime_objects("mlx-community/llm")
+    manager.ensure_model_downloaded("mlx-community/tts", label="TTS-модель")
+    manager.load_tts_model("mlx-community/tts")
+    result = manager.run_asr_transcription(np.zeros(16000, dtype=np.float32), "mlx-community/whisper-turbo", "ru")
+
+    assert result == {"text": "ru"}
+    assert download_calls == [
+        ("LLM-модель", "mlx-community/llm"),
+        ("TTS-модель", "mlx-community/tts"),
+        ("ASR-модель", "mlx-community/whisper-turbo"),
+    ]
+    assert load_calls == [
+        ("llm", "/tmp/hf-cache/mlx-community--llm"),
+        ("tts", "/tmp/hf-cache/mlx-community--tts"),
+        ("asr", "/tmp/hf-cache/mlx-community--whisper-turbo"),
     ]
 
 
