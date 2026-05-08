@@ -84,6 +84,7 @@ class Config:
     LLM_MODEL_PRESETS: ClassVar[list[str]] = [
         "mlx-community/gemma-4-26b-a4b-it-4bit",
         "mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-6bit",
+        "mlx-community/Qwen3.6-35B-A3B-4bit",
     ]
     LLM_MAX_TOKENS = 500
     LLM_RESPONSE_CHAR_LIMIT = 180

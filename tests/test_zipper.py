@@ -569,6 +569,93 @@ def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool()
     assert cleanup_calls == []
 
 
+def test_zipper_qwen_uses_hermes_tool_calls_without_react_iteration_limit():
+    """Qwen-модель должна вызывать инструменты через Hermes-разметку, а не ReAct stopwords."""
+    generation_prompts: list[str] = []
+    events: list[tuple[str, str, dict[str, Any] | None]] = []
+    responses = iter(
+        (
+            '<tool_call>{"name": "current_datetime", "arguments": {}}</tool_call>',
+            "Время получено через инструмент.\noutput_mode: window",
+        )
+    )
+
+    def load_runtime(model_name: str) -> tuple[object, FakeAgentTokenizer]:
+        assert model_name == "mlx-community/Qwen3.6-35B-A3B-4bit"
+        return object(), FakeAgentTokenizer()
+
+    def generate(_model: object, _tokenizer: FakeAgentTokenizer, prompt: str, max_tokens: int) -> str:
+        generation_prompts.append(prompt)
+        assert max_tokens == 1000
+        return next(responses)
+
+    def emit_event(kind: str, message: str, payload: dict[str, Any] | None = None) -> None:
+        events.append((kind, message, payload))
+
+    processor = LlmGateway(
+        "mlx-community/Qwen3.6-35B-A3B-4bit",
+        runtime_loader=load_runtime,
+        generation_runner=generate,
+    )
+    agent = LangChainZipperAgent(processor)
+
+    result = agent.invoke(
+        "сколько времени",
+        memory="",
+        events=(),
+        config=ZipperConfig(),
+        emit_event=emit_event,
+    )
+
+    assert result == ZipperAgentResult(text="Время получено через инструмент.", output_mode="window")
+    assert len(generation_prompts) == 2
+    assert "Action:" not in generation_prompts[0]
+    assert "<tool_call>" in generation_prompts[0]
+    assert "tool current_datetime" in generation_prompts[1]
+    assert any(kind == "tool" and message == "current_datetime" for kind, message, _payload in events)
+
+
+def test_zipper_qwen_maps_output_tool_to_result_without_double_speaking():
+    """Если Qwen вызвала speak_text, вывод выполняет use case, чтобы не озвучивать ответ дважды."""
+    generation_prompts: list[str] = []
+    events: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def load_runtime(model_name: str) -> tuple[object, FakeAgentTokenizer]:
+        assert model_name == "mlx-community/Qwen3.6-35B-A3B-4bit"
+        return object(), FakeAgentTokenizer()
+
+    def generate(_model: object, _tokenizer: FakeAgentTokenizer, prompt: str, max_tokens: int) -> str:
+        generation_prompts.append(prompt)
+        assert max_tokens == 1000
+        return '<tool_call>{"name": "speak_text", "arguments": {"input": "Я не могу управлять медиаплеером."}}</tool_call>'
+
+    def emit_event(kind: str, message: str, payload: dict[str, Any] | None = None) -> None:
+        events.append((kind, message, payload))
+
+    processor = LlmGateway(
+        "mlx-community/Qwen3.6-35B-A3B-4bit",
+        runtime_loader=load_runtime,
+        generation_runner=generate,
+    )
+    voice_output = FakeVoiceOutput()
+    agent = LangChainZipperAgent(processor, voice_output=voice_output)
+
+    result = agent.invoke(
+        "озвучь отказ",
+        memory="",
+        events=(),
+        config=ZipperConfig(),
+        emit_event=emit_event,
+    )
+
+    assert result == ZipperAgentResult(text="Я не могу управлять медиаплеером.", output_mode="voice")
+    assert len(generation_prompts) == 1
+    assert voice_output.spoken == []
+    assert events[0][0] == "tool"
+    assert events[0][1] == "speak_text"
+    assert events[0][2] == {"chars": len("Я не могу управлять медиаплеером."), "deferred_to_output": True}
+
+
 def test_zipper_langchain_keeps_loaded_model_between_agent_invocations():
     """Zipper не должен выгружать LLM между отдельными голосовыми командами."""
     load_calls: list[str] = []

@@ -37,6 +37,12 @@ _ZIPPER_AGENT_MAX_EXECUTION_SECONDS = 60
 _ZIPPER_AGENT_MAX_TOKENS = 1000
 _ZIPPER_MEMORY_SUMMARY_MAX_TOKENS = 1000
 _ZIPPER_RECENT_EVENTS_LIMIT = 20
+_ZIPPER_DIRECT_OUTPUT_TOOLS = {"show_text": "window", "speak_text": "voice"}
+_ZIPPER_NO_INPUT_TOOLS = frozenset({"get_clipboard", "current_datetime"})
+_ZIPPER_QWEN_MODEL_MARKER = "qwen"
+_ZIPPER_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
+_ZIPPER_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+_ZIPPER_FINAL_ANSWER_RE = re.compile(r"Final Answer\s*:\s*", re.IGNORECASE)
 _ZIPPER_SYSTEM_MESSAGE = (
     "Ты Zipper, локальный голосовой агент Dictator. "
     "Выполняй только безопасные действия через доступные инструменты. "
@@ -63,6 +69,24 @@ _ZIPPER_PROMPT_TEMPLATE = (
     "output_mode: voice|window|both\n\n"
     "Question: {input}\n"
     "{agent_scratchpad}"
+)
+_ZIPPER_HERMES_PROMPT_TEMPLATE = (
+    "Работай в режиме function calling.\n"
+    "Если для ответа нужен инструмент, верни только один или несколько блоков вида:\n"
+    '<tool_call>{{"name": "tool_name", "arguments": {{"input": "аргумент"}}}}</tool_call>\n'
+    "Не добавляй финальный ответ в то же сообщение, где есть <tool_call>.\n"
+    "Если инструмент не нужен или результат уже получен, ответь пользователю и отдельной строкой добавь "
+    "output_mode: voice|window|both.\n"
+    "Для обычного ответа не вызывай show_text или speak_text: выбери output_mode. "
+    "Эти инструменты используй только когда пользователь явно просит показать или озвучить отдельный текст.\n\n"
+    "Доступные инструменты в JSON Schema:\n"
+    "{tools_json}\n\n"
+    "Последние события:\n"
+    "{events}\n\n"
+    "Предыдущие шаги:\n"
+    "{scratchpad}\n\n"
+    "Запрос пользователя:\n"
+    "{input}"
 )
 _ZIPPER_MEMORY_SUMMARY_PROMPT = (
     "Суммаризуй события Zipper в постоянную память. "
@@ -133,7 +157,7 @@ class FileZipperMemoryStore:
 
 
 class LangChainZipperAgent:
-    """Весь агент Zipper: prompts, LangChain runtime и tools в одном месте."""
+    """Весь агент Zipper: prompts, локальный agent loop и tools в одном месте."""
 
     def __init__(
         self,
@@ -157,9 +181,17 @@ class LangChainZipperAgent:
         config: ZipperConfig,
         emit_event: _ZipperEventSink | None = None,
     ) -> ZipperAgentResult:
-        """Запускает агентский runtime Zipper через LangChain и настроенные tools."""
+        """Запускает агентский runtime Zipper через подходящий локальный tool-протокол."""
         event = emit_event or _noop_event
         tools = self._build_tools(config, event)
+        if self._uses_qwen_tool_protocol():
+            return self._invoke_hermes(
+                request,
+                memory=memory,
+                events=events,
+                tools=tools,
+                event=event,
+            )
         return self._invoke_langchain(
             request,
             memory=memory,
@@ -199,8 +231,8 @@ class LangChainZipperAgent:
         tools: list[Tool],
         config: ZipperConfig,
     ) -> ZipperAgentResult:
-        processor = self.llm_processor
         system_message = self._system_message(memory)
+        self_outer = self
 
         class _MlxLLM(LLM):
             @property
@@ -209,18 +241,7 @@ class LangChainZipperAgent:
 
             def _call(self, prompt: str, stop: list[str] | None = None, run_manager: Any | None = None, **kwargs: Any) -> str:
                 del run_manager, kwargs
-                try:
-                    text = str(
-                        processor.process_text(
-                            prompt,
-                            system_message,
-                            max_tokens=_ZIPPER_AGENT_MAX_TOKENS,
-                            sanitize=False,
-                            keep_loaded=True,
-                        )
-                    )
-                except TypeError:
-                    text = str(processor.process_text(prompt, system_message, max_tokens=_ZIPPER_AGENT_MAX_TOKENS))
+                text = self_outer._process_agent_prompt(prompt, system_message)
                 if stop:
                     for marker in stop:
                         if marker and marker in text:
@@ -249,6 +270,172 @@ class LangChainZipperAgent:
         )
         text = str(result.get("output") or "").strip()
         return self._parse_output_mode(text)
+
+    def _uses_qwen_tool_protocol(self) -> bool:
+        """Определяет, нужна ли Qwen/Hermes-разметка инструментов вместо ReAct."""
+        model_name = str(getattr(self.llm_processor, "model_name", "") or "").lower()
+        return _ZIPPER_QWEN_MODEL_MARKER in model_name
+
+    def _process_agent_prompt(self, prompt: str, system_message: str) -> str:
+        """Вызывает локальную LLM для одного шага агентского runtime."""
+        try:
+            return str(
+                self.llm_processor.process_text(
+                    prompt,
+                    system_message,
+                    max_tokens=_ZIPPER_AGENT_MAX_TOKENS,
+                    sanitize=False,
+                    keep_loaded=True,
+                )
+            ).strip()
+        except TypeError:
+            return str(
+                self.llm_processor.process_text(
+                    prompt,
+                    system_message,
+                    max_tokens=_ZIPPER_AGENT_MAX_TOKENS,
+                )
+            ).strip()
+
+    def _invoke_hermes(
+        self,
+        request: str,
+        *,
+        memory: str,
+        events: tuple[ZipperEvent, ...],
+        tools: list[Tool],
+        event: _ZipperEventSink,
+    ) -> ZipperAgentResult:
+        """Запускает Qwen-модели через Hermes-style function calling без ReAct stopwords."""
+        system_message = self._system_message(memory)
+        scratchpad: list[str] = []
+        last_response = ""
+        for _iteration in range(_ZIPPER_AGENT_MAX_ITERATIONS):
+            prompt = self._render_hermes_prompt(
+                request,
+                events=events,
+                tools=tools,
+                scratchpad=scratchpad,
+            )
+            raw_response = self._process_agent_prompt(prompt, system_message)
+            last_response = self._strip_thinking(raw_response)
+            tool_calls = self._parse_hermes_tool_calls(last_response)
+            if not tool_calls:
+                return self._parse_output_mode(self._normalize_final_answer(last_response))
+
+            direct_output = self._direct_output_from_tool_calls(tool_calls, event)
+            if direct_output is not None:
+                return direct_output
+
+            scratchpad.append(f"assistant:\n{last_response.strip()}")
+            for name, arguments in tool_calls:
+                result = self._run_tool(tools, name, self._tool_argument_to_string(arguments))
+                scratchpad.append(f"tool {name}:\n{result}")
+
+        if last_response:
+            return self._parse_output_mode(self._normalize_final_answer(last_response))
+        return ZipperAgentResult(text="Zipper не смог завершить команду: достигнут лимит итераций.", output_mode="window")
+
+    def _render_hermes_prompt(
+        self,
+        request: str,
+        *,
+        events: tuple[ZipperEvent, ...],
+        tools: list[Tool],
+        scratchpad: list[str],
+    ) -> str:
+        """Рендерит prompt с Hermes-style описанием tools для Qwen."""
+        return _ZIPPER_HERMES_PROMPT_TEMPLATE.format(
+            tools_json=json.dumps(self._hermes_tool_schema(tools), ensure_ascii=False, indent=2),
+            events=self._render_events(events),
+            scratchpad="\n\n".join(scratchpad).strip() or "нет",
+            input=request,
+        )
+
+    def _hermes_tool_schema(self, tools: list[Tool]) -> list[dict[str, Any]]:
+        """Преобразует LangChain tools в JSON Schema, понятную Qwen function calling."""
+        schema: list[dict[str, Any]] = []
+        for tool in tools:
+            parameters: dict[str, Any]
+            if tool.name in _ZIPPER_NO_INPUT_TOOLS:
+                parameters = {"type": "object", "properties": {}, "required": []}
+            else:
+                parameters = {
+                    "type": "object",
+                    "properties": {
+                        "input": {
+                            "type": "string",
+                            "description": "Строковый аргумент инструмента.",
+                        }
+                    },
+                    "required": ["input"],
+                }
+            schema.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description or tool.name,
+                        "parameters": parameters,
+                    },
+                }
+            )
+        return schema
+
+    def _parse_hermes_tool_calls(self, text: str) -> list[tuple[str, dict[str, Any]]]:
+        """Достаёт Hermes `<tool_call>` блоки из ответа Qwen."""
+        calls: list[tuple[str, dict[str, Any]]] = []
+        for raw_call in _ZIPPER_TOOL_CALL_RE.findall(text):
+            try:
+                data = json.loads(raw_call.strip())
+            except json.JSONDecodeError:
+                LOGGER.warning("🧷 Zipper не смог разобрать tool_call Qwen: %r", raw_call)
+                continue
+            if not isinstance(data, dict):
+                continue
+            name = str(data.get("name") or "").strip()
+            arguments = data.get("arguments") or {}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {"input": arguments}
+            if name and isinstance(arguments, dict):
+                calls.append((name, arguments))
+        return calls
+
+    def _direct_output_from_tool_calls(
+        self,
+        tool_calls: list[tuple[str, dict[str, Any]]],
+        event: _ZipperEventSink,
+    ) -> ZipperAgentResult | None:
+        """Преобразует show_text/speak_text в финальный результат без двойного вывода."""
+        if len(tool_calls) != 1:
+            return None
+        name, arguments = tool_calls[0]
+        output_mode = _ZIPPER_DIRECT_OUTPUT_TOOLS.get(name)
+        if output_mode is None:
+            return None
+        text = self._tool_argument_to_string(arguments).strip()
+        event("tool", name, {"chars": len(text), "deferred_to_output": True})
+        return ZipperAgentResult(text=text or "Готово.", output_mode=output_mode)  # type: ignore[arg-type]
+
+    def _tool_argument_to_string(self, arguments: dict[str, Any]) -> str:
+        """Приводит JSON-аргументы Hermes tool call к строке для текущих tools."""
+        if "input" in arguments:
+            return str(arguments["input"])
+        if not arguments:
+            return ""
+        return json.dumps(arguments, ensure_ascii=False)
+
+    def _strip_thinking(self, text: str) -> str:
+        """Удаляет Qwen `<think>` блоки перед парсингом tool calls и финального ответа."""
+        return _ZIPPER_THINK_RE.sub("", text).strip()
+
+    def _normalize_final_answer(self, text: str) -> str:
+        """Снимает ReAct-префикс, если локальная модель всё равно его добавила."""
+        parts = _ZIPPER_FINAL_ANSWER_RE.split(text, maxsplit=1)
+        return parts[-1].strip() if len(parts) > 1 else text.strip()
 
     def _build_tools(self, config: ZipperConfig, event: _ZipperEventSink) -> list[Tool]:
         """Собирает LangChain tools: описание и код каждого tool находятся рядом."""

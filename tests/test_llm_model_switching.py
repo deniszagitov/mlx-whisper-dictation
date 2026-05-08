@@ -28,6 +28,10 @@ class TestLlmModelDetection:
         """Qwen 3.5 должна определяться как обычная LM-модель."""
         assert _is_vlm_model("mlx-community/Huihui-Qwen3.5-4B-Claude-4.6-Opus-abliterated-6bit") is False
 
+    def test_qwen36_detected_as_lm(self):
+        """Qwen 3.6 должна определяться как обычная LM-модель."""
+        assert _is_vlm_model("mlx-community/Qwen3.6-35B-A3B-4bit") is False
+
     def test_unknown_model_detected_as_lm(self):
         """Неизвестная модель по умолчанию считается LM."""
         assert _is_vlm_model("some-other-model") is False
@@ -117,6 +121,7 @@ class TestLlmModelPresets:
         names = " ".join(Config.LLM_MODEL_PRESETS).lower()
         assert "gemma" in names
         assert "qwen" in names
+        assert "mlx-community/Qwen3.6-35B-A3B-4bit" in Config.LLM_MODEL_PRESETS
 
     def test_obsidian_prompt_presets_exist(self):
         """В пресетах промптов есть Obsidian-пресеты."""
