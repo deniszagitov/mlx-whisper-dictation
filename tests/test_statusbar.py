@@ -664,6 +664,13 @@ class TestStatusBarInit:
         assert "Input Monitoring" in app.input_monitoring_item.title
         assert "Microphone" in app.microphone_item.title
 
+    def test_quit_item_uses_managed_russian_menu_action(self, make_app):
+        """Выход должен идти через управляемый callback вместо стандартного rumps Quit."""
+        app, *_ = make_app(languages=["ru"])
+
+        assert app.quit_button is None
+        assert app._menu_item("Выход").title == "Выход"
+
     def test_token_usage_item_present(self, make_app):
         """Счётчик токенов остаётся отдельным пунктом верхнего уровня."""
         app, *_ = make_app(languages=["ru"])
@@ -1102,6 +1109,27 @@ class TestStatusBarMenuSelections:
         assert calls["selectable"] is True
         assert calls["buttons"] == ["Сохранить", "Отмена"]
         assert calls["accessory"] is calls["first_responder"]
+
+    def test_request_application_quit_emits_cleanup_before_terminate(self, monkeypatch):
+        """Управляемый выход сначала запускает cleanup, затем просит AppKit завершиться."""
+        events = []
+
+        class FakeApplication:
+            @staticmethod
+            def sharedApplication():
+                class App:
+                    def terminate_(self, sender):
+                        events.append(("terminate", sender))
+
+                return App()
+
+        monkeypatch.setattr(ui_module, "_call_on_main_thread", lambda callback, *args: callback(*args))
+        monkeypatch.setattr(ui_module.rumps.events.before_quit, "emit", lambda: events.append(("before_quit", None)))
+        monkeypatch.setattr(ui_module.AppKit, "NSApplication", FakeApplication)
+
+        ui_module.request_application_quit("sender")
+
+        assert events == [("before_quit", None), ("terminate", "sender")]
 
     def test_change_max_time_from_menu_updates_state(self, make_app):
         """Выбор лимита записи из меню должен обновлять max_time и заголовок."""

@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from .use_cases.transcription import TranscriptionUseCases
 
 LOGGER = logging.getLogger(__name__)
+READER_SHUTDOWN_JOIN_TIMEOUT_SECONDS = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -2080,6 +2081,19 @@ class DictationApp:
         """Сообщает, активен ли RSVP/TTS reader или его worker."""
         worker_active = self._reader_worker is not None and self._reader_worker.is_alive()
         return bool(worker_active or self.rsvp_display.is_running() or self.tts_speaker.is_speaking())
+
+    def shutdown_reader(self, join_timeout: float = READER_SHUTDOWN_JOIN_TIMEOUT_SECONDS) -> None:
+        """Останавливает reader-сценарии и ждёт завершения их worker-а перед выходом."""
+        self.tts_speaker.stop()
+        self.rsvp_display.close()
+
+        worker = self._reader_worker
+        if worker is None or not worker.is_alive() or worker is threading.current_thread():
+            return
+
+        worker.join(timeout=max(float(join_timeout), 0.0))
+        if worker.is_alive():
+            LOGGER.warning("📖 Reader worker не завершился за %.1f с при выходе", join_timeout)
 
     def handle_reader_key(self, key_name: str) -> bool:
         """Обрабатывает клавиши управления reader-сценариями."""

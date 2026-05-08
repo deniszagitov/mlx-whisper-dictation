@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, cast
 
 import src.app as app_module
@@ -313,6 +314,43 @@ def make_controller(monkeypatch, *, system_integration_service=None):
     )
     controller.display_sleep_release_delay_seconds = 0
     return controller, recorder, transcriber
+
+
+def test_shutdown_reader_stops_outputs_and_waits_for_worker(monkeypatch):
+    """При выходе reader worker должен получить stop и успеть завершиться."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    events: list[str] = []
+    stop_event = threading.Event()
+    worker_finished = threading.Event()
+
+    class FakeTTS:
+        def stop(self) -> None:
+            events.append("tts_stop")
+            stop_event.set()
+
+    class FakeRSVP:
+        def close(self) -> None:
+            events.append("rsvp_close")
+
+    def worker_target() -> None:
+        stop_event.wait(timeout=1)
+        worker_finished.set()
+
+    worker = threading.Thread(target=worker_target)
+    controller.tts_speaker = FakeTTS()
+    controller.rsvp_display = FakeRSVP()
+    controller._reader_worker = worker
+    worker.start()
+
+    try:
+        controller.shutdown_reader(join_timeout=1)
+    finally:
+        stop_event.set()
+        worker.join(timeout=1)
+
+    assert events == ["tts_stop", "rsvp_close"]
+    assert worker_finished.is_set()
+    assert not worker.is_alive()
 
 
 def test_zipper_uses_separate_llm_runtime_for_agent_memory_policy(monkeypatch):

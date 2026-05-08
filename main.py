@@ -18,7 +18,7 @@ import rumps
 from src.adapters.hotkey_dialog import capture_hotkey_combination
 from src.adapters.overlay import RecordingOverlay
 from src.adapters.rsvp_overlay import RSVPOverlay
-from src.adapters.ui import StatusBarApp
+from src.adapters.ui import StatusBarApp, request_application_quit
 from src.adapters.zipper_windows import ZipperTextOutput, ZipperVoiceOutput
 from src.app import (  # noqa: F401
     AppSnapshot,
@@ -304,8 +304,12 @@ def _stop_runtime_for_cli_shutdown(
     """Останавливает runtime-ресурсы перед выходом из CLI."""
     _safe_shutdown_call("отмена активной записи", app_controller.cancel_recording)
     _safe_shutdown_call("остановка hotkey-listener", getattr(key_listener, "stop", None))
-    _safe_shutdown_call("остановка TTS", getattr(tts_speaker, "stop", None))
-    _safe_shutdown_call("закрытие RSVP", getattr(rsvp_display, "close", None))
+    shutdown_reader = getattr(app_controller, "shutdown_reader", None)
+    if callable(shutdown_reader):
+        _safe_shutdown_call("остановка reader", shutdown_reader)
+    else:
+        _safe_shutdown_call("остановка TTS", getattr(tts_speaker, "stop", None))
+        _safe_shutdown_call("закрытие RSVP", getattr(rsvp_display, "close", None))
     _safe_shutdown_call("скрытие overlay записи", getattr(app_controller.recording_overlay, "hide", None))
     _safe_shutdown_call("отпускание защиты дисплея", display_sleep_prevention_service.release)
 
@@ -365,10 +369,11 @@ def _build_cli_shutdown_handler(
     quit_application: Any = None,
     force_exit: Any = os._exit,
     timer_factory: Any = threading.Timer,
+    stop_runtime: Any = None,
 ) -> Any:
     """Создаёт обработчик SIGINT/SIGTERM для запуска из терминала."""
     shutdown_requested = False
-    quit_app = quit_application or rumps.quit_application
+    quit_app = quit_application or (lambda sender: request_application_quit(sender, emit_before_quit=False))
 
     def handler(signum: int, _frame: Any = None) -> None:
         nonlocal shutdown_requested
@@ -384,13 +389,16 @@ def _build_cli_shutdown_handler(
         timer.daemon = True
         timer.start()
 
-        _stop_runtime_for_cli_shutdown(
-            app_controller=app_controller,
-            key_listener=key_listener,
-            tts_speaker=tts_speaker,
-            rsvp_display=rsvp_display,
-            display_sleep_prevention_service=display_sleep_prevention_service,
-        )
+        if callable(stop_runtime):
+            _safe_shutdown_call("остановка runtime", stop_runtime)
+        else:
+            _stop_runtime_for_cli_shutdown(
+                app_controller=app_controller,
+                key_listener=key_listener,
+                tts_speaker=tts_speaker,
+                rsvp_display=rsvp_display,
+                display_sleep_prevention_service=display_sleep_prevention_service,
+            )
         _safe_shutdown_call("остановка menu bar приложения", lambda: quit_app(None))
 
     return handler
@@ -405,12 +413,32 @@ def _install_cli_shutdown_handlers(
     display_sleep_prevention_service: DisplaySleepPreventionService,
 ) -> None:
     """Регистрирует Ctrl-C/Ctrl-Term shutdown для запуска приложения из CLI."""
+    cleanup_lock = threading.RLock()
+    cleanup_done = False
+
+    def cleanup_runtime_once(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal cleanup_done
+        with cleanup_lock:
+            if cleanup_done:
+                return
+            cleanup_done = True
+        _stop_runtime_for_cli_shutdown(
+            app_controller=app_controller,
+            key_listener=key_listener,
+            tts_speaker=tts_speaker,
+            rsvp_display=rsvp_display,
+            display_sleep_prevention_service=display_sleep_prevention_service,
+        )
+        if callable(signal_wait_cleanup):
+            signal_wait_cleanup()
+
     handler = _build_cli_shutdown_handler(
         app_controller=app_controller,
         key_listener=key_listener,
         tts_speaker=tts_speaker,
         rsvp_display=rsvp_display,
         display_sleep_prevention_service=display_sleep_prevention_service,
+        stop_runtime=cleanup_runtime_once,
     )
     signal_wait_cleanup = _install_cli_signal_wait_thread(handler)
     standard_handler = (lambda _signum, _frame: None) if signal_wait_cleanup is not None else handler
@@ -430,15 +458,7 @@ def _install_cli_shutdown_handlers(
             LOGGER.exception("⚠️ Не удалось зарегистрировать Mach signal handlers для CLI")
 
     def cleanup_before_quit(*_args: Any, **_kwargs: Any) -> None:
-        _stop_runtime_for_cli_shutdown(
-            app_controller=app_controller,
-            key_listener=key_listener,
-            tts_speaker=tts_speaker,
-            rsvp_display=rsvp_display,
-            display_sleep_prevention_service=display_sleep_prevention_service,
-        )
-        if callable(signal_wait_cleanup):
-            signal_wait_cleanup()
+        cleanup_runtime_once()
 
     rumps.events.before_start.register(install_mach_signal_handlers)
     rumps.events.before_quit.register(cleanup_before_quit)

@@ -160,6 +160,28 @@ def test_mlx_streaming_tts_keeps_model_only_in_fast_mode():
     assert loader_calls == ["model", "model"]
 
 
+def test_mlx_streaming_tts_flush_closes_existing_stream_when_not_playing():
+    """Shutdown должен закрывать stream, даже если player уже сбросил флаг playing."""
+    events: list[str] = []
+
+    class PlayerWithStoppedFlag:
+        playing = False
+        stream = object()
+
+        def flush(self):
+            events.append("flush")
+
+        def stop_stream(self):
+            events.append("stop_stream")
+            self.stream = None
+
+    controller = MlxStreamingTTSController(model_loader=lambda _model_name: FakeModel(), player_factory=FakePlayer, mx_module=FakeMx())
+
+    controller._flush_player(PlayerWithStoppedFlag())
+
+    assert events == ["flush", "stop_stream"]
+
+
 def test_tts_router_uses_mlx_backend_when_selected():
     apple = FakeSpeaker()
     mlx = FakeSpeaker()

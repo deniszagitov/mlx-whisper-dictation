@@ -180,9 +180,17 @@ class MlxStreamingTTSController:
         stop = getattr(player, "stop", None)
         if callable(stop):
             stop()
+        self._close_player_stream(player)
 
     def _flush_player(self, player: Any) -> None:
         """Сбрасывает накопленный звук немедленно."""
         flush = getattr(player, "flush", None)
         if callable(flush):
             flush()
+        self._close_player_stream(player)
+
+    def _close_player_stream(self, player: Any) -> None:
+        """Закрывает audio stream, даже если player уже сбросил флаг playing."""
+        stop_stream = getattr(player, "stop_stream", None)
+        if callable(stop_stream) and getattr(player, "stream", None) is not None:
+            stop_stream()

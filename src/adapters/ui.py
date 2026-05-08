@@ -41,6 +41,17 @@ def _call_on_main_thread(callback: Any, *args: Any) -> None:
     callAfter(callback, *args)
 
 
+def request_application_quit(sender: object | None = None, *, emit_before_quit: bool = True) -> None:
+    """Запрашивает выход из AppKit после явного rumps before_quit cleanup."""
+
+    def terminate_application() -> None:
+        if emit_before_quit:
+            rumps.events.before_quit.emit()
+        AppKit.NSApplication.sharedApplication().terminate_(sender)
+
+    _call_on_main_thread(terminate_application)
+
+
 def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
     """Открывает простое AppKit-окно ввода текста и возвращает введённое значение."""
     AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
@@ -70,7 +81,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
     def __init__(self, app: StatusBarControllerProtocol) -> None:
         """Создаёт menu bar приложение, привязанное к контроллеру диктовки."""
-        super().__init__("whisper", "⏯")
+        super().__init__("whisper", "⏯", quit_button=None)
         self.app = app
         self._history_title_to_text: dict[str, str] = {}
         self._microphone_profile_titles: dict[str, MicrophoneProfile] = {}
@@ -319,6 +330,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.microphone_item = rumps.MenuItem(self._permission_title("Microphone", self.permission_status["microphone"]))
         self.request_accessibility_item = rumps.MenuItem("🛂 Запросить Accessibility", callback=self.request_accessibility_access)
         self.request_input_monitoring_item = rumps.MenuItem("🛂 Запросить Input Monitoring", callback=self.request_input_monitoring_access)
+        self.quit_item = rumps.MenuItem("Выход", callback=self.quit_application)
 
         self.permissions_menu = rumps.MenuItem(self._permissions_menu_title())
         self.permissions_menu.add(self.accessibility_item)
@@ -347,6 +359,8 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self.input_device_menu,
             self.microphone_profiles_menu,
             self.permissions_menu,
+            None,
+            self.quit_item,
         ]
 
         self.menu = menu
@@ -1295,6 +1309,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def clear_zipper_memory(self, _sender: rumps.MenuItem) -> None:
         """Очищает постоянную память Zipper."""
         self.app.clear_zipper_memory()
+
+    def quit_application(self, sender: rumps.MenuItem) -> None:
+        """Завершает приложение через управляемый shutdown."""
+        request_application_quit(sender)
 
     def change_reader_rsvp_wpm(self, sender: rumps.MenuItem) -> None:
         """Меняет скорость RSVP."""

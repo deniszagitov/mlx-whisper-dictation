@@ -194,3 +194,44 @@ def test_install_cli_shutdown_handlers_reinstalls_mach_signal_after_rumps(app_mo
     assert standard_signals == [signal.SIGINT, signal.SIGTERM]
     assert mach_signals == [signal.SIGINT, signal.SIGTERM]
     assert before_quit_callbacks
+
+
+def test_install_cli_shutdown_handlers_runs_before_quit_cleanup_once(app_module, monkeypatch):
+    """Повторный before_quit не должен повторно останавливать reader и signal cleanup."""
+    events: list[str] = []
+    before_quit_callbacks: list[Any] = []
+
+    monkeypatch.setattr(app_module.signal, "signal", lambda _signum, _handler: None)
+    monkeypatch.setattr(app_module.rumps.events.before_start, "register", lambda _callback: None)
+    monkeypatch.setattr(app_module.rumps.events.before_quit, "register", before_quit_callbacks.append)
+    monkeypatch.setattr(app_module, "_install_cli_signal_wait_thread", lambda _handler: lambda: events.append("signal_cleanup"))
+
+    app_controller = SimpleNamespace(
+        recording_overlay=SimpleNamespace(hide=lambda: events.append("overlay_hide")),
+        cancel_recording=lambda: events.append("cancel_recording"),
+        shutdown_reader=lambda: events.append("reader_shutdown"),
+    )
+    key_listener = SimpleNamespace(stop=lambda: events.append("hotkeys_stop"))
+    tts_speaker = SimpleNamespace(stop=lambda: events.append("tts_stop"))
+    rsvp_display = SimpleNamespace(close=lambda: events.append("rsvp_close"))
+    display_sleep = SimpleNamespace(release=lambda: events.append("display_release"))
+
+    app_module._install_cli_shutdown_handlers(
+        app_controller=app_controller,
+        key_listener=key_listener,
+        tts_speaker=tts_speaker,
+        rsvp_display=rsvp_display,
+        display_sleep_prevention_service=display_sleep,
+    )
+
+    before_quit_callbacks[0]()
+    before_quit_callbacks[0]()
+
+    assert events == [
+        "cancel_recording",
+        "hotkeys_stop",
+        "reader_shutdown",
+        "overlay_hide",
+        "display_release",
+        "signal_cleanup",
+    ]
