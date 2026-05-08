@@ -69,7 +69,6 @@ class ZipperConfig:
         "Выполняй только безопасные действия через доступные инструменты. "
         "Отвечай по-русски, кратко и практично."
     )
-    notes_directory: str = "~/Library/Application Support/Dictator/Zipper/Notes"
     context: ZipperContextConfig = field(default_factory=ZipperContextConfig)
     debug: ZipperDebugConfig = field(default_factory=ZipperDebugConfig)
     cli_commands: tuple[ZipperCliCommand, ...] = ()

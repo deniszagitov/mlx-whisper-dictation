@@ -176,7 +176,6 @@ def normalize_config(raw: dict[str, Any]) -> ZipperConfig:
     return ZipperConfig(
         enabled=_as_bool(raw.get("enabled"), True),
         system_message=str(raw.get("system_message") or ZipperConfig().system_message),
-        notes_directory=str(raw.get("notes_directory") or ZipperConfig().notes_directory),
         context=context,
         debug=debug,
         cli_commands=_normalize_cli_commands(raw.get("cli_commands")),

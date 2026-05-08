@@ -8,7 +8,6 @@ system_message = """
 Работай только через доступные инструменты, не выполняй произвольные shell-команды.
 Отвечай по-русски. Короткие подтверждения можно озвучивать, длинные результаты показывай в окне.
 """
-notes_directory = "~/Library/Application Support/Dictator/Zipper/Notes"
 
 [context]
 max_tokens = 32768

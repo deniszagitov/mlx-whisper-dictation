@@ -208,13 +208,6 @@ class ZipperMCPToolProviderService:
     tools_for_config: Callable[[ZipperConfig], tuple[list[Any], list[str]]]
 
 
-@dataclass(frozen=True, slots=True)
-class ZipperNoteWriterService:
-    """Concrete bundle записи заметок Zipper."""
-
-    write_note: Callable[[str, ZipperConfig], Any]
-
-
 class _NullRecordingOverlay:
     """Null-object для сценариев без подключённого overlay-адаптера."""
 
@@ -374,11 +367,6 @@ def _null_custom_tool(_tool: Any, _argument: str) -> str:
 def _null_mcp_tools(_config: ZipperConfig) -> tuple[list[Any], list[str]]:
     """Возвращает отсутствие MCP-инструментов."""
     return [], []
-
-
-def _null_write_note(_text: str, _config: ZipperConfig) -> str:
-    """Возвращает ошибку записи заметки без writer-а."""
-    return "note-writer Zipper не настроен"
 
 
 class _NullHotkeyListener:
@@ -573,7 +561,6 @@ class DictationApp:
         zipper_command_runner: ZipperCommandRunnerService | None = None,
         zipper_custom_tool_runner: ZipperCustomToolRunnerService | None = None,
         zipper_mcp_tool_provider: ZipperMCPToolProviderService | None = None,
-        zipper_note_writer: ZipperNoteWriterService | None = None,
     ) -> None:
         self.settings_store = settings_store or _InMemorySettingsStore()
         self.recorder = recorder
@@ -645,7 +632,6 @@ class DictationApp:
         self.zipper_command_runner = zipper_command_runner or ZipperCommandRunnerService(run=_null_run_command)
         self.zipper_custom_tool_runner = zipper_custom_tool_runner or ZipperCustomToolRunnerService(run=_null_custom_tool)
         self.zipper_mcp_tool_provider = zipper_mcp_tool_provider or ZipperMCPToolProviderService(tools_for_config=_null_mcp_tools)
-        self.zipper_note_writer = zipper_note_writer or ZipperNoteWriterService(write_note=_null_write_note)
 
         self.model_options = list(Config.MODEL_PRESETS)
         if self.launch_config.model not in self.model_options:
@@ -777,7 +763,6 @@ class DictationApp:
             command_runner=self.zipper_command_runner,
             custom_tool_runner=self.zipper_custom_tool_runner,
             mcp_tool_provider=self.zipper_mcp_tool_provider,
-            note_writer=self.zipper_note_writer,
             system_integration_service=self.system_integration_service,
             recording_overlay=self.recording_overlay,
             publish_snapshot=self._notify_subscribers,

@@ -73,7 +73,6 @@ class ZipperUseCases:
         command_runner: Any,
         custom_tool_runner: Any,
         mcp_tool_provider: Any,
-        note_writer: Any,
         system_integration_service: Any,
         recording_overlay: Any,
         publish_snapshot: Any,
@@ -92,7 +91,6 @@ class ZipperUseCases:
         self.command_runner = command_runner
         self.custom_tool_runner = custom_tool_runner
         self.mcp_tool_provider = mcp_tool_provider
-        self.note_writer = note_writer
         self.system_integration_service = system_integration_service
         self.recording_overlay = recording_overlay
         self.publish_snapshot = publish_snapshot
@@ -373,7 +371,6 @@ class ZipperUseCases:
             ZipperToolSpec("open_url", "Открыть URL в браузере по умолчанию.", self._tool_open_url),
             ZipperToolSpec("show_text", "Показать текстовое окно с переданным содержимым.", self._tool_show_text),
             ZipperToolSpec("speak_text", "Озвучить переданный текст.", self._tool_speak_text),
-            ZipperToolSpec("write_note", "Записать заметку в локальное хранилище Zipper.", self._tool_write_note),
         ]
         tools.extend(self._cli_tools())
         tools.extend(self._custom_tools())
@@ -449,11 +446,6 @@ class ZipperUseCases:
         self.voice_output.speak(arg)
         self._event("tool", "speak_text", {"chars": len(arg)})
         return "Текст озвучен."
-
-    def _tool_write_note(self, arg: str) -> str:
-        path = self.note_writer.write_note(arg, self._config)
-        self._event("tool", "write_note", {"path": str(path)})
-        return f"Заметка сохранена: {path}"
 
     def _tool_cli(self, command: Any, arg: str) -> str:
         if command.require_confirmation and not self.text_output.confirm(

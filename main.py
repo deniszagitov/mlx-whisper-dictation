@@ -39,7 +39,6 @@ from src.app import (  # noqa: F401
     ZipperCustomToolRunnerService,
     ZipperMCPToolProviderService,
     ZipperMemoryStoreService,
-    ZipperNoteWriterService,
     ZipperTextOutputService,
     ZipperUrlOpenerService,
     ZipperVoiceOutputService,
@@ -127,7 +126,6 @@ from src.infrastructure.zipper_runtime import (
     ZipperCommandRunner,
     ZipperCustomToolRunner,
     ZipperMCPToolProvider,
-    ZipperNoteWriter,
     ZipperUrlOpener,
 )
 from src.use_cases.transcription import TranscriptionUseCases as SpeechTranscriber
@@ -623,7 +621,6 @@ def main() -> None:
         zipper_command_runner=ZipperCommandRunnerService(run=ZipperCommandRunner().run),
         zipper_custom_tool_runner=ZipperCustomToolRunnerService(run=ZipperCustomToolRunner().run),
         zipper_mcp_tool_provider=ZipperMCPToolProviderService(tools_for_config=ZipperMCPToolProvider().tools_for_config),
-        zipper_note_writer=ZipperNoteWriterService(write_note=ZipperNoteWriter().write_note),
     )
     model_manager.set_progress_callback(app_controller.handle_model_download_progress)
     app_controller_holder["controller"] = app_controller

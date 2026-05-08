@@ -8,7 +8,6 @@ import inspect
 import json
 import logging
 import subprocess
-import time
 import webbrowser
 from pathlib import Path
 from typing import Any
@@ -124,19 +123,6 @@ class ZipperCustomToolRunner:
             opened = webbrowser.open(tool.value.format(input=argument))
             return "URL пользовательского инструмента открыт." if opened else "Не удалось открыть URL пользовательского инструмента."
         return f"Неизвестный тип пользовательского инструмента: {tool.kind}"
-
-
-class ZipperNoteWriter:
-    """Сохраняет заметки Zipper в локальную markdown-папку."""
-
-    def write_note(self, text: str, config: ZipperConfig) -> Path:
-        """Записывает заметку и возвращает путь к файлу."""
-        notes_dir = Path(config.notes_directory).expanduser()
-        notes_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        path = notes_dir / f"zipper-{stamp}.md"
-        path.write_text(text.strip() + "\n", encoding="utf-8")
-        return path
 
 
 class ZipperMCPToolProvider:
@@ -308,9 +294,6 @@ class LangChainZipperAgent:
             return ZipperAgentResult(text=self._run_tool(tools, "open_url", url), output_mode="voice")
         if "дата" in normalized or "время" in normalized:
             return ZipperAgentResult(text=self._run_tool(tools, "current_datetime", ""), output_mode="voice")
-        if "запиши заметку" in normalized:
-            text = request.lower().split("запиши заметку", maxsplit=1)[-1].strip() or request
-            return ZipperAgentResult(text=self._run_tool(tools, "write_note", text), output_mode="voice")
         try:
             response = self.llm_processor.process_text(
                 request,

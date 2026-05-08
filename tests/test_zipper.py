@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from src.domain.constants import Config
@@ -88,7 +87,7 @@ class FakeRecorder:
 class FakeTranscriber:
     """Фейковый transcriber, который не вставляет текст."""
 
-    def __init__(self, text: str = "запиши заметку тест") -> None:
+    def __init__(self, text: str = "скажи дату") -> None:
         self.text = text
         self.transcribe_called = False
         self.transcribe_to_text_called = False
@@ -117,7 +116,7 @@ class FakeLLM:
 
     def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
         """Возвращает краткое резюме для тестов памяти."""
-        return "пользователь часто просит заметки"
+        return "пользователь часто просит дату"
 
 
 class FakeCachedLLM(LlmGateway):
@@ -278,18 +277,6 @@ class FakeMCPProvider:
         return [], []
 
 
-class FakeNoteWriter:
-    """Фейковая запись заметок."""
-
-    def __init__(self) -> None:
-        self.notes: list[str] = []
-
-    def write_note(self, text: str, config: ZipperConfig) -> Path:
-        """Запоминает заметку."""
-        self.notes.append(text)
-        return Path("/tmp/note.md")
-
-
 class FakeNotify:
     """Фейковая системная интеграция."""
 
@@ -350,7 +337,6 @@ def make_use_case(config: ZipperConfig | None = None, agent: FakeAgent | None = 
         command_runner=FakeCommandRunner(),
         custom_tool_runner=FakeCustomToolRunner(),
         mcp_tool_provider=FakeMCPProvider(),
-        note_writer=FakeNoteWriter(),
         system_integration_service=FakeNotify(),
         recording_overlay=FakeOverlay(),
         publish_snapshot=lambda: setattr(runtime, "snapshots", runtime.snapshots + 1),
@@ -375,7 +361,7 @@ def test_zipper_records_voice_command_without_regular_insertion():
 
     assert use_case.transcriber.transcribe_called is False
     assert use_case.transcriber.transcribe_to_text_called is True
-    assert agent.calls[0]["request"] == "запиши заметку тест"
+    assert agent.calls[0]["request"] == "скажи дату"
     assert text_output.messages[-1] == ("Zipper", "Показал результат")
     assert runtime.state == Config.STATUS_IDLE
     assert len(memory.snapshot.events) > 0
@@ -479,6 +465,16 @@ def test_zipper_builtin_tools_keep_clipboard_and_cli_explicitly_configured():
     assert tools["get_clipboard"].run("") == "из буфера"
     assert tools["set_clipboard"].run("новый текст") == "Текст положен в буфер обмена."
     assert tools["cli_date"].run("") == "cli output"
+    assert "write_note" not in tools
+
+
+def test_zipper_fallback_no_longer_handles_note_command_as_tool():
+    """Фраза про заметку больше не вызывает локальный writer Zipper."""
+    agent = LangChainZipperAgent(FakeLLM())
+
+    result = agent._invoke_fallback("запиши заметку тест", system_message="Ты тестовый Zipper.", tools=[])
+
+    assert result == ZipperAgentResult(text="пользователь часто просит дату", output_mode="window")
 
 
 def test_zipper_config_provider_merges_example_local_and_user(tmp_path, caplog):
@@ -489,7 +485,6 @@ def test_zipper_config_provider_merges_example_local_and_user(tmp_path, caplog):
     example.write_text(
         """
 enabled = false
-notes_directory = "/example"
 
 [context]
 max_tokens = 10
@@ -501,8 +496,6 @@ max_events = 3
     user.parent.mkdir(parents=True)
     user.write_text(
         """
-notes_directory = "/user"
-
 [debug]
 enabled = true
 """,
@@ -514,7 +507,6 @@ enabled = true
     config = provider.load_config()
 
     assert config.enabled is True
-    assert config.notes_directory == "/user"
     assert config.context.max_tokens == 10
     assert config.context.max_events == 3
     assert config.debug.enabled is True
@@ -534,7 +526,7 @@ def test_zipper_summarizes_context_to_persistent_memory():
     use_case._append_context_events()
     use_case._summarize_context_if_needed()
 
-    assert "пользователь часто просит заметки" in memory.snapshot.memory
+    assert "пользователь часто просит дату" in memory.snapshot.memory
     assert len(memory.snapshot.events) <= 40
 
 
@@ -689,7 +681,6 @@ def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
         command_runner=FakeCommandRunner(),
         custom_tool_runner=FakeCustomToolRunner(),
         mcp_tool_provider=FakeMCPProvider(),
-        note_writer=FakeNoteWriter(),
         system_integration_service=FakeNotify(),
         recording_overlay=FakeOverlay(),
         publish_snapshot=lambda: setattr(runtime, "snapshots", runtime.snapshots + 1),
