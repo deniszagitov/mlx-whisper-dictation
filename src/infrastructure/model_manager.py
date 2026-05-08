@@ -560,8 +560,11 @@ class ModelManager:
             return model_name in self._verified_models
 
     def require_model_ready(self, model_name: str, *, label: str) -> None:
-        """Прерывает runtime-загрузку, если модель ещё не проверена общим downloader-ом."""
+        """Разрешает runtime-загрузку только для локально доступной модели."""
         if self.is_model_ready(model_name):
+            return
+        if self._downloader.is_model_cached(model_name):
+            self._mark_model_ready(model_name)
             return
         raise ModelRequiredError(model_name, label=label)
 

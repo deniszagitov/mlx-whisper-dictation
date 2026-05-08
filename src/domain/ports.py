@@ -667,12 +667,17 @@ class LlmGatewayProtocol(Protocol):
         context: str | None = None,
         max_tokens: int | None = None,
         sanitize: bool = True,
+        keep_loaded: bool = False,
     ) -> str:
         """Обрабатывает текст через LLM."""
         ...
 
     def ensure_model_downloaded(self) -> None:
         """Скачивает модель при необходимости."""
+        ...
+
+    def set_model_memory_loading_callback(self, callback: Callable[[bool, str, str], None] | None) -> None:
+        """Назначает callback статуса загрузки модели в память."""
         ...
 
     def change_model(self, model_name: str) -> None:

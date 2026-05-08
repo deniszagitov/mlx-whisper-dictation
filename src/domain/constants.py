@@ -24,6 +24,7 @@ class Config:
     STATUS_TRANSCRIBING = "transcribing"
     STATUS_LLM_PROCESSING = "llm_processing"
     STATUS_ZIPPER_PROCESSING = "zipper_processing"
+    STATUS_MODEL_LOADING = "model_loading"
     PERMISSION_GRANTED = "есть"
     PERMISSION_DENIED = "нет"
     PERMISSION_UNKNOWN = "неизвестно"

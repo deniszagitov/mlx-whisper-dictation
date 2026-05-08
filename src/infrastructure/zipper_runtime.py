@@ -239,7 +239,15 @@ class LangChainZipperAgent:
             def _call(self, prompt: str, stop: list[str] | None = None, run_manager: Any | None = None, **kwargs: Any) -> str:
                 del run_manager, kwargs
                 try:
-                    text = str(processor.process_text(prompt, system_message, max_tokens=1000, sanitize=False))
+                    text = str(
+                        processor.process_text(
+                            prompt,
+                            system_message,
+                            max_tokens=1000,
+                            sanitize=False,
+                            keep_loaded=True,
+                        )
+                    )
                 except TypeError:
                     text = str(processor.process_text(prompt, system_message, max_tokens=1000))
                 if stop:
@@ -279,25 +287,17 @@ class LangChainZipperAgent:
             max_iterations=_ZIPPER_AGENT_MAX_ITERATIONS,
             max_execution_time=_ZIPPER_AGENT_MAX_EXECUTION_SECONDS,
         )
-        previous_performance_mode = getattr(processor, "performance_mode", None)
-        set_performance_mode = getattr(processor, "set_performance_mode", None)
-        if callable(set_performance_mode):
-            set_performance_mode("fast")
-        try:
-            result = executor.invoke(
-                {
-                    "input": request,
-                    "system_message": system_message,
-                    "memory": memory,
-                    "events": "\n".join(f"{event.kind}: {event.message} {event.payload}" for event in events[-20:]),
-                    "tool_names": tool_names,
-                }
-            )
-            text = str(result.get("output") or "").strip()
-            return self._parse_output_mode(text)
-        finally:
-            if callable(set_performance_mode) and previous_performance_mode is not None:
-                set_performance_mode(previous_performance_mode)
+        result = executor.invoke(
+            {
+                "input": request,
+                "system_message": system_message,
+                "memory": memory,
+                "events": "\n".join(f"{event.kind}: {event.message} {event.payload}" for event in events[-20:]),
+                "tool_names": tool_names,
+            }
+        )
+        text = str(result.get("output") or "").strip()
+        return self._parse_output_mode(text)
 
     def _invoke_fallback(self, request: str, *, system_message: str, tools: list[ZipperToolSpec]) -> ZipperAgentResult:
         normalized = request.strip().lower()
@@ -311,12 +311,21 @@ class LangChainZipperAgent:
         if "запиши заметку" in normalized:
             text = request.lower().split("запиши заметку", maxsplit=1)[-1].strip() or request
             return ZipperAgentResult(text=self._run_tool(tools, "write_note", text), output_mode="voice")
-        response = self.llm_processor.process_text(
-            request,
-            system_message,
-            context="\n".join(f"{tool.name}: {tool.description}" for tool in tools),
-            max_tokens=500,
-        )
+        try:
+            response = self.llm_processor.process_text(
+                request,
+                system_message,
+                context="\n".join(f"{tool.name}: {tool.description}" for tool in tools),
+                max_tokens=500,
+                keep_loaded=True,
+            )
+        except TypeError:
+            response = self.llm_processor.process_text(
+                request,
+                system_message,
+                context="\n".join(f"{tool.name}: {tool.description}" for tool in tools),
+                max_tokens=500,
+            )
         return ZipperAgentResult(text=response or "Готово.", output_mode="window")
 
     def _run_tool(self, tools: list[ZipperToolSpec], name: str, argument: str) -> str:

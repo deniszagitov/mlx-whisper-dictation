@@ -115,6 +115,8 @@ class FakeLLMProcessor:
         self.performance_mode = None
         self.last_token_usage = 0
         self.download_progress_callback = None
+        self.model_memory_loading_callback = None
+        self.model_name = Config.DEFAULT_LLM_MODEL_NAME
 
     def is_model_cached(self) -> bool:
         """Сообщает, что модель уже доступна локально."""
@@ -124,8 +126,17 @@ class FakeLLMProcessor:
         """Запоминает выбранный режим производительности."""
         self.performance_mode = mode
 
-    def process_text(self, text: str, system_prompt: str, *, context: str | None = None, max_tokens: int | None = None) -> str:
+    def process_text(
+        self,
+        text: str,
+        system_prompt: str,
+        *,
+        context: str | None = None,
+        max_tokens: int | None = None,
+        keep_loaded: bool = False,
+    ) -> str:
         """Возвращает входной текст без изменений."""
+        del keep_loaded
         return text
 
     def change_model(self, model_name: str) -> None:
@@ -135,6 +146,10 @@ class FakeLLMProcessor:
     def ensure_model_downloaded(self) -> None:
         """Заглушка для загрузки модели."""
         return None
+
+    def set_model_memory_loading_callback(self, callback) -> None:
+        """Запоминает callback статуса загрузки модели в память."""
+        self.model_memory_loading_callback = callback
 
 
 class FakeSettingsStore:
@@ -298,6 +313,54 @@ def make_controller(monkeypatch, *, system_integration_service=None):
     )
     controller.display_sleep_release_delay_seconds = 0
     return controller, recorder, transcriber
+
+
+def test_zipper_uses_separate_llm_runtime_for_agent_memory_policy(monkeypatch):
+    """Zipper должен иметь отдельный LLM runtime и не наследовать общий режим выгрузки."""
+    del monkeypatch
+    recorder = FakeRecorder()
+    transcriber = FakeTranscriber()
+    llm_processor = FakeLLMProcessor()
+    zipper_llm_processor = FakeLLMProcessor()
+    settings_store = FakeSettingsStore()
+    launch_config = LaunchConfig.from_sources(
+        model="mlx-community/whisper-large-v3-turbo",
+        language=["ru"],
+        max_time=30,
+        llm_model=Config.DEFAULT_LLM_MODEL_NAME,
+        key_combination="cmd_l+alt",
+        secondary_key_combination=None,
+        llm_key_combination=None,
+    )
+    controller = app_module.DictationApp(
+        recorder=cast("Any", recorder),
+        transcriber=cast("Any", transcriber),
+        llm_processor=cast("Any", llm_processor),
+        launch_config=launch_config,
+        zipper_llm_processor=cast("Any", zipper_llm_processor),
+        clipboard_service=app_module.ClipboardService(read_text=lambda: None, write_text=lambda _text: None),
+        microphone_profiles_service=app_module.MicrophoneProfilesService(load_profiles=lambda: [], save_profiles=lambda _profiles: None),
+        system_integration_service=make_system_integration_service(),
+        input_device_catalog=make_input_device_catalog(),
+        settings_store=cast("Any", settings_store),
+    )
+
+    assert controller.zipper_use_cases.llm_processor is zipper_llm_processor
+    assert llm_processor.performance_mode == Config.PERFORMANCE_MODE_NORMAL
+    assert zipper_llm_processor.performance_mode is None
+    assert llm_processor.model_memory_loading_callback is not None
+    assert zipper_llm_processor.model_memory_loading_callback is not None
+
+    controller.change_performance_mode(Config.PERFORMANCE_MODE_FAST)
+
+    assert llm_processor.performance_mode == Config.PERFORMANCE_MODE_FAST
+    assert zipper_llm_processor.performance_mode is None
+
+    next_model = next(model for model in Config.LLM_MODEL_PRESETS if model != Config.DEFAULT_LLM_MODEL_NAME)
+    controller.change_llm_model(next_model)
+
+    assert llm_processor.model_name == next_model
+    assert zipper_llm_processor.model_name == next_model
 
 
 def test_reader_tts_rate_default_migration_resets_previous_speed_once():
@@ -628,6 +691,36 @@ def test_model_download_progress_updates_snapshot(monkeypatch):
     assert controller.snapshot().model_download_active is False
 
 
+def test_model_memory_loading_updates_status_and_restores_previous_state(monkeypatch):
+    """Загрузка MLX-модели в память должна быть видна в snapshot и не сбивать состояние Zipper."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+    controller.zipper_enabled = True
+    controller.state = Config.STATUS_ZIPPER_PROCESSING
+    states: list[str] = []
+    titles: list[str] = []
+    zipper_statuses: list[str] = []
+
+    def collect_snapshot(snapshot) -> None:
+        states.append(snapshot.state)
+        titles.append(snapshot.model_download_title)
+        zipper_statuses.append(snapshot.zipper_status)
+
+    controller.subscribe(collect_snapshot)
+
+    controller.handle_model_memory_loading(True, "mlx-community/gemma", "VLM-модель")
+
+    assert controller.state == Config.STATUS_MODEL_LOADING
+    assert states[-1] == Config.STATUS_MODEL_LOADING
+    assert titles[-1] == "🧠 VLM-модель: загрузка в память (gemma)"
+    assert zipper_statuses[-1] == "загрузка модели"
+
+    controller.handle_model_memory_loading(False, "mlx-community/gemma", "VLM-модель")
+
+    assert controller.state == Config.STATUS_ZIPPER_PROCESSING
+    assert states[-1] == Config.STATUS_ZIPPER_PROCESSING
+    assert titles[-1] == "📦 Загрузка моделей: нет"
+
+
 def test_download_required_model_uses_common_download_service(monkeypatch):
     """Сигнал runtime-слоя должен запускать общий downloader приложения."""
     notifications: list[tuple[str, str]] = []
@@ -660,6 +753,10 @@ def test_download_required_model_uses_common_download_service(monkeypatch):
     assert download_calls == [("VLM-модель", "mlx-community/gemma")]
     assert controller.snapshot().model_download_active is False
     assert controller.snapshot().model_download_title == "✅ VLM-модель: загружена"
+    assert (
+        "MLX Whisper Dictation",
+        "VLM-модель mlx-community/gemma не найдена локально. Загружаю из Hugging Face…",
+    ) in notifications
     assert ("MLX Whisper Dictation", "VLM-модель загружена. Повторите действие.") in notifications
 
 

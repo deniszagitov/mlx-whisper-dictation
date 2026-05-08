@@ -500,20 +500,26 @@ def main() -> None:
         frontmost_application_info=frontmost_application_info,
     )
     recorder = Recorder()
-    llm_processor = LLMProcessor(
-        args.llm_model,
-        runtime_loader=model_manager.load_llm_runtime_objects,
-        generation_runner=generate_llm_text,
-        model_cache_checker=model_manager.is_model_cached,
-        model_downloader=lambda model_name, progress_callback, label="LLM-модель": model_manager.ensure_model_downloaded(
-            model_name,
-            label=label,
-            progress_callback=progress_callback,
-        ),
-        memory_cleanup=cleanup_llm_runtime_memory,
-        vlm_runtime_loader=model_manager.load_vlm_runtime_objects,
-        vlm_generation_runner=generate_vlm_text,
-    )
+
+    def make_llm_processor() -> LLMProcessor:
+        """Создаёт независимый MLX LLM runtime поверх общего менеджера моделей."""
+        return LLMProcessor(
+            args.llm_model,
+            runtime_loader=model_manager.load_llm_runtime_objects,
+            generation_runner=generate_llm_text,
+            model_cache_checker=model_manager.is_model_cached,
+            model_downloader=lambda model_name, progress_callback, label="LLM-модель": model_manager.ensure_model_downloaded(
+                model_name,
+                label=label,
+                progress_callback=progress_callback,
+            ),
+            memory_cleanup=cleanup_llm_runtime_memory,
+            vlm_runtime_loader=model_manager.load_vlm_runtime_objects,
+            vlm_generation_runner=generate_vlm_text,
+        )
+
+    llm_processor = make_llm_processor()
+    zipper_llm_processor = make_llm_processor()
 
     obsidian_vault_path = defaults.load_str(Config.DEFAULTS_KEY_OBSIDIAN_VAULT, fallback=None) or str(get_default_vault_path())
     obsidian_service = ObsidianService(
@@ -578,7 +584,8 @@ def main() -> None:
         transcriber,
         llm_processor,
         args,
-        app_preferences,
+        zipper_llm_processor=zipper_llm_processor,
+        app_preferences=app_preferences,
         clipboard_service=clipboard_service,
         microphone_profiles_service=microphone_profiles_service,
         obsidian_service=obsidian_service,
@@ -603,7 +610,7 @@ def main() -> None:
             load=zipper_memory_store.load,
             save=zipper_memory_store.save,
         ),
-        zipper_agent_service=ZipperAgentService(invoke=LangChainZipperAgent(llm_processor).invoke),
+        zipper_agent_service=ZipperAgentService(invoke=LangChainZipperAgent(zipper_llm_processor).invoke),
         zipper_text_output=ZipperTextOutputService(
             show_text=zipper_text_output_adapter.show_text,
             confirm=zipper_text_output_adapter.confirm,

@@ -585,7 +585,62 @@ def test_zipper_langchain_e2e_loads_model_once_generates_answer_and_calls_tool()
     assert tool_calls == ["сейчас"]
     assert load_calls == ["fake-agent-model"]
     assert len(generation_prompts) == 2
-    assert cleanup_calls == [True]
+    assert processor._cached_model is not None
+    assert processor.performance_mode == "normal"
+    assert cleanup_calls == []
+
+
+def test_zipper_langchain_keeps_loaded_model_between_agent_invocations():
+    """Zipper не должен выгружать LLM между отдельными голосовыми командами."""
+    load_calls: list[str] = []
+    cleanup_calls: list[bool] = []
+    responses = iter(
+        (
+            "Thought: отвечаю\nFinal Answer: Первый ответ.\noutput_mode: voice",
+            "Thought: отвечаю снова\nFinal Answer: Второй ответ.\noutput_mode: voice",
+        )
+    )
+
+    def load_runtime(model_name: str) -> tuple[object, FakeAgentTokenizer]:
+        load_calls.append(model_name)
+        return object(), FakeAgentTokenizer()
+
+    def generate(_model: object, _tokenizer: FakeAgentTokenizer, _prompt: str, max_tokens: int) -> str:
+        assert max_tokens == 1000
+        return next(responses)
+
+    processor = LlmGateway(
+        "fake-agent-model",
+        runtime_loader=load_runtime,
+        generation_runner=generate,
+        memory_cleanup=lambda: cleanup_calls.append(True),
+    )
+    agent = LangChainZipperAgent(processor)
+    tools = [ZipperToolSpec("current_datetime", "Получить текущие дату и время.", lambda _argument: "2026-05-08")]
+
+    first = agent.invoke(
+        "первая команда",
+        system_message="Ты тестовый Zipper.",
+        memory="",
+        events=(),
+        tools=tools,
+        config=ZipperConfig(),
+    )
+    second = agent.invoke(
+        "вторая команда",
+        system_message="Ты тестовый Zipper.",
+        memory="",
+        events=(),
+        tools=tools,
+        config=ZipperConfig(),
+    )
+
+    assert first == ZipperAgentResult(text="Первый ответ.", output_mode="voice")
+    assert second == ZipperAgentResult(text="Второй ответ.", output_mode="voice")
+    assert load_calls == ["fake-agent-model"]
+    assert processor._cached_model is not None
+    assert processor.performance_mode == "normal"
+    assert cleanup_calls == []
 
 
 def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
@@ -655,7 +710,9 @@ def test_zipper_voice_command_e2e_runs_langchain_model_tool_output_and_memory():
     assert use_case.transcriber.transcribe_to_text_called is True
     assert load_calls == ["fake-agent-model"]
     assert len(generation_prompts) == 2
-    assert cleanup_calls == [True]
+    assert processor._cached_model is not None
+    assert processor.performance_mode == "normal"
+    assert cleanup_calls == []
     assert text_output.messages[-1] == ("Zipper", "Сейчас 2026-05-08.")
 
     event_kinds = [event.kind for event in text_output.events]

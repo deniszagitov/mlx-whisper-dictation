@@ -191,7 +191,12 @@ class ZipperUseCases:
             self._show_error("LLM-процессор не инициализирован.")
             return
         if not self.llm_processor.is_model_cached():
-            message = "LLM-модель ещё не скачана. Запускаю загрузку; после завершения нажмите хоткей Zipper ещё раз."
+            raw_model_name = getattr(self.llm_processor, "model_name", None)
+            model_fragment = f" {raw_model_name}" if raw_model_name else ""
+            message = (
+                f"LLM-модель{model_fragment} ещё не скачана из Hugging Face. "
+                "Запускаю загрузку; после завершения нажмите хоткей Zipper ещё раз."
+            )
             download = getattr(self.runtime, "download_llm_model", None)
             if callable(download):
                 LOGGER.info("🧷 Zipper запускает загрузку LLM-модели перед записью")
@@ -509,12 +514,21 @@ class ZipperUseCases:
             "и полезные выводы. Не дублируй уже известную память."
         )
         try:
-            summary = self.llm_processor.process_text(
-                events_text,
-                prompt,
-                context=snapshot.memory or None,
-                max_tokens=1000,
-            ).strip()
+            try:
+                summary = self.llm_processor.process_text(
+                    events_text,
+                    prompt,
+                    context=snapshot.memory or None,
+                    max_tokens=1000,
+                    keep_loaded=True,
+                ).strip()
+            except TypeError:
+                summary = self.llm_processor.process_text(
+                    events_text,
+                    prompt,
+                    context=snapshot.memory or None,
+                    max_tokens=1000,
+                ).strip()
         except Exception:
             LOGGER.exception("🧷 Не удалось суммаризовать контекст Zipper")
             return

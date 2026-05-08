@@ -22,12 +22,14 @@ class SettingsUseCases:
         llm_processor: Any,
         system_integration_service: Any,
         publish_snapshot: Any,
+        zipper_llm_processor: Any = None,
     ) -> None:
         self.runtime = runtime
         self.settings_store = settings_store
         self.recorder = recorder
         self.transcriber = transcriber
         self.llm_processor = llm_processor
+        self.zipper_llm_processor = zipper_llm_processor
         self.system_integration_service = system_integration_service
         self.publish_snapshot = publish_snapshot
 
@@ -319,13 +321,15 @@ class SettingsUseCases:
         """Переключает LLM-модель."""
         if model_name not in self.runtime.llm_model_options:
             return
-        if self.llm_processor is None:
+        processors = self._llm_processors()
+        if not processors:
             return
-        current_model = getattr(self.llm_processor, "model_name", None)
-        if model_name == current_model:
+        if all(getattr(processor, "model_name", None) == model_name for processor in processors):
             return
 
-        self.llm_processor.change_model(model_name)
+        for processor in processors:
+            if getattr(processor, "model_name", None) != model_name:
+                processor.change_model(model_name)
         self.runtime.llm_model_name = model_name.rsplit("/", maxsplit=1)[-1]
         self.settings_store.save_str(Config.DEFAULTS_KEY_LLM_MODEL, model_name)
         LOGGER.info("🤖 LLM-модель переключена: %s", model_name)
@@ -339,3 +343,13 @@ class SettingsUseCases:
         """Удаляет просроченную историю, если transcriber поддерживает это."""
         if hasattr(self.transcriber, "prune_expired_history"):
             self.transcriber.prune_expired_history()
+
+    def _llm_processors(self) -> tuple[Any, ...]:
+        """Возвращает уникальные LLM runtime, которые следуют выбранной модели."""
+        processors: list[Any] = []
+        for processor in (self.llm_processor, self.zipper_llm_processor):
+            if processor is not None and any(processor is existing for existing in processors):
+                continue
+            if processor is not None:
+                processors.append(processor)
+        return tuple(processors)

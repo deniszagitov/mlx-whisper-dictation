@@ -211,6 +211,12 @@ class LlmPipelineUseCases:
         LOGGER.info("📥 Запускаю загрузку LLM-модели")
         self.runtime.llm_downloading = True
         self.runtime.llm_download_title = "📥 Загрузка LLM: 0%"
+        raw_model_name = getattr(llm_proc, "model_name", None)
+        model_fragment = f" {raw_model_name}" if raw_model_name else ""
+        self.runtime.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            f"LLM-модель{model_fragment} не найдена локально. Загружаю из Hugging Face…",
+        )
         self.publish_snapshot()
 
         def on_progress(

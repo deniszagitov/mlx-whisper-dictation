@@ -76,6 +76,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self._microphone_profile_titles: dict[str, MicrophoneProfile] = {}
         self._delete_microphone_profile_titles: dict[str, MicrophoneProfile] = {}
         self._last_snapshot: AppSnapshot | None = None
+        self._model_loading_pulse = False
 
         self.status_item = rumps.MenuItem(f"🔄 Статус: {self._state_label()}")
         self.model_item = rumps.MenuItem(f"🧠 Модель: {self.model_name}")
@@ -740,6 +741,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             Config.STATUS_TRANSCRIBING: "распознавание",
             Config.STATUS_LLM_PROCESSING: "обработка LLM",
             Config.STATUS_ZIPPER_PROCESSING: "обработка Zipper",
+            Config.STATUS_MODEL_LOADING: "загрузка модели в память",
         }
         return labels.get(self.state, "неизвестно")
 
@@ -987,6 +989,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             return
         if self.state == Config.STATUS_ZIPPER_PROCESSING:
             self.title = "🧷"
+            return
+        if self.state == Config.STATUS_MODEL_LOADING:
+            self._model_loading_pulse = not self._model_loading_pulse
+            self.title = "💾" if self._model_loading_pulse else "🧠"
             return
         self.title = "⏯"
 

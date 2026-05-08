@@ -109,7 +109,12 @@ class LlmGateway:
         self._model_cache_checker = model_cache_checker
         self._model_downloader = model_downloader
         self._memory_cleanup = memory_cleanup
+        self._model_memory_loading_callback: Callable[[bool, str, str], None] | None = None
         self._apply_backend_for_model(model_name)
+
+    def set_model_memory_loading_callback(self, callback: Callable[[bool, str, str], None] | None) -> None:
+        """Назначает callback статуса загрузки LLM/VLM в память."""
+        self._model_memory_loading_callback = callback
 
     def _apply_backend_for_model(self, model_name: str) -> None:
         """Выбирает правильный backend (LM или VLM) для модели."""
@@ -137,10 +142,24 @@ class LlmGateway:
             raise RuntimeError("LLM runtime не настроен")
 
         LOGGER.info("🤖 Загрузка LLM: %s", self.model_name)
-        model, tokenizer = self._runtime_loader(self.model_name)
-        self._cached_model = model
-        self._cached_tokenizer = tokenizer
-        return model, tokenizer
+        self._emit_model_memory_loading(True)
+        try:
+            model, tokenizer = self._runtime_loader(self.model_name)
+            self._cached_model = model
+            self._cached_tokenizer = tokenizer
+            return model, tokenizer
+        finally:
+            self._emit_model_memory_loading(False)
+
+    def _emit_model_memory_loading(self, active: bool) -> None:
+        """Сообщает управляющему слою, что MLX загружает модель в память."""
+        callback = self._model_memory_loading_callback
+        if callback is None:
+            return
+        try:
+            callback(active, self.model_name, self.model_download_label())
+        except Exception:
+            LOGGER.exception("⚠️ Ошибка callback статуса загрузки LLM в память")
 
     def change_model(self, model_name: str) -> None:
         """Переключает LLM-модель и автоматически выбирает backend."""
@@ -210,6 +229,7 @@ class LlmGateway:
         context: str | None = None,
         max_tokens: int | None = None,
         sanitize: bool = True,
+        keep_loaded: bool = False,
     ) -> str:
         """Отправляет текст в LLM и возвращает очищенный ответ."""
         effective_max_tokens = max_tokens if max_tokens is not None else Config.LLM_MAX_TOKENS
@@ -249,7 +269,9 @@ class LlmGateway:
             LOGGER.info("🤖 Очищенный ответ LLM: длина=%d, текст=%r", len(response), response)
             return response.strip()
         finally:
-            if self.performance_mode == PERFORMANCE_MODE_FAST:
+            if keep_loaded:
+                LOGGER.info("🤖 LLM остаётся в памяти для Zipper")
+            elif self.performance_mode == PERFORMANCE_MODE_FAST:
                 LOGGER.info("🤖 LLM остаётся в памяти для быстрого режима")
             else:
                 self._unload_cached_model()

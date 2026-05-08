@@ -78,6 +78,7 @@ class FakeLLMProcessor:
         """Инициализирует фейковый LLM-процессор."""
         self._cached = cached
         self.performance_mode = None
+        self.model_name = Config.DEFAULT_LLM_MODEL_NAME
 
     def is_model_cached(self):
         """Проверяет наличие модели."""
@@ -86,6 +87,10 @@ class FakeLLMProcessor:
     def set_performance_mode(self, mode):
         """Сохраняет режим производительности."""
         self.performance_mode = mode
+
+    def change_model(self, model_name):
+        """Запоминает выбранную LLM-модель."""
+        self.model_name = model_name
 
 
 class FakeSettingsStore:
@@ -904,6 +909,19 @@ class TestStatusBarDisplay:
         app, *_ = make_app(languages=["ru"])
         app.state = Config.STATUS_TRANSCRIBING
         app._refresh_title_and_status()
+        assert app.title == "🧠"
+
+    def test_model_loading_title_blinks_and_status_is_explicit(self, make_app, patched_app_module):
+        """Во время загрузки MLX-модели в память menu bar показывает отдельный мигающий статус."""
+        app, *_ = make_app(languages=["ru"])
+        app.state = Config.STATUS_MODEL_LOADING
+
+        app._refresh_title_and_status()
+        first_title = app.title
+        app._refresh_title_and_status()
+
+        assert app._state_label() == "загрузка модели в память"
+        assert first_title == "💾"
         assert app.title == "🧠"
 
     def test_idle_title_shows_pause(self, make_app, patched_app_module):

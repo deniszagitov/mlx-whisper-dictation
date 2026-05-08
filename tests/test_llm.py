@@ -88,6 +88,34 @@ def test_normal_mode_unloads_model_after_generation():
     assert cleanup_calls == [True]
 
 
+def test_keep_loaded_retains_model_without_switching_mode():
+    """Разовый вызов Zipper должен удерживать модель без смены режима работы."""
+    load_calls: list[str] = []
+    cleanup_calls: list[bool] = []
+    processor = make_processor(load_calls=load_calls, cleanup_calls=cleanup_calls)
+
+    assert processor.process_text("текст", "система", keep_loaded=True) == "готово"
+
+    assert processor.performance_mode == "normal"
+    assert load_calls == ["fake-model"]
+    assert processor._cached_model is not None
+    assert cleanup_calls == []
+
+
+def test_process_text_reports_model_memory_loading_status():
+    """Gateway должен публиковать начало и конец синхронной загрузки модели в память."""
+    events: list[tuple[bool, str, str]] = []
+    processor = make_processor()
+    processor.set_model_memory_loading_callback(lambda active, model_name, label: events.append((active, model_name, label)))
+
+    assert processor.process_text("текст", "система") == "готово"
+
+    assert events == [
+        (True, "fake-model", "LLM-модель"),
+        (False, "fake-model", "LLM-модель"),
+    ]
+
+
 def test_strip_think_blocks_removes_reasoning_tags():
     """think-блоки должны полностью вырезаться из ответа."""
     assert llm_processing.strip_think_blocks("<think>скрыто</think>готово") == "готово"

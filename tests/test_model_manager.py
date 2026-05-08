@@ -338,13 +338,41 @@ def test_model_manager_passes_local_snapshot_paths_to_runtime_loaders(monkeypatc
     ]
 
 
-def test_model_manager_runtime_load_raises_model_required_before_download() -> None:
-    """Runtime loader не должен сам начинать сетевую загрузку модели."""
+def test_model_manager_runtime_load_uses_cached_hf_snapshot_without_download() -> None:
+    """Runtime loader должен синхронно грузить модель из локального HF cache без сетевой загрузки."""
     download_calls: list[str] = []
+    load_calls: list[str] = []
 
     class FakeDownloader:
         def is_model_cached(self, _model_name: str) -> bool:
             return True
+
+        def get_local_model_path(self, model_name: str) -> str:
+            return f"/tmp/hf-cache/{model_name.replace('/', '--')}"
+
+        def ensure_downloaded(self, model_name: str, *, label: str, progress_callback: Any = None) -> None:
+            del label, progress_callback
+            download_calls.append(model_name)
+
+    def fake_loader(model_name: str) -> tuple[object, object]:
+        load_calls.append(model_name)
+        return object(), object()
+
+    manager = ModelManager(downloader=FakeDownloader(), lm_loader=fake_loader)
+
+    manager.load_llm_runtime_objects("mlx-community/partial-llm")
+
+    assert download_calls == []
+    assert load_calls == ["/tmp/hf-cache/mlx-community--partial-llm"]
+
+
+def test_model_manager_runtime_load_raises_model_required_when_hf_cache_missing() -> None:
+    """Runtime loader не должен сам начинать сетевую загрузку модели, если HF cache пуст."""
+    download_calls: list[str] = []
+
+    class FakeDownloader:
+        def is_model_cached(self, _model_name: str) -> bool:
+            return False
 
         def ensure_downloaded(self, model_name: str, *, label: str, progress_callback: Any = None) -> None:
             del label, progress_callback

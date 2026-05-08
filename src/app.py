@@ -547,6 +547,7 @@ class DictationApp:
         transcriber: TranscriptionUseCases,
         llm_processor: LlmGatewayProtocol | None,
         launch_config: LaunchConfig,
+        zipper_llm_processor: LlmGatewayProtocol | None = None,
         app_preferences: AppPreferences | None = None,
         clipboard_service: ClipboardService | None = None,
         microphone_profiles_service: MicrophoneProfilesService | None = None,
@@ -578,6 +579,7 @@ class DictationApp:
         self.recorder = recorder
         self.transcriber = transcriber
         self.llm_processor = llm_processor
+        self.zipper_llm_processor = zipper_llm_processor or llm_processor
         self.launch_config = launch_config
         self.app_preferences = app_preferences or AppPreferences.from_store(self.settings_store)
         self._migrate_reader_tts_rate_default()
@@ -693,6 +695,8 @@ class DictationApp:
         self._llm_downloading = False
         self._model_download_active = False
         self._model_download_title = "📦 Загрузка моделей: нет"
+        self._model_memory_loading_count = 0
+        self._state_before_model_memory_loading: str | None = None
         self._preferred_input_device_unavailable = False
         self._preferred_input_device_notified = False
         self._display_sleep_prevention_active = False
@@ -719,6 +723,7 @@ class DictationApp:
             recorder=self.recorder,
             transcriber=self.transcriber,
             llm_processor=self.llm_processor,
+            zipper_llm_processor=self.zipper_llm_processor,
             system_integration_service=self.system_integration_service,
             publish_snapshot=self._notify_subscribers,
         )
@@ -761,7 +766,7 @@ class DictationApp:
             runtime=self,
             recorder=self.recorder,
             transcriber=self.transcriber,
-            llm_processor=self.llm_processor,
+            llm_processor=self.zipper_llm_processor,
             config_provider=self.zipper_config_provider,
             memory_store=self.zipper_memory_store,
             agent_service=self.zipper_agent_service,
@@ -805,6 +810,13 @@ class DictationApp:
             self.recorder.set_runtime_error_callback(self.handle_recording_runtime_error)
         if self.llm_processor is not None:
             self.llm_processor.set_performance_mode(self.performance_mode)
+            set_memory_loading_callback = getattr(self.llm_processor, "set_model_memory_loading_callback", None)
+            if callable(set_memory_loading_callback):
+                set_memory_loading_callback(self.handle_model_memory_loading)
+        if self.zipper_llm_processor is not None and self.zipper_llm_processor is not self.llm_processor:
+            set_memory_loading_callback = getattr(self.zipper_llm_processor, "set_model_memory_loading_callback", None)
+            if callable(set_memory_loading_callback):
+                set_memory_loading_callback(self.handle_model_memory_loading)
         self.recorder.set_status_callback(self.set_state)
         self.recorder.set_permission_callback(self.set_permission_status)
         self.transcriber.history_callback = self._notify_subscribers
@@ -1308,6 +1320,8 @@ class DictationApp:
             return "выключен"
         if self.zipper_recording_active:
             return "запись"
+        if self.state == Config.STATUS_MODEL_LOADING:
+            return "загрузка модели"
         if self.state == Config.STATUS_ZIPPER_PROCESSING:
             return "обработка"
         return "ожидание"
@@ -1351,6 +1365,32 @@ class DictationApp:
         self._model_download_title = format_model_download_title(progress)
         self._notify_subscribers()
 
+    def handle_model_memory_loading(self, active: bool, model_name: str, label: str) -> None:
+        """Показывает в menu bar синхронную загрузку MLX-модели в память."""
+        if active:
+            if self._model_memory_loading_count == 0:
+                self._state_before_model_memory_loading = self.state
+            self._model_memory_loading_count += 1
+            short_name = model_name.rsplit("/", maxsplit=1)[-1]
+            LOGGER.info("🧠 %s загружается в память: %s", label, model_name)
+            self.state = Config.STATUS_MODEL_LOADING
+            self._model_download_title = f"🧠 {label}: загрузка в память ({short_name})"
+            self._notify_subscribers()
+            return
+
+        if self._model_memory_loading_count > 0:
+            self._model_memory_loading_count -= 1
+        if self._model_memory_loading_count > 0:
+            return
+
+        previous_state = self._state_before_model_memory_loading or Config.STATUS_IDLE
+        self._state_before_model_memory_loading = None
+        if self.state == Config.STATUS_MODEL_LOADING:
+            self.state = previous_state if previous_state != Config.STATUS_MODEL_LOADING else Config.STATUS_IDLE
+        LOGGER.info("🧠 Загрузка модели в память завершена: label=%s, model=%s", label, model_name)
+        self._model_download_title = "📦 Загрузка моделей: нет" if not self._model_download_active else self._model_download_title
+        self._notify_subscribers()
+
     def download_required_model(self, requirement: ModelRequiredError) -> None:
         """Запускает общую загрузку модели по сигналу runtime-слоя."""
         self.download_model(requirement.model_name, label=requirement.label)
@@ -1364,6 +1404,10 @@ class DictationApp:
         LOGGER.info("📥 Запускаю общую загрузку модели: label=%s, model=%s", label, model_name)
         self._model_download_active = True
         self._model_download_title = f"📥 {label}: подготовка"
+        self.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            f"{label} {model_name} не найдена локально. Загружаю из Hugging Face…",
+        )
         self._notify_subscribers()
 
         def run() -> None:
