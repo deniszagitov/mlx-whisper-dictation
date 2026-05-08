@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from src.domain.constants import Config
+from src.domain.model_downloads import ModelRequiredError
 from src.use_cases import llm_pipeline as llm_pipeline_module
 from src.use_cases.llm_pipeline import LlmPipelineUseCases
 
@@ -61,12 +62,14 @@ class FakeLlmProcessor:
         token_usage: int = 11,
         process_error: Exception | None = None,
         download_error: Exception | None = None,
+        download_warning: str | None = None,
     ) -> None:
         self.cached = cached
         self.response = response
         self.last_token_usage = token_usage
         self.process_error = process_error
         self.download_error = download_error
+        self.download_warning = download_warning
         self.process_calls: list[tuple[str, str, str | None]] = []
         self.download_progress_callback = None
 
@@ -88,7 +91,7 @@ class FakeLlmProcessor:
     def ensure_model_downloaded(self) -> None:
         """Эмулирует загрузку модели с callback прогресса."""
         if self.download_progress_callback is not None:
-            self.download_progress_callback("weights", 25.0, 50 * 1024 * 1024, 5 * 1024 * 1024, 8)
+            self.download_progress_callback("weights", 25.0, 50 * 1024 * 1024, 5 * 1024 * 1024, 8, self.download_warning)
             self.download_progress_callback("", Config.DOWNLOAD_COMPLETE_PCT, 0)
         if self.download_error is not None:
             raise self.download_error
@@ -339,6 +342,37 @@ def test_toggle_llm_falls_back_to_clipboard_on_processing_error() -> None:
     assert ("MLX Whisper Dictation", "Ошибка LLM. Текст сохранён в буфер обмена.") in notifications
 
 
+def test_toggle_llm_downloads_required_model_outside_processing_context() -> None:
+    """Если runtime сообщил о модели, загрузка стартует управляющим кодом."""
+    notifications: list[tuple[str, str]] = []
+    overlay = FakeOverlay()
+    runtime = make_runtime(overlay=overlay, notifications=notifications)
+    downloads: list[tuple[str, str]] = []
+    runtime.download_required_model = lambda requirement: downloads.append((requirement.label, requirement.model_name))
+    recorder = FakeRecorder()
+    transcriber = FakeTranscriber("исходный текст")
+    llm_processor = FakeLlmProcessor(process_error=ModelRequiredError("mlx-community/gemma", label="VLM-модель"))
+    clipboard = FakeClipboardService("контекст")
+
+    use_cases, recorder, transcriber, clipboard = make_use_cases(
+        runtime=runtime,
+        recorder=recorder,
+        transcriber=transcriber,
+        llm_processor=llm_processor,
+        clipboard=clipboard,
+    )
+
+    use_cases.toggle_llm()
+    assert recorder.on_audio_ready is not None
+    recorder.on_audio_ready(object(), "ru", lambda _status: None, lambda: True)
+
+    assert downloads == [("VLM-модель", "mlx-community/gemma")]
+    assert clipboard.writes == ["исходный текст"]
+    assert transcriber.history == ["исходный текст"]
+    message = "VLM-модель ещё не готова. Запускаю загрузку; исходный текст сохранён в буфер обмена."
+    assert ("MLX Whisper Dictation", message) in notifications
+
+
 def test_download_llm_model_updates_progress_and_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Загрузка модели должна публиковать прогресс и сбрасывать runtime-флаг."""
     notifications: list[tuple[str, str]] = []
@@ -401,3 +435,28 @@ def test_download_llm_model_reports_failure(monkeypatch: pytest.MonkeyPatch) -> 
     assert runtime.llm_download_title == "❌ Ошибка загрузки LLM"
     assert llm_processor.download_progress_callback is None
     assert ("MLX Whisper Dictation", "Не удалось скачать LLM-модель. Попробуйте снова.") in notifications
+
+
+def test_download_llm_model_shows_warning_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Legacy LLM-пункт меню должен показывать предупреждение downloader-а."""
+    notifications: list[tuple[str, str]] = []
+    published: list[str] = []
+    runtime = make_runtime(overlay=FakeOverlay(), notifications=notifications)
+    llm_processor = FakeLlmProcessor(download_warning="слишком медленно: ниже 2 МБ/с")
+
+    class ImmediateThread:
+        """Поток, немедленно выполняющий target в тесте."""
+
+        def __init__(self, *, target: Any, daemon: bool) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+    monkeypatch.setattr(llm_pipeline_module.threading, "Thread", ImmediateThread)
+    use_cases, _, _, _ = make_use_cases(runtime=runtime, llm_processor=llm_processor, published_titles=published)
+
+    use_cases.download_llm_model()
+
+    assert any(title.startswith("⚠️ Загрузка LLM") and "слишком медленно" in title for title in published)

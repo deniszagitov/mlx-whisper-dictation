@@ -22,7 +22,7 @@ from .domain.audio import (
     microphone_menu_title as format_microphone_menu_title,
 )
 from .domain.constants import Config
-from .domain.model_downloads import ModelDownloadProgress, format_model_download_title
+from .domain.model_downloads import ModelDownloadProgress, ModelRequiredError, format_model_download_title
 from .domain.reader_constants import DEFAULT_TTS_RATE_MULTIPLIER
 from .domain.reader_types import (
     ClipboardContent,
@@ -108,6 +108,13 @@ class SystemDiagnosticsService:
     """Concrete bundle для расширенной диагностики macOS runtime."""
 
     capture: Callable[[str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelDownloadService:
+    """Concrete bundle единой загрузки локальных моделей."""
+
+    ensure_downloaded: Callable[[str, str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +273,11 @@ def _null_display_sleep_prevention_release() -> None:
 
 def _null_system_diagnostics_capture(_label: str) -> None:
     """Игнорирует сбор системной диагностики в headless-сценариях."""
+    return None
+
+
+def _null_model_download(_model_name: str, _label: str) -> None:
+    """Игнорирует загрузку модели в headless-сценариях."""
     return None
 
 
@@ -542,6 +554,7 @@ class DictationApp:
         system_integration_service: SystemIntegrationService | None = None,
         display_sleep_prevention_service: DisplaySleepPreventionService | None = None,
         system_diagnostics_service: SystemDiagnosticsService | None = None,
+        model_download_service: ModelDownloadService | None = None,
         input_device_catalog: InputDeviceCatalogService | None = None,
         hotkey_capture_service: HotkeyCaptureService | None = None,
         hotkey_listener_factory: HotkeyListenerFactoryService | None = None,
@@ -598,6 +611,7 @@ class DictationApp:
         self.system_diagnostics_service = system_diagnostics_service or SystemDiagnosticsService(
             capture=_null_system_diagnostics_capture,
         )
+        self.model_download_service = model_download_service or ModelDownloadService(ensure_downloaded=_null_model_download)
         self.input_device_catalog = input_device_catalog or InputDeviceCatalogService(list_input_devices=_empty_input_devices)
         self.hotkey_capture_service = hotkey_capture_service or HotkeyCaptureService(capture_combination=_noop_capture_combination)
         self.hotkey_listener_factory = hotkey_listener_factory or HotkeyListenerFactoryService(
@@ -685,6 +699,7 @@ class DictationApp:
         self._display_sleep_release_timer: threading.Timer | None = None
         self.display_sleep_release_delay_seconds = Config.DISPLAY_SLEEP_RELEASE_GRACE_SECONDS
         self._reader_worker: threading.Thread | None = None
+        self._model_download_worker: threading.Thread | None = None
 
         llm_cached = self.llm_processor.is_model_cached() if self.llm_processor is not None else False
         self._llm_download_title = "✅ LLM-модель загружена" if llm_cached else "📥 Скачать LLM-модель…"
@@ -1335,6 +1350,46 @@ class DictationApp:
         self._model_download_active = not (progress.complete or progress.failed)
         self._model_download_title = format_model_download_title(progress)
         self._notify_subscribers()
+
+    def download_required_model(self, requirement: ModelRequiredError) -> None:
+        """Запускает общую загрузку модели по сигналу runtime-слоя."""
+        self.download_model(requirement.model_name, label=requirement.label)
+
+    def download_model(self, model_name: str, *, label: str) -> None:
+        """Запускает фоновую загрузку модели через единый downloader приложения."""
+        if self._model_download_worker is not None and self._model_download_worker.is_alive():
+            self.system_integration_service.notify("MLX Whisper Dictation", "Загрузка модели уже выполняется.")
+            return
+
+        LOGGER.info("📥 Запускаю общую загрузку модели: label=%s, model=%s", label, model_name)
+        self._model_download_active = True
+        self._model_download_title = f"📥 {label}: подготовка"
+        self._notify_subscribers()
+
+        def run() -> None:
+            try:
+                self.model_download_service.ensure_downloaded(model_name, label)
+            except Exception:
+                LOGGER.exception("❌ Ошибка общей загрузки модели: label=%s, model=%s", label, model_name)
+                self._model_download_active = False
+                self._model_download_title = f"❌ {label}: ошибка загрузки"
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    f"Не удалось скачать модель: {label}. Попробуйте снова.",
+                )
+            else:
+                self._model_download_active = False
+                self._model_download_title = f"✅ {label}: загружена"
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    f"{label} загружена. Повторите действие.",
+                )
+            finally:
+                self._notify_subscribers()
+
+        thread = threading.Thread(target=run, daemon=True)
+        self._model_download_worker = thread
+        thread.start()
 
     def subscribe(self, callback: Callable[[AppSnapshot], None]) -> None:
         """Подписывает UI или тесты на обновления snapshot."""
@@ -2024,6 +2079,13 @@ class DictationApp:
                 self.state = Config.STATUS_LLM_PROCESSING
                 self._notify_subscribers()
                 target()
+            except ModelRequiredError as error:
+                LOGGER.warning("📥 Reader запросил загрузку модели: label=%s, model=%s", error.label, error.model_name)
+                self.download_required_model(error)
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    f"{error.label} ещё не готова. Запускаю загрузку; после завершения повторите reader-сценарий.",
+                )
             except Exception:
                 LOGGER.exception("❌ Ошибка reader-сценария: %s", label)
                 self.system_integration_service.notify("MLX Whisper Dictation", "Ошибка reader. Подробности в логе.")

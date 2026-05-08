@@ -13,7 +13,8 @@ def test_progress_tqdm_compatible_with_ensure_lock(monkeypatch):
     tqdm_cls_holder = []
     progress_events = []
 
-    def fake_snapshot_download(_model_name, tqdm_class=None):
+    def fake_snapshot_download(_model_name, max_workers=None, tqdm_class=None):
+        assert max_workers == 4
         tqdm_cls_holder.append(tqdm_class)
 
     monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)

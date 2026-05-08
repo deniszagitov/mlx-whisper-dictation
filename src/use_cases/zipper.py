@@ -11,6 +11,7 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from ..domain.constants import Config
+from ..domain.model_downloads import ModelRequiredError
 from ..domain.zipper import (
     ZipperAgentResult,
     ZipperConfig,
@@ -315,6 +316,12 @@ class ZipperUseCases:
                 self._publish_result(result)
             self._append_context_events()
             self._summarize_context_if_needed()
+        except ModelRequiredError as error:
+            LOGGER.warning("📥 Zipper запросил загрузку модели: label=%s, model=%s", error.label, error.model_name)
+            self._download_required_model(error)
+            message = f"{error.label} ещё не готова. Запускаю загрузку; после завершения повторите команду Zipper."
+            self._event("model_download_required", message, {"model": error.model_name, "label": error.label})
+            self._show_error(message)
         except Exception as error:
             LOGGER.exception("❌ Ошибка Zipper")
             self._event("error", "Ошибка Zipper", {"error": str(error)})
@@ -327,6 +334,16 @@ class ZipperUseCases:
             self.runtime.state = Config.STATUS_IDLE
         _release_display_sleep(self.runtime)
         self.publish_snapshot()
+
+    def _download_required_model(self, requirement: ModelRequiredError) -> None:
+        """Делегирует загрузку модели управляющему runtime вне контекста агента."""
+        download_required = getattr(self.runtime, "download_required_model", None)
+        if callable(download_required):
+            download_required(requirement)
+            return
+        download_llm = getattr(self.runtime, "download_llm_model", None)
+        if callable(download_llm):
+            download_llm()
 
     def _load_config(self) -> ZipperConfig:
         try:

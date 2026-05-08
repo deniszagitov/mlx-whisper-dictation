@@ -22,8 +22,18 @@ class ModelDownloadProgress:
     percent: float = 0.0
     speed_bytes_per_second: float | None = None
     eta_seconds: float | None = None
+    warning: str | None = None
     complete: bool = False
     failed: bool = False
+
+
+class ModelRequiredError(RuntimeError):
+    """Сигнал runtime-слоя: модель нужно скачать вне текущего контекста."""
+
+    def __init__(self, model_name: str, *, label: str) -> None:
+        self.model_name = model_name
+        self.label = label
+        super().__init__(f"{label} не готова к локальному запуску: {model_name}")
 
 
 def format_bytes(value: float | int) -> str:
@@ -71,15 +81,18 @@ def format_model_download_metrics(
 def format_model_download_title(progress: ModelDownloadProgress) -> str:
     """Возвращает пользовательскую строку прогресса загрузки модели."""
     if progress.failed:
-        return f"❌ {progress.label}: ошибка загрузки"
+        details = f": {progress.warning}" if progress.warning else " загрузки"
+        return f"❌ {progress.label}: ошибка{details}"
     if progress.complete or progress.percent >= Config.DOWNLOAD_COMPLETE_PCT:
         return f"✅ {progress.label}: загружена"
 
     metrics = format_model_download_metrics(progress.speed_bytes_per_second, progress.eta_seconds)
     suffix = f" · {metrics}" if metrics else ""
+    prefix = "⚠️" if progress.warning else "📥"
+    warning = f" · {progress.warning}" if progress.warning else ""
     if progress.total_bytes > 0:
         loaded = format_bytes(progress.downloaded_bytes)
         total = format_bytes(progress.total_bytes)
-        return f"📥 {progress.label}: {progress.percent:.0f}% ({loaded}/{total}){suffix}"
+        return f"{prefix} {progress.label}: {progress.percent:.0f}% ({loaded}/{total}){warning}{suffix}"
     stage = progress.stage.strip() or "подготовка"
-    return f"📥 {progress.label}: {stage}{suffix}"
+    return f"{prefix} {progress.label}: {stage}{warning}{suffix}"

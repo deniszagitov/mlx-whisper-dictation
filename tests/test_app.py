@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import src.app as app_module
 from src.domain.constants import Config
-from src.domain.model_downloads import ModelDownloadProgress
+from src.domain.model_downloads import ModelDownloadProgress, ModelRequiredError
 from src.domain.types import LaunchConfig
 
 
@@ -626,6 +626,78 @@ def test_model_download_progress_updates_snapshot(monkeypatch):
     )
 
     assert controller.snapshot().model_download_active is False
+
+
+def test_download_required_model_uses_common_download_service(monkeypatch):
+    """Сигнал runtime-слоя должен запускать общий downloader приложения."""
+    notifications: list[tuple[str, str]] = []
+    controller, _recorder, _transcriber = make_controller(
+        monkeypatch,
+        system_integration_service=make_system_integration_service(notifications=notifications),
+    )
+    download_calls: list[tuple[str, str]] = []
+    controller.model_download_service = app_module.ModelDownloadService(
+        ensure_downloaded=lambda model_name, label: download_calls.append((label, model_name)),
+    )
+
+    class ImmediateThread:
+        """Поток, немедленно выполняющий target в тесте."""
+
+        def __init__(self, *, target: Any, daemon: bool) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+        def is_alive(self) -> bool:
+            return False
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+
+    controller.download_required_model(ModelRequiredError("mlx-community/gemma", label="VLM-модель"))
+
+    assert download_calls == [("VLM-модель", "mlx-community/gemma")]
+    assert controller.snapshot().model_download_active is False
+    assert controller.snapshot().model_download_title == "✅ VLM-модель: загружена"
+    assert ("MLX Whisper Dictation", "VLM-модель загружена. Повторите действие.") in notifications
+
+
+def test_reader_worker_downloads_required_model_from_tts(monkeypatch):
+    """Reader должен отдавать загрузку MLX TTS-модели общему downloader-у."""
+    notifications: list[tuple[str, str]] = []
+    controller, _recorder, _transcriber = make_controller(
+        monkeypatch,
+        system_integration_service=make_system_integration_service(notifications=notifications),
+    )
+    download_calls: list[tuple[str, str]] = []
+    controller.model_download_service = app_module.ModelDownloadService(
+        ensure_downloaded=lambda model_name, label: download_calls.append((label, model_name)),
+    )
+
+    class ImmediateThread:
+        """Поток, немедленно выполняющий target в тесте."""
+
+        def __init__(self, *, target: Any, daemon: bool) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+        def is_alive(self) -> bool:
+            return False
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+
+    controller._start_reader_worker(
+        "tts",
+        lambda: (_ for _ in ()).throw(ModelRequiredError("mlx-community/Qwen3-TTS", label="TTS-модель")),
+    )
+
+    assert download_calls == [("TTS-модель", "mlx-community/Qwen3-TTS")]
+    message = "TTS-модель ещё не готова. Запускаю загрузку; после завершения повторите reader-сценарий."
+    assert ("MLX Whisper Dictation", message) in notifications
 
 
 def test_subscribe_receives_state_transitions(monkeypatch):

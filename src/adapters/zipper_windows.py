@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import AppKit
 from PyObjCTools.AppHelper import callAfter  # type: ignore[import-untyped]
 
+from ..domain.model_downloads import ModelRequiredError
 from ..domain.reader_types import TTSConfig
 
 if TYPE_CHECKING:
@@ -147,5 +148,7 @@ class ZipperVoiceOutput:
         try:
             config = self.config_factory() if self.config_factory is not None else TTSConfig.from_values(rate_multiplier=1.0, voice_id=None)
             self.speaker.speak(text, config)
+        except ModelRequiredError:
+            raise
         except Exception:
             LOGGER.exception("🧷 Не удалось озвучить ответ Zipper")

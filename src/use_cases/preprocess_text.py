@@ -6,6 +6,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from ..domain.model_downloads import ModelRequiredError
 from ..domain.reader_constants import (
     READER_CLIPBOARD_CHAR_LIMIT,
     RSVP_PREPROCESS_MAX_TOKENS,
@@ -139,6 +140,9 @@ class PreprocessTextUseCase:
         if enabled and self.llm_processor is not None and self.llm_processor.is_model_cached():
             try:
                 text_for_model = self._run_llm(text_for_model, mode)
+            except ModelRequiredError:
+                LOGGER.warning("📥 LLM-предобработка reader запросила загрузку модели", exc_info=True)
+                raise
             except Exception:
                 LOGGER.warning("⚠️ LLM-предобработка reader упала, использую исходный текст", exc_info=True)
                 used_fallback = True

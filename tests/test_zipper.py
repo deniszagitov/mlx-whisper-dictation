@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.domain.constants import Config
+from src.domain.model_downloads import ModelRequiredError
 from src.domain.zipper import (
     ZipperAgentResult,
     ZipperCliCommand,
@@ -34,6 +35,7 @@ class FakeRuntime:
         self.max_time = 30
         self.snapshots = 0
         self.download_requests = 0
+        self.required_downloads: list[tuple[str, str]] = []
 
     def prepare_recording(self) -> bool:
         """Разрешает запись."""
@@ -50,6 +52,10 @@ class FakeRuntime:
     def download_llm_model(self) -> None:
         """Фиксирует запрос загрузки LLM-модели."""
         self.download_requests += 1
+
+    def download_required_model(self, requirement: ModelRequiredError) -> None:
+        """Фиксирует запрос общей загрузки модели."""
+        self.required_downloads.append((requirement.label, requirement.model_name))
 
 
 class FakeRecorder:
@@ -378,6 +384,35 @@ def test_zipper_starts_download_before_blocking_error_window():
     assert recorder.started is False
     assert runtime.download_requests == 1
     assert order == ["download", "window"]
+
+
+def test_zipper_downloads_required_model_outside_agent_context():
+    """Если агентский runtime запросил модель, Zipper делегирует скачивание приложению."""
+
+    class FailingAgent(FakeAgent):
+        def invoke(self, request: str, **kwargs: Any) -> ZipperAgentResult:
+            del request, kwargs
+            raise ModelRequiredError("mlx-community/gemma", label="VLM-модель")
+
+    use_case, runtime, _recorder, text_output, _memory = make_use_case(agent=FailingAgent())
+    order: list[str] = []
+
+    def download_required_model(requirement: ModelRequiredError) -> None:
+        order.append("download")
+        runtime.required_downloads.append((requirement.label, requirement.model_name))
+
+    def show_text(title: str, text: str) -> None:
+        del title, text
+        order.append("window")
+
+    runtime.download_required_model = download_required_model
+    text_output.show_text = show_text
+
+    use_case._run_agent("скажи привет", lambda: True)
+
+    assert runtime.required_downloads == [("VLM-модель", "mlx-community/gemma")]
+    assert order == ["download", "window"]
+    assert any(event.kind == "model_download_required" for event in text_output.events)
 
 
 def test_zipper_builtin_tools_keep_clipboard_and_cli_explicitly_configured():

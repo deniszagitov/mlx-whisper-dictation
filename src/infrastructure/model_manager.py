@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..domain.constants import Config
-from ..domain.model_downloads import ModelDownloadProgress, format_model_download_metrics
+from ..domain.model_downloads import ModelDownloadProgress, ModelRequiredError, format_model_download_metrics
 
 if TYPE_CHECKING:
     import numpy as np
@@ -26,6 +26,23 @@ DOWNLOAD_MIN_SPEED_WINDOW_SECONDS = 1.0
 DOWNLOAD_MIN_SPEED_SAMPLES = 2
 DOWNLOAD_TQDM_MIN_INTERVAL_SECONDS = 0.5
 DOWNLOAD_TQDM_SMOOTHING = 0.05
+DOWNLOAD_MAX_WORKERS = 4
+DOWNLOAD_MIN_SPEED_BYTES_PER_SECOND = 2 * 1024 * 1024
+DOWNLOAD_SLOW_SPEED_GRACE_SECONDS = 30.0
+DOWNLOAD_STALL_TIMEOUT_SECONDS = 60.0
+DOWNLOAD_HEALTH_MONITOR_INTERVAL_SECONDS = 5.0
+
+
+class ModelDownloadHealthError(RuntimeError):
+    """Ошибка здоровья загрузки модели."""
+
+
+class ModelDownloadTooSlowError(ModelDownloadHealthError):
+    """Загрузка слишком долго идёт ниже минимальной скорости."""
+
+
+class ModelDownloadStalledError(ModelDownloadHealthError):
+    """Загрузка слишком долго не получает новые байты."""
 
 
 class ModelDownloaderProtocol(Protocol):
@@ -74,9 +91,19 @@ def _emit_legacy_progress(callback: LegacyProgressCallback | None, progress: Mod
             progress.total_bytes,
             progress.speed_bytes_per_second,
             progress.eta_seconds,
+            progress.warning,
         )
     except TypeError:
-        callback(progress.stage, progress.percent, progress.total_bytes)
+        try:
+            callback(
+                progress.stage,
+                progress.percent,
+                progress.total_bytes,
+                progress.speed_bytes_per_second,
+                progress.eta_seconds,
+            )
+        except TypeError:
+            callback(progress.stage, progress.percent, progress.total_bytes)
 
 
 class HuggingFaceModelDownloader:
@@ -89,11 +116,23 @@ class HuggingFaceModelDownloader:
         cache_checker: Callable[[str, str], Any] | None = None,
         clock: Callable[[], float] | None = None,
         min_emit_interval_seconds: float = 0.25,
+        max_workers: int = DOWNLOAD_MAX_WORKERS,
+        min_speed_bytes_per_second: float = DOWNLOAD_MIN_SPEED_BYTES_PER_SECOND,
+        slow_speed_grace_seconds: float = DOWNLOAD_SLOW_SPEED_GRACE_SECONDS,
+        stall_timeout_seconds: float = DOWNLOAD_STALL_TIMEOUT_SECONDS,
+        health_monitor_interval_seconds: float = DOWNLOAD_HEALTH_MONITOR_INTERVAL_SECONDS,
     ) -> None:
         self._snapshot_downloader = snapshot_downloader
         self._cache_checker = cache_checker
         self._clock = clock or time.monotonic
         self._min_emit_interval_seconds = min_emit_interval_seconds
+        self._max_workers = max(max_workers, 1)
+        self._min_speed_bytes_per_second = max(min_speed_bytes_per_second, 0.0)
+        self._slow_speed_grace_seconds = max(slow_speed_grace_seconds, 0.0)
+        self._stall_timeout_seconds = max(stall_timeout_seconds, 0.0)
+        self._health_monitor_interval_seconds = max(health_monitor_interval_seconds, 0.0)
+        self._completed_models: set[str] = set()
+        self._completed_models_lock = threading.Lock()
 
     def is_model_cached(self, model_name: str) -> bool:
         """Проверяет, есть ли модель в локальном cache Hugging Face."""
@@ -131,6 +170,19 @@ class HuggingFaceModelDownloader:
                 ),
             )
             return
+        if self._is_completed_in_process(model_name):
+            LOGGER.info("📦 Модель уже проверена в этом запуске: label=%s, model=%s", label, model_name)
+            self._emit(
+                progress_callback,
+                ModelDownloadProgress(
+                    label=label,
+                    model_name=model_name,
+                    stage="уже загружена",
+                    percent=Config.DOWNLOAD_COMPLETE_PCT,
+                    complete=True,
+                ),
+            )
+            return
 
         self._emit(
             progress_callback,
@@ -143,8 +195,23 @@ class HuggingFaceModelDownloader:
                 from huggingface_hub import snapshot_download  # noqa: PLC0415
 
                 snapshot_downloader = snapshot_download
-            LOGGER.info("📥 Скачиваю модель через Hugging Face: label=%s, model=%s", label, model_name)
-            snapshot_downloader(model_name, tqdm_class=self._build_tqdm_class(label, model_name, progress_callback))
+            LOGGER.info(
+                "📥 Скачиваю модель через Hugging Face: label=%s, model=%s, workers=%s",
+                label,
+                model_name,
+                self._max_workers,
+            )
+            snapshot_downloader(
+                model_name,
+                max_workers=self._max_workers,
+                tqdm_class=self._build_tqdm_class(label, model_name, progress_callback),
+            )
+        except ModelDownloadHealthError as exc:
+            self._emit(
+                progress_callback,
+                ModelDownloadProgress(label=label, model_name=model_name, stage="ошибка", warning=str(exc), failed=True),
+            )
+            raise
         except Exception:
             self._emit(
                 progress_callback,
@@ -152,6 +219,7 @@ class HuggingFaceModelDownloader:
             )
             raise
 
+        self._mark_completed_in_process(model_name)
         self._emit(
             progress_callback,
             ModelDownloadProgress(
@@ -175,6 +243,10 @@ class HuggingFaceModelDownloader:
         clock = self._clock
         emit = self._emit
         min_emit_interval_seconds = self._min_emit_interval_seconds
+        min_speed_bytes_per_second = self._min_speed_bytes_per_second
+        slow_speed_grace_seconds = self._slow_speed_grace_seconds
+        stall_timeout_seconds = self._stall_timeout_seconds
+        health_monitor_interval_seconds = self._health_monitor_interval_seconds
 
         class _ModelDownloadTqdm(base_tqdm):  # type: ignore[misc]
             """tqdm с пробросом скорости и ETA в меню."""
@@ -185,9 +257,16 @@ class HuggingFaceModelDownloader:
                 progress_name = str(kwargs.pop("name", "") or "")
                 self._download_progress_tracked = kwargs.get("unit") == "B" or progress_name == "huggingface_hub.snapshot_download"
                 self._download_started_at = clock()
+                self._download_last_progress_at = self._download_started_at
                 self._download_last_emit_at = 0.0
                 self._download_samples: deque[tuple[float, int]] = deque()
                 self._download_last_speed: float | None = None
+                self._download_slow_since: float | None = None
+                self._download_health_error: ModelDownloadHealthError | None = None
+                self._download_health_warning: str | None = None
+                self._download_state_lock = threading.RLock()
+                self._download_monitor_stop = threading.Event()
+                self._download_monitor_thread: threading.Thread | None = None
                 kwargs["disable"] = False
                 kwargs["mininterval"] = DOWNLOAD_TQDM_MIN_INTERVAL_SECONDS
                 kwargs["smoothing"] = DOWNLOAD_TQDM_SMOOTHING
@@ -195,13 +274,20 @@ class HuggingFaceModelDownloader:
                     kwargs["bar_format"] = "{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}] {postfix}"
                 super().__init__(*args, **kwargs)
                 if self._download_progress_tracked:
+                    self._download_last_progress_at = self._download_started_at if _coerce_total(getattr(self, "n", 0)) <= 0 else clock()
+                    self._start_health_monitor()
                     self._emit_download_progress(force=True)
 
             def update(self, n: int | float | None = 1) -> bool | None:
                 """Обновляет progress bar и отдаёт событие наружу."""
+                self._raise_download_health_error()
                 result = super().update(n)
                 if self._download_progress_tracked:
+                    if n is not None and n > 0:
+                        with self._download_state_lock:
+                            self._download_last_progress_at = clock()
                     self._emit_download_progress()
+                    self._raise_download_health_error()
                 return result if isinstance(result, bool) or result is None else bool(result)
 
             def refresh(self, *args: Any, **kwargs: Any) -> bool | None:
@@ -215,6 +301,10 @@ class HuggingFaceModelDownloader:
                 """Фиксирует финальный прогресс перед закрытием progress bar."""
                 if getattr(self, "_download_progress_tracked", False):
                     self._emit_download_progress(force=True)
+                    self._download_monitor_stop.set()
+                    monitor = self._download_monitor_thread
+                    if monitor is not None and monitor.is_alive():
+                        monitor.join(timeout=1.0)
                 super().close()
 
             def _emit_download_progress(self, *, force: bool = False) -> None:
@@ -225,6 +315,7 @@ class HuggingFaceModelDownloader:
                 total = _coerce_total(getattr(self, "total", 0))
                 downloaded = _coerce_total(getattr(self, "n", 0))
                 speed = self._download_speed(now, downloaded)
+                warning = self._download_health_check(now, downloaded, total, speed)
                 eta = (total - downloaded) / speed if speed and total > downloaded else None
                 percent = min(downloaded / total * Config.DOWNLOAD_COMPLETE_PCT, Config.DOWNLOAD_COMPLETE_PCT) if total else 0.0
                 self.postfix = format_model_download_metrics(speed, eta)
@@ -239,29 +330,104 @@ class HuggingFaceModelDownloader:
                         percent=percent,
                         speed_bytes_per_second=speed,
                         eta_seconds=eta,
+                        warning=warning,
                     ),
                 )
 
             def _download_speed(self, now: float, downloaded: int) -> float | None:
                 """Считает сглаженную скорость по скользящему окну байтов."""
-                samples = self._download_samples
-                if not samples or downloaded >= samples[-1][1]:
-                    samples.append((now, downloaded))
-                else:
-                    samples.clear()
-                    samples.append((now, downloaded))
-                    self._download_last_speed = None
-                while len(samples) > 1 and now - samples[0][0] > DOWNLOAD_SPEED_WINDOW_SECONDS:
-                    samples.popleft()
-                if len(samples) < DOWNLOAD_MIN_SPEED_SAMPLES:
+                with self._download_state_lock:
+                    samples = self._download_samples
+                    if not samples or downloaded >= samples[-1][1]:
+                        samples.append((now, downloaded))
+                    else:
+                        samples.clear()
+                        samples.append((now, downloaded))
+                        self._download_last_speed = None
+                    while len(samples) > 1 and now - samples[0][0] > DOWNLOAD_SPEED_WINDOW_SECONDS:
+                        samples.popleft()
+                    if len(samples) < DOWNLOAD_MIN_SPEED_SAMPLES:
+                        return self._download_last_speed
+                    start_time, start_downloaded = samples[0]
+                    elapsed = now - start_time
+                    delta = downloaded - start_downloaded
+                    if elapsed < DOWNLOAD_MIN_SPEED_WINDOW_SECONDS or delta <= 0:
+                        return self._download_last_speed
+                    self._download_last_speed = delta / elapsed
                     return self._download_last_speed
-                start_time, start_downloaded = samples[0]
-                elapsed = now - start_time
-                delta = downloaded - start_downloaded
-                if elapsed < DOWNLOAD_MIN_SPEED_WINDOW_SECONDS or delta <= 0:
-                    return self._download_last_speed
-                self._download_last_speed = delta / elapsed
-                return self._download_last_speed
+
+            def _download_health_check(
+                self,
+                now: float,
+                downloaded: int,
+                total: int,
+                speed: float | None,
+            ) -> str | None:
+                """Следит за зависанием и устойчиво низкой скоростью."""
+                if not total or downloaded >= total:
+                    with self._download_state_lock:
+                        self._download_slow_since = None
+                        self._download_health_warning = None
+                    return None
+
+                warning: str | None = None
+                with self._download_state_lock:
+                    idle_seconds = now - self._download_last_progress_at
+                    if stall_timeout_seconds and downloaded > 0 and idle_seconds >= stall_timeout_seconds:
+                        warning = f"загрузка приостановилась на {idle_seconds:.0f} с"
+                        if self._download_health_error is None:
+                            self._download_health_error = ModelDownloadStalledError(warning)
+                            LOGGER.warning(
+                                "📥 Загрузка модели приостановилась: label=%s, model=%s, idle_seconds=%.1f",
+                                label,
+                                model_name,
+                                idle_seconds,
+                            )
+                    elif min_speed_bytes_per_second and speed is not None and speed < min_speed_bytes_per_second:
+                        if self._download_slow_since is None:
+                            self._download_slow_since = now
+                        slow_seconds = now - self._download_slow_since
+                        warning = (
+                            f"скорость ниже {format_model_download_metrics(min_speed_bytes_per_second, None)}"
+                            if slow_seconds < slow_speed_grace_seconds
+                            else f"слишком медленно: ниже {format_model_download_metrics(min_speed_bytes_per_second, None)}"
+                        )
+                        if slow_seconds >= slow_speed_grace_seconds and self._download_health_error is None:
+                            self._download_health_error = ModelDownloadTooSlowError(warning)
+                            LOGGER.warning(
+                                "📥 Загрузка модели слишком медленная: label=%s, model=%s, speed=%.1f B/s, threshold=%.1f B/s",
+                                label,
+                                model_name,
+                                speed,
+                                min_speed_bytes_per_second,
+                            )
+                    else:
+                        self._download_slow_since = None
+
+                    if warning is not None:
+                        self._download_health_warning = warning
+                    elif self._download_health_error is None:
+                        self._download_health_warning = None
+                    return self._download_health_warning
+
+            def _start_health_monitor(self) -> None:
+                """Запускает лёгкий монитор зависания между progress update-ами."""
+                if not health_monitor_interval_seconds or not stall_timeout_seconds:
+                    return
+
+                def monitor() -> None:
+                    while not self._download_monitor_stop.wait(health_monitor_interval_seconds):
+                        if not getattr(self, "_download_progress_tracked", False):
+                            return
+                        self._emit_download_progress(force=True)
+
+                self._download_monitor_thread = threading.Thread(target=monitor, daemon=True)
+                self._download_monitor_thread.start()
+
+            def _raise_download_health_error(self) -> None:
+                error = getattr(self, "_download_health_error", None)
+                if error is not None:
+                    raise error
 
             @classmethod
             def get_lock(cls) -> Any:
@@ -276,6 +442,16 @@ class HuggingFaceModelDownloader:
                 cls._lock = lock
 
         return _ModelDownloadTqdm
+
+    def _is_completed_in_process(self, model_name: str) -> bool:
+        """Проверяет, была ли модель уже успешно скачана в текущем запуске."""
+        with self._completed_models_lock:
+            return model_name in self._completed_models
+
+    def _mark_completed_in_process(self, model_name: str) -> None:
+        """Запоминает успешную проверку модели до завершения процесса."""
+        with self._completed_models_lock:
+            self._completed_models.add(model_name)
 
     def _emit(self, progress_callback: ProgressCallback | None, progress: ModelDownloadProgress) -> None:
         """Отправляет событие прогресса, изолируя ошибки подписчика."""
@@ -306,6 +482,8 @@ class ModelManager:
         self._vlm_loader = vlm_loader
         self._qwen_asr_loader = qwen_asr_loader
         self._tts_loader = tts_loader
+        self._verified_models: set[str] = set()
+        self._verified_models_lock = threading.Lock()
 
     def set_progress_callback(self, callback: ProgressCallback | None) -> None:
         """Назначает callback для публикации прогресса в приложение."""
@@ -313,7 +491,20 @@ class ModelManager:
 
     def is_model_cached(self, model_name: str) -> bool:
         """Проверяет, доступна ли модель локально."""
-        return self._downloader.is_model_cached(model_name)
+        return self.is_model_ready(model_name) or self._downloader.is_model_cached(model_name)
+
+    def is_model_ready(self, model_name: str) -> bool:
+        """Проверяет, была ли модель подтверждена для runtime в текущем запуске."""
+        if _is_local_model_path(model_name):
+            return True
+        with self._verified_models_lock:
+            return model_name in self._verified_models
+
+    def require_model_ready(self, model_name: str, *, label: str) -> None:
+        """Прерывает runtime-загрузку, если модель ещё не проверена общим downloader-ом."""
+        if self.is_model_ready(model_name):
+            return
+        raise ModelRequiredError(model_name, label=label)
 
     def ensure_model_downloaded(
         self,
@@ -330,6 +521,7 @@ class ModelManager:
             _emit_legacy_progress(progress_callback, progress)
 
         self._downloader.ensure_downloaded(model_name, label=label, progress_callback=emit)
+        self._mark_model_ready(model_name)
 
     def ensure_llm_model_downloaded(
         self,
@@ -340,8 +532,8 @@ class ModelManager:
         self.ensure_model_downloaded(model_name, label="LLM-модель", progress_callback=progress_callback)
 
     def load_llm_runtime_objects(self, model_name: str) -> tuple[Any, Any]:
-        """Скачивает и загружает MLX LLM-модель."""
-        self.ensure_model_downloaded(model_name, label="LLM-модель")
+        """Загружает MLX LLM-модель после проверки общим downloader-ом."""
+        self.require_model_ready(model_name, label="LLM-модель")
         if self._lm_loader is None:
             from mlx_lm import load  # noqa: PLC0415
 
@@ -351,8 +543,8 @@ class ModelManager:
         return loaded[0], loaded[1]
 
     def load_vlm_runtime_objects(self, model_name: str) -> tuple[Any, Any]:
-        """Скачивает и загружает MLX VLM-модель."""
-        self.ensure_model_downloaded(model_name, label="VLM-модель")
+        """Загружает MLX VLM-модель после проверки общим downloader-ом."""
+        self.require_model_ready(model_name, label="VLM-модель")
         loader = self._vlm_loader
         if loader is None:
             from mlx_vlm import load  # noqa: PLC0415
@@ -374,8 +566,8 @@ class ModelManager:
         return loader(model_name)
 
     def load_tts_model(self, model_name: str) -> Any:
-        """Скачивает и загружает streaming MLX TTS-модель."""
-        self.ensure_model_downloaded(model_name, label="TTS-модель")
+        """Загружает streaming MLX TTS-модель после проверки общим downloader-ом."""
+        self.require_model_ready(model_name, label="TTS-модель")
         loader = self._tts_loader
         if loader is None:
             try:
@@ -403,6 +595,11 @@ class ModelManager:
             )
         self.ensure_model_downloaded(model_name, label="ASR-модель")
         return asr_runtime.run_whisper_transcription(audio_data, model_name, language)
+
+    def _mark_model_ready(self, model_name: str) -> None:
+        """Запоминает успешную проверку модели для последующих runtime-load вызовов."""
+        with self._verified_models_lock:
+            self._verified_models.add(model_name)
 
 
 _DEFAULT_MODEL_MANAGER: ModelManager | None = None

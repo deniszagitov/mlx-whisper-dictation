@@ -25,6 +25,7 @@ from src.app import (  # noqa: F401
     HotkeyListenerFactoryService,
     InputDeviceCatalogService,
     MicrophoneProfilesService,
+    ModelDownloadService,
     ObsidianService,
     SystemDiagnosticsService,
     SystemIntegrationService,
@@ -338,7 +339,11 @@ def main() -> None:
         runtime_loader=model_manager.load_llm_runtime_objects,
         generation_runner=generate_llm_text,
         model_cache_checker=model_manager.is_model_cached,
-        model_downloader=model_manager.ensure_llm_model_downloaded,
+        model_downloader=lambda model_name, progress_callback, label="LLM-модель": model_manager.ensure_model_downloaded(
+            model_name,
+            label=label,
+            progress_callback=progress_callback,
+        ),
         memory_cleanup=cleanup_llm_runtime_memory,
         vlm_runtime_loader=model_manager.load_vlm_runtime_objects,
         vlm_generation_runner=generate_vlm_text,
@@ -373,6 +378,9 @@ def main() -> None:
         release=display_sleep_assertion.release,
     )
     system_diagnostics_service = SystemDiagnosticsService(capture=capture_system_diagnostics)
+    model_download_service = ModelDownloadService(
+        ensure_downloaded=lambda model_name, label: model_manager.ensure_model_downloaded(model_name, label=label),
+    )
     input_device_catalog = InputDeviceCatalogService(list_input_devices=list_input_devices)
     hotkey_capture_service = HotkeyCaptureService(capture_combination=capture_hotkey_combination)
     hotkey_listener_factory = HotkeyListenerFactoryService(
@@ -411,6 +419,7 @@ def main() -> None:
         system_integration_service=system_integration_service,
         display_sleep_prevention_service=display_sleep_prevention_service,
         system_diagnostics_service=system_diagnostics_service,
+        model_download_service=model_download_service,
         input_device_catalog=input_device_catalog,
         hotkey_capture_service=hotkey_capture_service,
         hotkey_listener_factory=hotkey_listener_factory,

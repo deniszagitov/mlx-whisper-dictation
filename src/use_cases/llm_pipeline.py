@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..domain.constants import Config
 from ..domain.llm_processing import should_use_clipboard_context
-from ..domain.model_downloads import format_bytes, format_model_download_metrics
+from ..domain.model_downloads import ModelRequiredError, format_bytes, format_model_download_metrics
 
 if TYPE_CHECKING:
     import numpy as np
@@ -124,6 +124,20 @@ class LlmPipelineUseCases:
                     context=context,
                     max_tokens=max_tokens,
                 )
+            except ModelRequiredError as error:
+                LOGGER.warning("📥 LLM-пайплайн запросил загрузку модели: label=%s, model=%s", error.label, error.model_name)
+                download_required = getattr(self.runtime, "download_required_model", None)
+                if callable(download_required):
+                    download_required(error)
+                else:
+                    self.download_llm_model()
+                self.runtime.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    f"{error.label} ещё не готова. Запускаю загрузку; исходный текст сохранён в буфер обмена.",
+                )
+                self.clipboard_service.write_text(whisper_text)
+                self.transcriber.add_to_history(whisper_text)
+                return
             except Exception:
                 LOGGER.exception("❌ Ошибка LLM-обработки")
                 self.runtime.system_integration_service.notify(
@@ -205,15 +219,18 @@ class LlmPipelineUseCases:
             total_bytes: int,
             speed_bytes_per_second: float | None = None,
             eta_seconds: float | None = None,
+            warning: str | None = None,
         ) -> None:
             metrics = format_model_download_metrics(speed_bytes_per_second, eta_seconds)
             suffix = f" · {metrics}" if metrics else ""
+            prefix = "⚠️" if warning else "📥"
+            warning_suffix = f" · {warning}" if warning else ""
             if total_bytes > 0:
-                self.runtime.llm_download_title = f"📥 Загрузка LLM: {pct:.0f}% ({format_bytes(total_bytes)}){suffix}"
+                self.runtime.llm_download_title = f"{prefix} Загрузка LLM: {pct:.0f}% ({format_bytes(total_bytes)}){warning_suffix}{suffix}"
             elif pct >= Config.DOWNLOAD_COMPLETE_PCT:
                 self.runtime.llm_download_title = "✅ LLM-модель загружена"
             else:
-                self.runtime.llm_download_title = f"📥 Загрузка LLM: {desc}{suffix}"
+                self.runtime.llm_download_title = f"{prefix} Загрузка LLM: {desc}{warning_suffix}{suffix}"
             self.publish_snapshot()
 
         def download_thread() -> None:

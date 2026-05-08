@@ -78,7 +78,7 @@ class LlmGateway:
         runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
         generation_runner: Callable[[Any, Any, str, int], str] | None = None,
         model_cache_checker: Callable[[str], bool] | None = None,
-        model_downloader: Callable[[str, Callable[..., None] | None], None] | None = None,
+        model_downloader: Callable[..., None] | None = None,
         memory_cleanup: Callable[[], None] | None = None,
         vlm_runtime_loader: Callable[[str], tuple[Any, Any]] | None = None,
         vlm_generation_runner: Callable[[Any, Any, str, int], str] | None = None,
@@ -157,12 +157,19 @@ class LlmGateway:
             return False
         return self._model_cache_checker(self.model_name)
 
+    def model_download_label(self) -> str:
+        """Возвращает пользовательскую метку текущей модели для общего downloader-а."""
+        return "VLM-модель" if _is_vlm_model(self.model_name) else "LLM-модель"
+
     def ensure_model_downloaded(self) -> None:
         """Скачивает модель в кэш Hugging Face с отслеживанием прогресса."""
         if self._model_downloader is None:
             raise RuntimeError("LLM download runtime не настроен")
         LOGGER.info("📥 Начинаю загрузку модели: %s", self.model_name)
-        self._model_downloader(self.model_name, self.download_progress_callback)
+        try:
+            self._model_downloader(self.model_name, self.download_progress_callback, self.model_download_label())
+        except TypeError:
+            self._model_downloader(self.model_name, self.download_progress_callback)
         LOGGER.info("✅ Модель загружена: %s", self.model_name)
 
     def _count_tokens(self, tokenizer: Any, text: str) -> int:
