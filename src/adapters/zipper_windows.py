@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import AppKit
+import objc
 from PyObjCTools.AppHelper import callAfter  # type: ignore[import-untyped]
 
 from ..domain.model_downloads import ModelRequiredError
@@ -14,9 +15,46 @@ from ..domain.reader_types import TTSConfig
 from ..domain.zipper_tts import normalize_zipper_voice_text
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..domain.zipper import ZipperEvent
 
 LOGGER = logging.getLogger(__name__)
+
+
+class _ZipperResultWindowDelegate(AppKit.NSObject):  # type: ignore[misc]
+    """Делегат окна результата Zipper, удерживающий Python-callback закрытия."""
+
+    callback = objc.ivar()
+    window = objc.ivar()
+
+    @classmethod
+    def delegateWithCallback_(cls, callback: Callable[[], None]) -> Any:  # noqa: N802
+        """Создаёт делегат и удерживает callback очистки ссылки на окно."""
+        delegate = cast("Any", cls.alloc().init())
+        delegate.callback = callback
+        return delegate
+
+    def attachWindow_(self, window: Any) -> None:  # noqa: N802
+        """Запоминает окно, которое закрывает кнопка внизу результата."""
+        self.window = window
+
+    def closeWindow_(self, _sender: Any) -> None:  # noqa: N802
+        """Закрывает окно результата через кнопку «Закрыть»."""
+        window = getattr(self, "window", None)
+        if window is None:
+            self._notify_close()
+            return
+        window.close()
+
+    def windowWillClose_(self, _notification: Any) -> None:  # noqa: N802
+        """Очищает удерживаемые ссылки при обычном закрытии окна."""
+        self._notify_close()
+
+    def _notify_close(self) -> None:
+        callback = cast("Callable[[], None] | None", getattr(self, "callback", None))
+        if callback is not None:
+            callback()
 
 
 def _on_main_thread(callback: Any, *args: Any) -> None:
@@ -31,6 +69,9 @@ class ZipperTextOutput:
     """Показывает текстовые ответы Zipper и поток debug-событий."""
 
     def __init__(self) -> None:
+        self._result_window: Any | None = None
+        self._result_text_view: Any | None = None
+        self._result_window_delegate: Any | None = None
         self._debug_window: Any | None = None
         self._debug_text_view: Any | None = None
         self._debug_events: list[ZipperEvent] = []
@@ -78,12 +119,104 @@ class ZipperTextOutput:
         return list(self._debug_events)
 
     def _show_text_on_main_thread(self, title: str, text: str) -> None:
-        AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        alert = AppKit.NSAlert.alloc().init()
-        alert.setMessageText_(title)
-        alert.setInformativeText_(text)
-        alert.addButtonWithTitle_("ОК")
-        alert.runModal()
+        app = AppKit.NSApplication.sharedApplication()
+        app.activateIgnoringOtherApps_(True)
+        self._close_result_window_on_main_thread()
+
+        screen = AppKit.NSScreen.mainScreen()
+        if screen is None:
+            window_frame = ((240, 240), (720, 460))
+            width = 720
+            height = 460
+        else:
+            frame = screen.visibleFrame()
+            width = int(min(820, max(520, frame.size.width * 0.48)))
+            height = int(min(560, max(340, frame.size.height * 0.58)))
+            window_frame = (
+                (
+                    frame.origin.x + int((frame.size.width - width) / 2),
+                    frame.origin.y + int((frame.size.height - height) / 2),
+                ),
+                (width, height),
+            )
+
+        style_mask = (
+            AppKit.NSWindowStyleMaskTitled
+            | AppKit.NSWindowStyleMaskClosable
+            | AppKit.NSWindowStyleMaskResizable
+            | AppKit.NSWindowStyleMaskMiniaturizable
+        )
+        window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            window_frame,
+            style_mask,
+            AppKit.NSBackingStoreBuffered,
+            False,
+        )
+        window.setTitle_(title)
+        window.setLevel_(AppKit.NSFloatingWindowLevel)
+        window.setReleasedWhenClosed_(False)
+        window.setCollectionBehavior_(
+            AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
+        )
+
+        content_view = AppKit.NSView.alloc().initWithFrame_(((0, 0), (width, height)))
+        content_view.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+
+        margin = 16
+        button_width = 96
+        button_height = 32
+        scroll_view = AppKit.NSScrollView.alloc().initWithFrame_(
+            ((margin, margin * 2 + button_height), (width - margin * 2, height - margin * 3 - button_height))
+        )
+        scroll_view.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+        scroll_view.setHasVerticalScroller_(True)
+
+        text_view = AppKit.NSTextView.alloc().initWithFrame_(((0, 0), (width - margin * 2, height - margin * 3 - button_height)))
+        text_view.setAutoresizingMask_(AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+        text_view.setEditable_(False)
+        text_view.setSelectable_(True)
+        text_view.setRichText_(False)
+        text_view.setImportsGraphics_(False)
+        text_view.setUsesFindPanel_(True)
+        text_view.setFont_(AppKit.NSFont.systemFontOfSize_(14))
+        text_view.setString_(text)
+        scroll_view.setDocumentView_(text_view)
+
+        close_button = AppKit.NSButton.alloc().initWithFrame_(((width - margin - button_width, margin), (button_width, button_height)))
+        close_button.setAutoresizingMask_(AppKit.NSViewMinXMargin | AppKit.NSViewMaxYMargin)
+        close_button.setTitle_("Закрыть")
+        close_button.setBezelStyle_(AppKit.NSBezelStyleRounded)
+
+        delegate = _ZipperResultWindowDelegate.delegateWithCallback_(self._clear_result_window)
+        delegate.attachWindow_(window)
+        close_button.setTarget_(delegate)
+        close_button.setAction_("closeWindow:")
+
+        content_view.addSubview_(scroll_view)
+        content_view.addSubview_(close_button)
+        window.setContentView_(content_view)
+        window.setDelegate_(delegate)
+
+        self._result_window = window
+        self._result_text_view = text_view
+        self._result_window_delegate = delegate
+
+        window.makeKeyAndOrderFront_(None)
+        window.orderFrontRegardless()
+        app.activateIgnoringOtherApps_(True)
+
+    def _close_result_window_on_main_thread(self) -> None:
+        if self._result_window is None:
+            return
+        self._result_window.setDelegate_(None)
+        self._result_window.orderOut_(None)
+        self._result_window.close()
+        self._clear_result_window()
+
+    def _clear_result_window(self) -> None:
+        self._result_window = None
+        self._result_text_view = None
+        self._result_window_delegate = None
 
     def _set_debug_visible_on_main_thread(self, visible: bool) -> None:
         if visible:

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, ClassVar
 
-from src.adapters.zipper_windows import ZipperVoiceOutput
+from src.adapters import zipper_windows as zipper_windows_module
+from src.adapters.zipper_windows import ZipperTextOutput, ZipperVoiceOutput
 from src.domain.constants import Config
 from src.domain.model_downloads import ModelRequiredError
 from src.domain.reader_types import TTSConfig
@@ -307,6 +309,260 @@ def make_use_case(config: ZipperConfig | None = None, agent: FakeAgent | None = 
     return use_case, runtime, recorder, text_output, memory
 
 
+def test_zipper_text_output_show_text_creates_retained_window(monkeypatch):
+    """Текстовый вывод Zipper создаёт удерживаемое окно, а не modal alert."""
+
+    class FakeFramePart:
+        def __init__(self, **values: float) -> None:
+            self.__dict__.update(values)
+
+    class FakeFrame:
+        def __init__(self) -> None:
+            self.origin = FakeFramePart(x=100, y=80)
+            self.size = FakeFramePart(width=1440, height=900)
+
+    class FakeThread:
+        @staticmethod
+        def isMainThread() -> bool:
+            return True
+
+    class FakeApplication:
+        instance: FakeApplication
+
+        def __init__(self) -> None:
+            self.activation_requests: list[bool] = []
+
+        @classmethod
+        def sharedApplication(cls) -> FakeApplication:
+            return cls.instance
+
+        def activateIgnoringOtherApps_(self, value: bool) -> None:
+            self.activation_requests.append(value)
+
+    FakeApplication.instance = FakeApplication()
+
+    class FakeScreen:
+        @staticmethod
+        def mainScreen() -> FakeScreen:
+            return FakeScreen()
+
+        def visibleFrame(self) -> FakeFrame:
+            return FakeFrame()
+
+    class FakeAlert:
+        @classmethod
+        def alloc(cls) -> FakeAlert:
+            raise AssertionError("show_text не должен создавать NSAlert")
+
+    class FakeView:
+        def __init__(self) -> None:
+            self.frame: Any | None = None
+            self.subviews: list[Any] = []
+            self.autoresizing_mask: int | None = None
+
+        @classmethod
+        def alloc(cls) -> FakeView:
+            return cls()
+
+        def initWithFrame_(self, frame: Any) -> FakeView:
+            self.frame = frame
+            return self
+
+        def setAutoresizingMask_(self, mask: int) -> None:
+            self.autoresizing_mask = mask
+
+        def addSubview_(self, view: Any) -> None:
+            self.subviews.append(view)
+
+    class FakeScrollView(FakeView):
+        def __init__(self) -> None:
+            super().__init__()
+            self.has_vertical_scroller = False
+            self.document_view: Any | None = None
+
+        def setHasVerticalScroller_(self, value: bool) -> None:
+            self.has_vertical_scroller = value
+
+        def setDocumentView_(self, view: Any) -> None:
+            self.document_view = view
+
+    class FakeTextView(FakeView):
+        def __init__(self) -> None:
+            super().__init__()
+            self.editable: bool | None = None
+            self.selectable: bool | None = None
+            self.text = ""
+
+        def setEditable_(self, value: bool) -> None:
+            self.editable = value
+
+        def setSelectable_(self, value: bool) -> None:
+            self.selectable = value
+
+        def setRichText_(self, _value: bool) -> None:
+            return None
+
+        def setImportsGraphics_(self, _value: bool) -> None:
+            return None
+
+        def setUsesFindPanel_(self, _value: bool) -> None:
+            return None
+
+        def setFont_(self, _font: Any) -> None:
+            return None
+
+        def setString_(self, text: str) -> None:
+            self.text = text
+
+    class FakeButton(FakeView):
+        def __init__(self) -> None:
+            super().__init__()
+            self.title = ""
+            self.target: Any | None = None
+            self.action: str | None = None
+
+        def setTitle_(self, title: str) -> None:
+            self.title = title
+
+        def setBezelStyle_(self, _style: int) -> None:
+            return None
+
+        def setTarget_(self, target: Any) -> None:
+            self.target = target
+
+        def setAction_(self, action: str) -> None:
+            self.action = action
+
+    class FakeWindow:
+        created: ClassVar[list[FakeWindow]] = []
+
+        def __init__(self) -> None:
+            self.title = ""
+            self.level: int | None = None
+            self.collection_behavior: int | None = None
+            self.released_when_closed: bool | None = None
+            self.content_view: Any | None = None
+            self.delegate: Any | None = None
+            self.front_regardless_calls = 0
+            self.key_order_calls = 0
+            self.closed = False
+
+        @classmethod
+        def alloc(cls) -> FakeWindow:
+            return cls()
+
+        def initWithContentRect_styleMask_backing_defer_(self, frame: Any, style_mask: int, backing: int, defer: bool) -> FakeWindow:
+            self.frame = frame
+            self.style_mask = style_mask
+            self.backing = backing
+            self.defer = defer
+            self.created.append(self)
+            return self
+
+        def setTitle_(self, title: str) -> None:
+            self.title = title
+
+        def setLevel_(self, level: int) -> None:
+            self.level = level
+
+        def setReleasedWhenClosed_(self, value: bool) -> None:
+            self.released_when_closed = value
+
+        def setCollectionBehavior_(self, value: int) -> None:
+            self.collection_behavior = value
+
+        def setContentView_(self, view: Any) -> None:
+            self.content_view = view
+
+        def setDelegate_(self, delegate: Any | None) -> None:
+            self.delegate = delegate
+
+        def makeKeyAndOrderFront_(self, _sender: Any) -> None:
+            self.key_order_calls += 1
+
+        def orderFrontRegardless(self) -> None:
+            self.front_regardless_calls += 1
+
+        def orderOut_(self, _sender: Any) -> None:
+            return None
+
+        def close(self) -> None:
+            self.closed = True
+            if self.delegate is not None:
+                self.delegate.windowWillClose_(None)
+
+    class FakeFont:
+        @staticmethod
+        def systemFontOfSize_(_size: int) -> str:
+            return "font"
+
+    fake_appkit = SimpleNamespace(
+        NSThread=FakeThread,
+        NSApplication=FakeApplication,
+        NSScreen=FakeScreen,
+        NSAlert=FakeAlert,
+        NSWindow=FakeWindow,
+        NSView=FakeView,
+        NSScrollView=FakeScrollView,
+        NSTextView=FakeTextView,
+        NSButton=FakeButton,
+        NSFont=FakeFont,
+        NSWindowStyleMaskTitled=1,
+        NSWindowStyleMaskClosable=2,
+        NSWindowStyleMaskResizable=4,
+        NSWindowStyleMaskMiniaturizable=8,
+        NSBackingStoreBuffered=16,
+        NSFloatingWindowLevel=32,
+        NSWindowCollectionBehaviorCanJoinAllSpaces=64,
+        NSWindowCollectionBehaviorFullScreenAuxiliary=128,
+        NSViewWidthSizable=256,
+        NSViewHeightSizable=512,
+        NSViewMinXMargin=1024,
+        NSViewMaxYMargin=2048,
+        NSBezelStyleRounded=4096,
+    )
+    monkeypatch.setattr(zipper_windows_module, "AppKit", fake_appkit)
+
+    output = ZipperTextOutput()
+    output.show_text("Zipper", "длинный ответ\nсо ссылкой https://example.test")
+
+    assert len(FakeWindow.created) == 1
+    window = FakeWindow.created[0]
+    assert output._result_window is window
+    assert output._result_window_delegate is window.delegate
+    assert window.title == "Zipper"
+    assert window.level == fake_appkit.NSFloatingWindowLevel
+    assert window.released_when_closed is False
+    assert window.front_regardless_calls == 1
+    assert window.key_order_calls == 1
+    assert FakeApplication.instance.activation_requests == [True, True]
+
+    assert window.content_view is not None
+    scroll_view = window.content_view.subviews[0]
+    close_button = window.content_view.subviews[1]
+    assert scroll_view.has_vertical_scroller is True
+    assert scroll_view.document_view.text == "длинный ответ\nсо ссылкой https://example.test"
+    assert scroll_view.document_view.editable is False
+    assert scroll_view.document_view.selectable is True
+    assert close_button.title == "Закрыть"
+    assert close_button.action == "closeWindow:"
+
+    close_button.target.closeWindow_(close_button)
+
+    assert window.closed is True
+    assert output._result_window is None
+    assert output._result_text_view is None
+    assert output._result_window_delegate is None
+
+    output.show_text("Zipper", "ещё один ответ")
+    second_window = FakeWindow.created[1]
+    second_window.close()
+
+    assert output._result_window is None
+    assert output._result_text_view is None
+    assert output._result_window_delegate is None
+
+
 def test_zipper_agent_runtime_keeps_prompts_and_tools_together():
     """Инфраструктурный runtime хранит prompt-контракт и tools в одном объекте."""
     agent = LangChainZipperAgent(FakeLLM(), clipboard_service=FakeClipboard())
@@ -362,11 +618,12 @@ def test_zipper_records_voice_command_without_regular_insertion():
 def test_zipper_speaks_voice_result_through_voice_output():
     """Zipper направляет голосовой ответ в сервис озвучивания."""
     agent = FakeAgent(ZipperAgentResult(text="Готово", output_mode="voice"))
-    use_case, _runtime, _recorder, _text_output, _memory = make_use_case(agent=agent)
+    use_case, _runtime, _recorder, text_output, _memory = make_use_case(agent=agent)
 
     use_case._run_agent("ответь голосом", lambda: True)
 
     assert use_case.voice_output.spoken == ["Готово"]
+    assert text_output.messages == []
 
 
 def test_zipper_window_result_keeps_raw_text():
@@ -377,6 +634,18 @@ def test_zipper_window_result_keeps_raw_text():
     use_case._run_agent("покажи версию", lambda: True)
 
     assert text_output.messages[-1] == ("Zipper", "Версия 2.0: https://example.test")
+    assert use_case.voice_output.spoken == []
+
+
+def test_zipper_both_result_uses_voice_and_window_outputs():
+    """Режим вывода both отправляет один ответ в TTS и текстовое окно."""
+    agent = FakeAgent(ZipperAgentResult(text="Готово и показано", output_mode="both"))
+    use_case, _runtime, _recorder, text_output, _memory = make_use_case(agent=agent)
+
+    use_case._run_agent("ответь двумя способами", lambda: True)
+
+    assert use_case.voice_output.spoken == ["Готово и показано"]
+    assert text_output.messages[-1] == ("Zipper", "Готово и показано")
 
 
 def test_zipper_voice_output_uses_current_tts_config():

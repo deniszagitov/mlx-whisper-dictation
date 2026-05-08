@@ -117,6 +117,11 @@ MLX TTS по умолчанию использует `mlx-community/Qwen3-TTS-12
 | Zipper память | `~/Library/Application Support/Dictator/zipper_memory.json` |
 | Логи | `~/Library/Logs/whisper-dictation/` |
 
+TOML-конфиги Zipper хранят runtime-настройки, MCP, пользовательские инструменты
+и allowlist CLI. System prompt, внутренние prompt-шаблоны и встроенные tools
+определены в коде инфраструктурного runtime и не настраиваются через
+`system_message` в `zipper.toml`.
+
 ## Fallback-правила
 
 - Обычная диктовка всегда добавляет распознанный текст в историю.
