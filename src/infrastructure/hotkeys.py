@@ -320,6 +320,10 @@ class HotkeyDispatcher:
             ),
             reverse=True,
         )
+        LOGGER.info(
+            "⌨️ Активные хоткеи dispatcher-а: %s",
+            ", ".join(f"{binding.name}={binding.key_combination}" for binding in self._bindings) or "нет",
+        )
         self._reset_runtime_state()
 
     def _reset_runtime_state(self) -> None:

@@ -731,10 +731,12 @@ class TestHotkeyDispatcher:
             self.primary_key_combination = "cmd_l+alt"
             self.secondary_key_combination = "ctrl+shift+space"
             self.llm_key_combination = "ctrl+shift+l"
+            self.zipper_key_combination = "ctrl+alt+`"
             self.state = Config.STATUS_IDLE
             self.started = False
             self.toggle_count = 0
             self.toggle_llm_count = 0
+            self.toggle_zipper_count = 0
             self.escape_keycodes: list[int] = []
             self.transcriber = SimpleNamespace(handle_keyboard_activity=lambda: None)
 
@@ -743,6 +745,9 @@ class TestHotkeyDispatcher:
 
         def toggle_llm(self):
             self.toggle_llm_count += 1
+
+        def toggle_zipper(self):
+            self.toggle_zipper_count += 1
 
         def handle_escape_keycode(self, keycode: int):
             self.escape_keycodes.append(keycode)
@@ -806,6 +811,24 @@ class TestHotkeyDispatcher:
 
         assert dispatcher._handle_key_down(event) is True
         assert dispatcher.app.toggle_llm_count == 1
+
+    def test_zipper_hotkey_triggers_zipper_callback(self, app_module, monkeypatch):
+        """Zipper-хоткей должен вызывать отдельный callback, а не обычную диктовку."""
+        import src.infrastructure.hotkeys as hotkeys_module
+
+        monkeypatch.setattr(hotkeys_module, "_keycode_to_char", lambda _kc: None)
+        dispatcher = app_module.HotkeyDispatcher(self._FakeApp())
+        dispatcher.pressed_modifier_names = {"ctrl_l", "alt_l"}
+
+        event = self._FakeEvent(
+            50,
+            "`",
+            modifier_flags=app_module.MODIFIER_FLAG_MASKS["ctrl_l"] | app_module.MODIFIER_FLAG_MASKS["alt_l"],
+        )
+
+        assert dispatcher._handle_key_down(event) is True
+        assert dispatcher.app.toggle_zipper_count == 1
+        assert dispatcher.app.toggle_count == 0
 
     def test_escape_is_suppressed_only_while_recording(self, app_module):
         fake_app = self._FakeApp()
