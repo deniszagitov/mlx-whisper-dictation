@@ -35,6 +35,7 @@ from .domain.reader_types import (
     TTSVoice,
 )
 from .domain.types import AppPreferences, AppSnapshot, LaunchConfig, MicrophoneProfile
+from .domain.zipper import ZipperAgentResult, ZipperConfig, ZipperMemorySnapshot
 from .use_cases.hotkey_management import HotkeyManagementUseCases
 from .use_cases.llm_pipeline import LlmPipelineUseCases
 from .use_cases.microphone_profiles import MicrophoneProfilesUseCases
@@ -43,6 +44,7 @@ from .use_cases.play_tts import PlayTTSUseCase
 from .use_cases.preprocess_text import PreprocessTextUseCase
 from .use_cases.recording import RecordingUseCases
 from .use_cases.settings import SettingsUseCases
+from .use_cases.zipper import ZipperUseCases
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -128,6 +130,83 @@ class HotkeyListenerFactoryService:
     create_listener: Callable[[Any], Any]
 
 
+@dataclass(frozen=True, slots=True)
+class ZipperConfigProviderService:
+    """Concrete bundle для чтения и открытия конфига Zipper."""
+
+    load_config: Callable[[], ZipperConfig]
+    config_path: Callable[[], str]
+    open_config: Callable[[], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperMemoryStoreService:
+    """Concrete bundle persistence контекста и памяти Zipper."""
+
+    load: Callable[[], ZipperMemorySnapshot]
+    save: Callable[[ZipperMemorySnapshot], None]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperAgentService:
+    """Concrete bundle LangChain-агента Zipper."""
+
+    invoke: Callable[..., ZipperAgentResult]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperTextOutputService:
+    """Concrete bundle текстового вывода и debug-панели Zipper."""
+
+    show_text: Callable[[str, str], None]
+    confirm: Callable[[str, str], bool]
+    set_debug_visible: Callable[[bool], None]
+    append_debug_event: Callable[[Any], None]
+    debug_events: Callable[[], list[Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperVoiceOutputService:
+    """Concrete bundle голосового вывода Zipper."""
+
+    speak: Callable[[str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperUrlOpenerService:
+    """Concrete bundle открытия URL Zipper."""
+
+    open_url: Callable[[str], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperCommandRunnerService:
+    """Concrete bundle запуска разрешённых CLI-команд Zipper."""
+
+    run: Callable[[Any, str], str]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperCustomToolRunnerService:
+    """Concrete bundle пользовательских инструментов Zipper."""
+
+    run: Callable[[Any, str], str]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperMCPToolProviderService:
+    """Concrete bundle подключения MCP-инструментов Zipper."""
+
+    tools_for_config: Callable[[ZipperConfig], tuple[list[Any], list[str]]]
+
+
+@dataclass(frozen=True, slots=True)
+class ZipperNoteWriterService:
+    """Concrete bundle записи заметок Zipper."""
+
+    write_note: Callable[[str, ZipperConfig], Any]
+
+
 class _NullRecordingOverlay:
     """Null-object для сценариев без подключённого overlay-адаптера."""
 
@@ -204,6 +283,91 @@ def _noop_capture_combination(_title: str, _message: str, _current_combination: 
     return None
 
 
+def _null_zipper_config() -> ZipperConfig:
+    """Возвращает выключенный конфиг Zipper по умолчанию."""
+    return ZipperConfig(enabled=False)
+
+
+def _null_config_path() -> str:
+    """Возвращает пустой путь конфига Zipper для headless-сценариев."""
+    return ""
+
+
+def _null_open_config() -> bool:
+    """Не открывает конфиг Zipper в headless-сценариях."""
+    return False
+
+
+def _null_load_zipper_memory() -> ZipperMemorySnapshot:
+    """Возвращает пустую память Zipper."""
+    return ZipperMemorySnapshot(memory="", events=())
+
+
+def _null_save_zipper_memory(_snapshot: ZipperMemorySnapshot) -> None:
+    """Игнорирует сохранение памяти Zipper."""
+    return None
+
+
+def _null_zipper_agent_invoke(*_args: Any, **_kwargs: Any) -> ZipperAgentResult:
+    """Возвращает fallback-ответ Zipper без агентского runtime."""
+    return ZipperAgentResult(text="Zipper не настроен.", output_mode="window")
+
+
+def _null_show_zipper_text(_title: str, _text: str) -> None:
+    """Игнорирует текстовый вывод Zipper."""
+    return None
+
+
+def _null_confirm_zipper(_title: str, _message: str) -> bool:
+    """Отклоняет подтверждение Zipper по умолчанию."""
+    return False
+
+
+def _null_zipper_debug_visible(_visible: bool) -> None:
+    """Игнорирует debug-панель Zipper."""
+    return None
+
+
+def _null_zipper_event(_event: Any) -> None:
+    """Игнорирует событие Zipper."""
+    return None
+
+
+def _null_zipper_debug_events() -> list[Any]:
+    """Возвращает пустой поток debug-событий."""
+    return []
+
+
+def _null_zipper_speak(_text: str) -> None:
+    """Игнорирует голосовой вывод Zipper."""
+    return None
+
+
+def _null_open_url(_url: str) -> bool:
+    """Не открывает URL в headless-сценариях."""
+    return False
+
+
+def _null_run_command(_command: Any, _argument: str) -> str:
+    """Возвращает ошибку запуска CLI-команды без runner-а."""
+    return "CLI-runner Zipper не настроен."
+
+
+def _null_custom_tool(_tool: Any, _argument: str) -> str:
+    """Возвращает ошибку пользовательского инструмента без runner-а."""
+    return "Пользовательский runner Zipper не настроен."
+
+
+def _null_mcp_tools(_config: ZipperConfig) -> tuple[list[Any], list[str]]:
+    """Возвращает отсутствие MCP-инструментов."""
+    return [], []
+
+
+def _null_write_note(_text: str, _config: ZipperConfig) -> str:
+    """Возвращает ошибку записи заметки без writer-а."""
+    return "note-writer Zipper не настроен"
+
+
 class _NullHotkeyListener:
     """Null-object для runtime-dispatcher'а горячих клавиш."""
 
@@ -215,7 +379,7 @@ class _NullHotkeyListener:
         """Игнорирует остановку listener'а."""
         return None
 
-    def update_hotkeys(self, _primary: str, _secondary: str, _llm: str, _rsvp: str = "", _tts: str = "") -> None:
+    def update_hotkeys(self, _primary: str, _secondary: str, _llm: str, _rsvp: str = "", _tts: str = "", _zipper: str = "") -> None:
         """Игнорирует обновление набора горячих клавиш."""
         return None
 
@@ -385,6 +549,16 @@ class DictationApp:
         rsvp_display: RSVPDisplayPort | None = None,
         tts_speaker: TTSPort | None = None,
         settings_store: SettingsStoreProtocol | None = None,
+        zipper_config_provider: ZipperConfigProviderService | None = None,
+        zipper_memory_store: ZipperMemoryStoreService | None = None,
+        zipper_agent_service: ZipperAgentService | None = None,
+        zipper_text_output: ZipperTextOutputService | None = None,
+        zipper_voice_output: ZipperVoiceOutputService | None = None,
+        zipper_url_opener: ZipperUrlOpenerService | None = None,
+        zipper_command_runner: ZipperCommandRunnerService | None = None,
+        zipper_custom_tool_runner: ZipperCustomToolRunnerService | None = None,
+        zipper_mcp_tool_provider: ZipperMCPToolProviderService | None = None,
+        zipper_note_writer: ZipperNoteWriterService | None = None,
     ) -> None:
         self.settings_store = settings_store or _InMemorySettingsStore()
         self.recorder = recorder
@@ -399,6 +573,7 @@ class DictationApp:
         self.llm_hotkey_status = self.launch_config.hotkeys.llm_hotkey_status
         self.rsvp_hotkey_status = self.reader_preferences.rsvp_hotkey_status
         self.tts_hotkey_status = self.reader_preferences.tts_hotkey_status
+        self.zipper_hotkey_status = self.launch_config.hotkeys.zipper_hotkey_status
         self.clipboard_service = clipboard_service or ClipboardService(read_text=lambda: None, write_text=lambda _text: None)
         self.microphone_profiles_service = microphone_profiles_service or MicrophoneProfilesService(
             load_profiles=lambda: [],
@@ -431,6 +606,29 @@ class DictationApp:
         self.reader_clipboard = reader_clipboard or _NullReaderClipboard()
         self.rsvp_display = rsvp_display or _NullRSVPDisplay()
         self.tts_speaker = tts_speaker or _NullTTS()
+        self.zipper_config_provider = zipper_config_provider or ZipperConfigProviderService(
+            load_config=_null_zipper_config,
+            config_path=_null_config_path,
+            open_config=_null_open_config,
+        )
+        self.zipper_memory_store = zipper_memory_store or ZipperMemoryStoreService(
+            load=_null_load_zipper_memory,
+            save=_null_save_zipper_memory,
+        )
+        self.zipper_agent_service = zipper_agent_service or ZipperAgentService(invoke=_null_zipper_agent_invoke)
+        self.zipper_text_output = zipper_text_output or ZipperTextOutputService(
+            show_text=_null_show_zipper_text,
+            confirm=_null_confirm_zipper,
+            set_debug_visible=_null_zipper_debug_visible,
+            append_debug_event=_null_zipper_event,
+            debug_events=_null_zipper_debug_events,
+        )
+        self.zipper_voice_output = zipper_voice_output or ZipperVoiceOutputService(speak=_null_zipper_speak)
+        self.zipper_url_opener = zipper_url_opener or ZipperUrlOpenerService(open_url=_null_open_url)
+        self.zipper_command_runner = zipper_command_runner or ZipperCommandRunnerService(run=_null_run_command)
+        self.zipper_custom_tool_runner = zipper_custom_tool_runner or ZipperCustomToolRunnerService(run=_null_custom_tool)
+        self.zipper_mcp_tool_provider = zipper_mcp_tool_provider or ZipperMCPToolProviderService(tools_for_config=_null_mcp_tools)
+        self.zipper_note_writer = zipper_note_writer or ZipperNoteWriterService(write_note=_null_write_note)
 
         self.model_options = list(Config.MODEL_PRESETS)
         if self.launch_config.model not in self.model_options:
@@ -468,6 +666,9 @@ class DictationApp:
         self.show_recording_overlay = self.app_preferences.show_recording_overlay
         self.show_recording_time_in_menu_bar = self.app_preferences.show_recording_time_in_menu_bar
         self.started = False
+        self.zipper_recording_active = False
+        self.zipper_enabled = False
+        self.zipper_debug_panel_enabled = False
         self.start_time = 0.0
         self.elapsed_time = 0
         self.key_listener: Any = None
@@ -538,6 +739,29 @@ class DictationApp:
             speaker=self.tts_speaker,
             notify=self.system_integration_service.notify,
         )
+        self.zipper_use_cases = ZipperUseCases(
+            runtime=self,
+            recorder=self.recorder,
+            transcriber=self.transcriber,
+            llm_processor=self.llm_processor,
+            config_provider=self.zipper_config_provider,
+            memory_store=self.zipper_memory_store,
+            agent_service=self.zipper_agent_service,
+            clipboard_service=self.clipboard_service,
+            text_output=self.zipper_text_output,
+            voice_output=self.zipper_voice_output,
+            url_opener=self.zipper_url_opener,
+            command_runner=self.zipper_command_runner,
+            custom_tool_runner=self.zipper_custom_tool_runner,
+            mcp_tool_provider=self.zipper_mcp_tool_provider,
+            note_writer=self.zipper_note_writer,
+            system_integration_service=self.system_integration_service,
+            recording_overlay=self.recording_overlay,
+            publish_snapshot=self._notify_subscribers,
+        )
+        self.zipper_enabled = self.zipper_use_cases.config.enabled
+        self.zipper_debug_panel_enabled = self.zipper_use_cases.config.debug.enabled
+        self.zipper_text_output.set_debug_visible(self.zipper_debug_panel_enabled)
         self.hotkey_management_use_cases = HotkeyManagementUseCases(
             runtime=self,
             settings_store=self.settings_store,
@@ -976,6 +1200,15 @@ class DictationApp:
         self.launch_config = self.launch_config.with_hotkeys(self.launch_config.hotkeys.with_llm(value))
 
     @property
+    def zipper_key_combination(self) -> str:
+        """Возвращает Zipper-хоткей во внутреннем формате."""
+        return self.launch_config.zipper_key_combination or ""
+
+    @zipper_key_combination.setter
+    def zipper_key_combination(self, value: str) -> None:
+        self.launch_config = self.launch_config.with_hotkeys(self.launch_config.hotkeys.with_zipper(value))
+
+    @property
     def rsvp_key_combination(self) -> str:
         """Возвращает RSVP-хоткей во внутреннем формате."""
         return self.reader_preferences.rsvp_hotkey
@@ -1044,6 +1277,22 @@ class DictationApp:
         return self.reader_preferences.preprocess_enabled
 
     @property
+    def zipper_status(self) -> str:
+        """Возвращает статус Zipper для меню."""
+        if not self.zipper_enabled:
+            return "выключен"
+        if self.zipper_recording_active:
+            return "запись"
+        if self.state == Config.STATUS_ZIPPER_PROCESSING:
+            return "обработка"
+        return "ожидание"
+
+    @property
+    def zipper_config_path(self) -> str:
+        """Возвращает путь пользовательского конфига Zipper."""
+        return self.zipper_config_provider.config_path()
+
+    @property
     def llm_downloading(self) -> bool:
         """Возвращает флаг активной загрузки LLM-модели."""
         return self._llm_downloading
@@ -1077,9 +1326,11 @@ class DictationApp:
             hotkey_status=self.hotkey_status,
             secondary_hotkey_status=self.secondary_hotkey_status,
             llm_hotkey_status=self.llm_hotkey_status,
+            zipper_hotkey_status=self.zipper_hotkey_status,
             primary_key_combination=self.primary_key_combination,
             secondary_key_combination=self.secondary_key_combination,
             llm_key_combination=self.llm_key_combination,
+            zipper_key_combination=self.zipper_key_combination,
             llm_prompt_name=self.llm_prompt_name,
             performance_mode=self.performance_mode,
             max_time=self.max_time,
@@ -1116,6 +1367,10 @@ class DictationApp:
             llm_download_interactive=not self._llm_downloading and not self._is_llm_model_cached(),
             llm_model_name=self.llm_model_name,
             llm_model_options=list(self.llm_model_options),
+            zipper_enabled=self.zipper_enabled,
+            zipper_status=self.zipper_status,
+            zipper_debug_panel_enabled=self.zipper_debug_panel_enabled,
+            zipper_config_path=self.zipper_config_path,
         )
 
     def _notify_subscribers(self) -> None:
@@ -1213,6 +1468,7 @@ class DictationApp:
         """Сохраняет текущие хоткеи в NSUserDefaults."""
         self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self.launch_config.hotkeys.primary_store_value)
         self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self.launch_config.hotkeys.secondary_store_value)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_ZIPPER_HOTKEY, self.launch_config.hotkeys.zipper_store_value)
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_RSVP_HOTKEY, self.reader_preferences.rsvp_hotkey)
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_HOTKEY, self.reader_preferences.tts_hotkey)
 
@@ -1238,13 +1494,23 @@ class DictationApp:
                     self.llm_key_combination,
                     self.rsvp_key_combination,
                     self.tts_key_combination,
+                    self.zipper_key_combination,
                 )
             except TypeError:
-                listener.update_hotkeys(
-                    self.primary_key_combination,
-                    self.secondary_key_combination,
-                    self.llm_key_combination,
-                )
+                try:
+                    listener.update_hotkeys(
+                        self.primary_key_combination,
+                        self.secondary_key_combination,
+                        self.llm_key_combination,
+                        self.rsvp_key_combination,
+                        self.tts_key_combination,
+                    )
+                except TypeError:
+                    listener.update_hotkeys(
+                        self.primary_key_combination,
+                        self.secondary_key_combination,
+                        self.llm_key_combination,
+                    )
             return True
         return False
 
@@ -1345,6 +1611,10 @@ class DictationApp:
     def change_llm_hotkey(self) -> None:
         """Открывает диалог и меняет LLM-хоткей."""
         self.hotkey_management_use_cases.change_llm_hotkey()
+
+    def change_zipper_hotkey(self) -> None:
+        """Открывает диалог и меняет Zipper-хоткей."""
+        self.hotkey_management_use_cases.change_zipper_hotkey()
 
     def change_rsvp_hotkey(self) -> None:
         """Открывает диалог и меняет RSVP-хоткей."""
@@ -1447,6 +1717,9 @@ class DictationApp:
 
     def on_status_tick(self) -> None:
         """Обновляет счетчик времени записи и контролирует max_time."""
+        if self.zipper_recording_active:
+            self.zipper_use_cases.on_status_tick()
+            return
         self.recording_use_cases.on_status_tick()
 
     def toggle(self) -> None:
@@ -1457,14 +1730,47 @@ class DictationApp:
         """Переключает сценарий запись → Whisper → LLM."""
         self.llm_pipeline_use_cases.toggle_llm()
 
+    def toggle_zipper(self) -> None:
+        """Переключает сценарий голосового агента Zipper."""
+        self.zipper_use_cases.toggle()
+
+    def toggle_zipper_enabled(self) -> None:
+        """Включает или выключает Zipper."""
+        self.zipper_use_cases.toggle_enabled()
+
+    def open_zipper_config(self) -> None:
+        """Открывает пользовательский конфиг Zipper."""
+        self.zipper_use_cases.open_config()
+
+    def reload_zipper_config(self) -> None:
+        """Перечитывает конфиг Zipper."""
+        self.zipper_use_cases.reload_config()
+
+    def toggle_zipper_debug_panel(self) -> None:
+        """Включает или выключает debug-панель Zipper."""
+        self.zipper_use_cases.toggle_debug_panel()
+
+    def clear_zipper_context(self) -> None:
+        """Очищает текущий контекст Zipper."""
+        self.zipper_use_cases.clear_context()
+
+    def clear_zipper_memory(self) -> None:
+        """Очищает постоянную память Zipper."""
+        self.zipper_use_cases.clear_memory()
+
     def handle_escape_keycode(self, keycode: int) -> None:
         """Отменяет запись при нажатии Escape."""
         if self.handle_reader_key("esc"):
+            return
+        if self.zipper_use_cases.handle_escape_keycode(keycode):
             return
         self.recording_use_cases.handle_escape_keycode(keycode)
 
     def cancel_recording(self) -> None:
         """Отменяет активную запись без распознавания."""
+        if self.zipper_recording_active:
+            self.zipper_use_cases.cancel_recording()
+            return
         self.recording_use_cases.cancel_recording()
 
     def _is_llm_model_cached(self) -> bool:

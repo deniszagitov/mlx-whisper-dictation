@@ -95,6 +95,8 @@ class HotkeyManagementUseCases:
             normalized = normalize_key_combination(result) if result else ""
             if normalized and normalized in (self.runtime.rsvp_key_combination, self.runtime.tts_key_combination):
                 raise ValueError("LLM-хоткей должен отличаться от reader-хоткеев.")
+            if normalized and normalized == self.runtime.zipper_key_combination:
+                raise ValueError("LLM-хоткей должен отличаться от Zipper-хоткея.")
         except ValueError as error:
             self.runtime.system_integration_service.notify("MLX Whisper Dictation", f"Ошибка: {error}")
             return
@@ -114,6 +116,39 @@ class HotkeyManagementUseCases:
             LOGGER.info("🤖 LLM-хоткей отключён (был: %s)", old_combination)
             self.runtime.system_integration_service.notify("MLX Whisper Dictation", "LLM-хоткей отключён.")
         self.publish_snapshot()
+
+    def change_zipper_hotkey(self) -> None:
+        """Открывает диалог и меняет Zipper-хоткей."""
+        result = self.capture_hotkey_combination(
+            "Изменить Zipper-хоткей",
+            "Нажмите комбинацию для голосового агента Zipper.\nОставьте пустым и нажмите Применить, чтобы отключить.",
+            current_combination=self.runtime.zipper_key_combination,
+        )
+        if result is None:
+            return
+
+        try:
+            normalized = normalize_key_combination(result) if result else ""
+            if normalized and normalized in (
+                self.runtime.primary_key_combination,
+                self.runtime.secondary_key_combination,
+                self.runtime.llm_key_combination,
+                self.runtime.rsvp_key_combination,
+                self.runtime.tts_key_combination,
+            ):
+                raise ValueError("Zipper-хоткей должен отличаться от остальных хоткеев.")
+        except ValueError as error:
+            self.runtime.system_integration_service.notify("MLX Whisper Dictation", f"Ошибка: {error}")
+            return
+
+        self.runtime.zipper_key_combination = normalized
+        self.settings_store.save_str(Config.DEFAULTS_KEY_ZIPPER_HOTKEY, self.runtime.launch_config.hotkeys.zipper_store_value)
+        self._apply_hotkey_changes()
+        LOGGER.info("🧷 Zipper-хоткей изменён на: %s", normalized or "не задан")
+        self.runtime.system_integration_service.notify(
+            "MLX Whisper Dictation",
+            f"Zipper-хоткей изменён: {self.runtime.zipper_hotkey_status}",
+        )
 
     def change_rsvp_hotkey(self) -> None:
         """Открывает диалог и меняет RSVP-хоткей."""
@@ -191,7 +226,17 @@ class HotkeyManagementUseCases:
 
     def active_key_combinations(self) -> list[str]:
         """Возвращает все включённые комбинации для основного listener-а."""
-        return list(self.runtime.launch_config.hotkeys.active_key_combinations)
+        return [
+            combination
+            for combination in (
+                *self.runtime.launch_config.hotkeys.active_key_combinations,
+                self.runtime.llm_key_combination,
+                self.runtime.zipper_key_combination,
+                self.runtime.rsvp_key_combination,
+                self.runtime.tts_key_combination,
+            )
+            if combination
+        ]
 
     def refresh_hotkey_statuses(self) -> None:
         """Синхронизирует display-строки хоткеев с текущими комбинациями."""
@@ -201,12 +246,14 @@ class HotkeyManagementUseCases:
         self.runtime.hotkey_status = self.runtime.launch_config.hotkeys.hotkey_status
         self.runtime.secondary_hotkey_status = self.runtime.launch_config.hotkeys.secondary_hotkey_status
         self.runtime.llm_hotkey_status = self.runtime.launch_config.hotkeys.llm_hotkey_status
+        self.runtime.zipper_hotkey_status = self.runtime.launch_config.hotkeys.zipper_hotkey_status
         self.runtime.rsvp_hotkey_status = self.runtime.reader_preferences.rsvp_hotkey_status
         self.runtime.tts_hotkey_status = self.runtime.reader_preferences.tts_hotkey_status
 
     def _persist_hotkey_settings(self) -> None:
         self.settings_store.save_str(Config.DEFAULTS_KEY_PRIMARY_HOTKEY, self.runtime.launch_config.hotkeys.primary_store_value)
         self.settings_store.save_str(Config.DEFAULTS_KEY_SECONDARY_HOTKEY, self.runtime.launch_config.hotkeys.secondary_store_value)
+        self.settings_store.save_str(Config.DEFAULTS_KEY_ZIPPER_HOTKEY, self.runtime.launch_config.hotkeys.zipper_store_value)
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_RSVP_HOTKEY, self.runtime.rsvp_key_combination)
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_HOTKEY, self.runtime.tts_key_combination)
 
@@ -231,13 +278,23 @@ class HotkeyManagementUseCases:
                 self.runtime.llm_key_combination,
                 self.runtime.rsvp_key_combination,
                 self.runtime.tts_key_combination,
+                self.runtime.zipper_key_combination,
             )
         except TypeError:
-            self.runtime.key_listener.update_hotkeys(
-                self.runtime.primary_key_combination,
-                self.runtime.secondary_key_combination,
-                self.runtime.llm_key_combination,
-            )
+            try:
+                self.runtime.key_listener.update_hotkeys(
+                    self.runtime.primary_key_combination,
+                    self.runtime.secondary_key_combination,
+                    self.runtime.llm_key_combination,
+                    self.runtime.rsvp_key_combination,
+                    self.runtime.tts_key_combination,
+                )
+            except TypeError:
+                self.runtime.key_listener.update_hotkeys(
+                    self.runtime.primary_key_combination,
+                    self.runtime.secondary_key_combination,
+                    self.runtime.llm_key_combination,
+                )
 
     def _update_hotkey_value(self, *, is_secondary: bool, new_combination: str) -> None:
         if is_secondary:
@@ -247,6 +304,8 @@ class HotkeyManagementUseCases:
                 raise ValueError("Дополнительный хоткей должен отличаться от LLM-хоткея.")
             if new_combination and new_combination in (self.runtime.rsvp_key_combination, self.runtime.tts_key_combination):
                 raise ValueError("Дополнительный хоткей должен отличаться от reader-хоткеев.")
+            if new_combination and new_combination == self.runtime.zipper_key_combination:
+                raise ValueError("Дополнительный хоткей должен отличаться от Zipper-хоткея.")
             self.runtime.secondary_key_combination = new_combination
             return
 
@@ -256,6 +315,8 @@ class HotkeyManagementUseCases:
             raise ValueError("Основной хоткей должен отличаться от LLM-хоткея.")
         if new_combination and new_combination in (self.runtime.rsvp_key_combination, self.runtime.tts_key_combination):
             raise ValueError("Основной хоткей должен отличаться от reader-хоткеев.")
+        if new_combination and new_combination == self.runtime.zipper_key_combination:
+            raise ValueError("Основной хоткей должен отличаться от Zipper-хоткея.")
         self.runtime.primary_key_combination = new_combination
 
     def _ensure_unique_reader_hotkey(self, new_combination: str, *, current_name: str) -> None:

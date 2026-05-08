@@ -179,6 +179,7 @@ class HotkeyConfig:
     primary_key_combination: str | None
     secondary_key_combination: str | None
     llm_key_combination: str | None
+    zipper_key_combination: str | None
 
     @classmethod
     def from_values(
@@ -187,11 +188,13 @@ class HotkeyConfig:
         primary_key_combination: object,
         secondary_key_combination: object,
         llm_key_combination: object,
+        zipper_key_combination: object = None,
     ) -> HotkeyConfig:
         """Создаёт конфиг хоткеев из сырых значений."""
         primary = _coerce_optional_hotkey(primary_key_combination)
         secondary = _coerce_optional_hotkey(secondary_key_combination)
         llm = _coerce_optional_hotkey(llm_key_combination)
+        zipper = _coerce_optional_hotkey(zipper_key_combination)
 
         if primary is None:
             raise ValueError("Основной хоткей должен быть задан.")
@@ -201,11 +204,14 @@ class HotkeyConfig:
 
         if llm is not None and llm in (primary, secondary):
             raise ValueError("LLM-хоткей должен отличаться от основных хоткеев.")
+        if zipper is not None and zipper in (primary, secondary, llm):
+            raise ValueError("Zipper-хоткей должен отличаться от остальных хоткеев.")
 
         return cls(
             primary_key_combination=primary,
             secondary_key_combination=secondary,
             llm_key_combination=llm,
+            zipper_key_combination=zipper,
         )
 
     @property
@@ -235,6 +241,13 @@ class HotkeyConfig:
         return format_hotkey_status(self.llm_key_combination)
 
     @property
+    def zipper_hotkey_status(self) -> str:
+        """Возвращает display-строку Zipper-хоткея."""
+        if self.zipper_key_combination is None:
+            return "не задан"
+        return format_hotkey_status(self.zipper_key_combination)
+
+    @property
     def primary_store_value(self) -> str:
         """Возвращает значение для хранения основного хоткея."""
         return "" if self.primary_key_combination is None else self.primary_key_combination
@@ -249,12 +262,18 @@ class HotkeyConfig:
         """Возвращает значение для хранения LLM-хоткея."""
         return "" if self.llm_key_combination is None else self.llm_key_combination
 
+    @property
+    def zipper_store_value(self) -> str:
+        """Возвращает значение для хранения Zipper-хоткея."""
+        return "" if self.zipper_key_combination is None else self.zipper_key_combination
+
     def with_primary(self, value: object) -> HotkeyConfig:
         """Возвращает новый конфиг с обновлённым основным хоткеем."""
         return self.from_values(
             primary_key_combination=value,
             secondary_key_combination=self.secondary_key_combination,
             llm_key_combination=self.llm_key_combination,
+            zipper_key_combination=self.zipper_key_combination,
         )
 
     def with_secondary(self, value: object) -> HotkeyConfig:
@@ -263,6 +282,7 @@ class HotkeyConfig:
             primary_key_combination=self.primary_key_combination,
             secondary_key_combination=value,
             llm_key_combination=self.llm_key_combination,
+            zipper_key_combination=self.zipper_key_combination,
         )
 
     def with_llm(self, value: object) -> HotkeyConfig:
@@ -271,6 +291,16 @@ class HotkeyConfig:
             primary_key_combination=self.primary_key_combination,
             secondary_key_combination=self.secondary_key_combination,
             llm_key_combination=value,
+            zipper_key_combination=self.zipper_key_combination,
+        )
+
+    def with_zipper(self, value: object) -> HotkeyConfig:
+        """Возвращает новый конфиг с обновлённым Zipper-хоткеем."""
+        return self.from_values(
+            primary_key_combination=self.primary_key_combination,
+            secondary_key_combination=self.secondary_key_combination,
+            llm_key_combination=self.llm_key_combination,
+            zipper_key_combination=value,
         )
 
 
@@ -295,6 +325,7 @@ class LaunchConfig:
         key_combination: object,
         secondary_key_combination: object,
         llm_key_combination: object,
+        zipper_key_combination: object = None,
         settings_store: SettingsStoreProtocol | None = None,
         cli_overrides: Collection[str] = (),
     ) -> LaunchConfig:
@@ -333,6 +364,13 @@ class LaunchConfig:
         ):
             llm_key_combination = settings_store.load_str(Config.DEFAULTS_KEY_LLM_HOTKEY, fallback="")
 
+        if (
+            settings_store is not None
+            and "--zipper_key_combination" not in cli_overrides
+            and settings_store.contains_key(Config.DEFAULTS_KEY_ZIPPER_HOTKEY)
+        ):
+            zipper_key_combination = settings_store.load_str(Config.DEFAULTS_KEY_ZIPPER_HOTKEY, fallback="")
+
         if settings_store is not None and "--llm_model" not in cli_overrides:
             saved_llm_model = settings_store.load_str(Config.DEFAULTS_KEY_LLM_MODEL, fallback=None)
             if saved_llm_model:
@@ -346,6 +384,7 @@ class LaunchConfig:
             primary_key_combination=key_combination,
             secondary_key_combination=secondary_key_combination,
             llm_key_combination=llm_key_combination,
+            zipper_key_combination=zipper_key_combination,
         )
 
         if normalized_model.endswith(".en") and normalized_languages is not None and any(lang != "en" for lang in normalized_languages):
@@ -380,6 +419,11 @@ class LaunchConfig:
     def llm_key_combination(self) -> str | None:
         """Возвращает LLM-хоткей."""
         return self.hotkeys.llm_key_combination
+
+    @property
+    def zipper_key_combination(self) -> str | None:
+        """Возвращает Zipper-хоткей."""
+        return self.hotkeys.zipper_key_combination
 
     @property
     def max_time_store_value(self) -> str:
@@ -788,9 +832,11 @@ class AppSnapshot:
     hotkey_status: str
     secondary_hotkey_status: str
     llm_hotkey_status: str
+    zipper_hotkey_status: str
     primary_key_combination: str
     secondary_key_combination: str
     llm_key_combination: str
+    zipper_key_combination: str
     llm_prompt_name: str
     performance_mode: str
     max_time: float | None
@@ -823,3 +869,7 @@ class AppSnapshot:
     llm_download_interactive: bool
     llm_model_name: str
     llm_model_options: list[str]
+    zipper_enabled: bool
+    zipper_status: str
+    zipper_debug_panel_enabled: bool
+    zipper_config_path: str

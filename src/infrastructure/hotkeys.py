@@ -229,6 +229,7 @@ class HotkeyDispatcher:
             getattr(app, "llm_key_combination", ""),
             getattr(app, "rsvp_key_combination", ""),
             getattr(app, "tts_key_combination", ""),
+            getattr(app, "zipper_key_combination", ""),
         )
 
     def start(self) -> None:
@@ -296,7 +297,7 @@ class HotkeyDispatcher:
             self.stop()
             self.start()
 
-    def update_hotkeys(self, primary: str, secondary: str, llm: str, rsvp: str = "", tts: str = "") -> None:
+    def update_hotkeys(self, primary: str, secondary: str, llm: str, rsvp: str = "", tts: str = "", zipper: str = "") -> None:
         """Обновляет набор активных хоткеев без пересоздания dispatcher-а."""
         self._bindings = []
         if primary:
@@ -309,6 +310,8 @@ class HotkeyDispatcher:
             self._bindings.append(_HotkeyBinding.from_combination("rsvp", rsvp, self.app.toggle_rsvp))
         if tts:
             self._bindings.append(_HotkeyBinding.from_combination("tts", tts, self.app.toggle_tts))
+        if zipper:
+            self._bindings.append(_HotkeyBinding.from_combination("zipper", zipper, self.app.toggle_zipper))
         self._bindings.sort(
             key=lambda binding: (
                 len(binding.required_modifiers),

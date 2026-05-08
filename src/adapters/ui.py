@@ -96,6 +96,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         )
 
         self.llm_hotkey_item = rumps.MenuItem(f"🤖 LLM-хоткей: {self.llm_hotkey_status}", callback=self.change_llm_hotkey)
+        self.zipper_hotkey_item = rumps.MenuItem(f"🧷 Zipper: {self.zipper_hotkey_status}", callback=self.change_zipper_hotkey)
         self.rsvp_hotkey_item = rumps.MenuItem(f"📖 Reader: {self.rsvp_hotkey_status}", callback=self.change_rsvp_hotkey)
         self.tts_hotkey_item = rumps.MenuItem(f"🔈 Speaker: {self.tts_hotkey_status}", callback=self.change_tts_hotkey)
         self.llm_model_menu = rumps.MenuItem(f"🤖 LLM-модель: {self.llm_model_name}")
@@ -240,10 +241,34 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.reader_menu.add(self.reader_tts_settings_menu)
         self.reader_menu.add(self.reader_preprocess_item)
 
+        self.zipper_menu = rumps.MenuItem("🧷 Zipper")
+        self.zipper_toggle_item = rumps.MenuItem("Включить Zipper", callback=self.toggle_zipper_enabled)
+        self.zipper_status_item = rumps.MenuItem(f"Статус: {self.zipper_status}")
+        self.zipper_status_item.set_callback(None)
+        self.zipper_run_item = rumps.MenuItem(f"Запустить Zipper    {self.zipper_hotkey_status}", callback=self.start_zipper)
+        self.zipper_menu_hotkey_item = rumps.MenuItem(f"Хоткей: {self.zipper_hotkey_status}", callback=self.change_zipper_hotkey)
+        self.zipper_config_item = rumps.MenuItem("Открыть конфиг Zipper…", callback=self.open_zipper_config)
+        self.zipper_reload_config_item = rumps.MenuItem("Перезагрузить конфиг Zipper", callback=self.reload_zipper_config)
+        self.zipper_debug_item = rumps.MenuItem("Debug-панель Zipper", callback=self.toggle_zipper_debug_panel)
+        self.zipper_clear_context_item = rumps.MenuItem("Очистить контекст Zipper", callback=self.clear_zipper_context)
+        self.zipper_clear_memory_item = rumps.MenuItem("Очистить постоянную память Zipper", callback=self.clear_zipper_memory)
+        self.zipper_menu.add(self.zipper_toggle_item)
+        self.zipper_menu.add(self.zipper_status_item)
+        self.zipper_menu.add(self.zipper_run_item)
+        self.zipper_menu.add(self.zipper_menu_hotkey_item)
+        self.zipper_menu.add(None)
+        self.zipper_menu.add(self.zipper_config_item)
+        self.zipper_menu.add(self.zipper_reload_config_item)
+        self.zipper_menu.add(self.zipper_debug_item)
+        self.zipper_menu.add(None)
+        self.zipper_menu.add(self.zipper_clear_context_item)
+        self.zipper_menu.add(self.zipper_clear_memory_item)
+
         self.hotkeys_menu = rumps.MenuItem("⌨️ Хоткеи")
         self.hotkeys_menu.add(self.hotkey_item)
         self.hotkeys_menu.add(self.secondary_hotkey_item)
         self.hotkeys_menu.add(self.llm_hotkey_item)
+        self.hotkeys_menu.add(self.zipper_hotkey_item)
         self.hotkeys_menu.add(self.rsvp_hotkey_item)
         self.hotkeys_menu.add(self.tts_hotkey_item)
 
@@ -298,6 +323,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             self.postprocessing_menu,
             self.hotkeys_menu,
             self.reader_menu,
+            self.zipper_menu,
             self.private_mode_item,
             self.behavior_menu,
             self.llm_menu,
@@ -364,6 +390,26 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def llm_hotkey_status(self) -> str:
         """Возвращает display-строку LLM-хоткея."""
         return self.app.llm_hotkey_status
+
+    @property
+    def zipper_hotkey_status(self) -> str:
+        """Возвращает display-строку Zipper-хоткея."""
+        return getattr(self.app, "zipper_hotkey_status", "не задан")
+
+    @property
+    def zipper_enabled(self) -> bool:
+        """Возвращает флаг включения Zipper."""
+        return bool(getattr(self.app, "zipper_enabled", False))
+
+    @property
+    def zipper_status(self) -> str:
+        """Возвращает статус Zipper."""
+        return str(getattr(self.app, "zipper_status", "выключен"))
+
+    @property
+    def zipper_debug_panel_enabled(self) -> bool:
+        """Возвращает флаг debug-панели Zipper."""
+        return bool(getattr(self.app, "zipper_debug_panel_enabled", False))
 
     @property
     def rsvp_hotkey_status(self) -> str:
@@ -679,6 +725,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             Config.STATUS_RECORDING: "запись",
             Config.STATUS_TRANSCRIBING: "распознавание",
             Config.STATUS_LLM_PROCESSING: "обработка LLM",
+            Config.STATUS_ZIPPER_PROCESSING: "обработка Zipper",
         }
         return labels.get(self.state, "неизвестно")
 
@@ -771,6 +818,9 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.hotkey_item.title = f"⌨️ Основной хоткей: {self.hotkey_status}"
         self.secondary_hotkey_item.title = f"⌨️ Доп. хоткей: {self.secondary_hotkey_status}"
         self.llm_hotkey_item.title = f"🤖 LLM-хоткей: {self.llm_hotkey_status}"
+        self.zipper_hotkey_item.title = f"🧷 Zipper: {self.zipper_hotkey_status}"
+        self.zipper_menu_hotkey_item.title = f"Хоткей: {self.zipper_hotkey_status}"
+        self.zipper_run_item.title = f"Запустить Zipper    {self.zipper_hotkey_status}"
         self.rsvp_hotkey_item.title = f"📖 Reader: {self.rsvp_hotkey_status}"
         self.tts_hotkey_item.title = f"🔈 Speaker: {self.tts_hotkey_status}"
         self.reader_rsvp_item.title = f"👀 Запустить RSVP    {self.rsvp_hotkey_status}"
@@ -921,6 +971,9 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         if self.state == Config.STATUS_LLM_PROCESSING:
             self.title = "🤖"
             return
+        if self.state == Config.STATUS_ZIPPER_PROCESSING:
+            self.title = "🧷"
+            return
         self.title = "⏯"
 
     def _format_history_title(self, text: str) -> str:
@@ -979,6 +1032,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.llm_download_item.title = snapshot.llm_download_title
         self.llm_download_item.set_callback(self._download_llm_model if snapshot.llm_download_interactive else None)
         self.llm_model_menu.title = f"🤖 LLM-модель: {snapshot.llm_model_name}"
+        self.zipper_toggle_item.title = "Выключить Zipper" if snapshot.zipper_enabled else "Включить Zipper"
+        self.zipper_toggle_item.state = int(snapshot.zipper_enabled)
+        self.zipper_status_item.title = f"Статус: {snapshot.zipper_status}"
+        self.zipper_debug_item.state = int(snapshot.zipper_debug_panel_enabled)
+        self.zipper_config_item.title = f"Открыть конфиг Zipper… ({snapshot.zipper_config_path})"
 
         self._refresh_hotkey_items()
         self._refresh_reader_items()
@@ -1070,6 +1128,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Изменяет LLM-хоткей через DictationApp."""
         self.app.change_llm_hotkey()
 
+    def change_zipper_hotkey(self, _: object) -> None:
+        """Изменяет Zipper-хоткей через DictationApp."""
+        self.app.change_zipper_hotkey()
+
     def change_rsvp_hotkey(self, _: object) -> None:
         """Изменяет RSVP-хоткей через DictationApp."""
         self.app.change_rsvp_hotkey()
@@ -1150,6 +1212,34 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def start_tts(self, _sender: rumps.MenuItem) -> None:
         """Запускает TTS из буфера обмена."""
         self.app.toggle_tts()
+
+    def start_zipper(self, _sender: rumps.MenuItem) -> None:
+        """Запускает Zipper из меню."""
+        self.app.toggle_zipper()
+
+    def toggle_zipper_enabled(self, _sender: rumps.MenuItem) -> None:
+        """Включает или выключает Zipper."""
+        self.app.toggle_zipper_enabled()
+
+    def open_zipper_config(self, _sender: rumps.MenuItem) -> None:
+        """Открывает конфиг Zipper."""
+        self.app.open_zipper_config()
+
+    def reload_zipper_config(self, _sender: rumps.MenuItem) -> None:
+        """Перечитывает конфиг Zipper."""
+        self.app.reload_zipper_config()
+
+    def toggle_zipper_debug_panel(self, _sender: rumps.MenuItem) -> None:
+        """Переключает debug-панель Zipper."""
+        self.app.toggle_zipper_debug_panel()
+
+    def clear_zipper_context(self, _sender: rumps.MenuItem) -> None:
+        """Очищает контекст Zipper."""
+        self.app.clear_zipper_context()
+
+    def clear_zipper_memory(self, _sender: rumps.MenuItem) -> None:
+        """Очищает постоянную память Zipper."""
+        self.app.clear_zipper_memory()
 
     def change_reader_rsvp_wpm(self, sender: rumps.MenuItem) -> None:
         """Меняет скорость RSVP."""

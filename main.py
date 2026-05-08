@@ -15,6 +15,7 @@ from src.adapters.hotkey_dialog import capture_hotkey_combination
 from src.adapters.overlay import RecordingOverlay
 from src.adapters.rsvp_overlay import RSVPOverlay
 from src.adapters.ui import StatusBarApp
+from src.adapters.zipper_windows import ZipperTextOutput, ZipperVoiceOutput
 from src.app import (  # noqa: F401
     AppSnapshot,
     ClipboardService,
@@ -27,6 +28,16 @@ from src.app import (  # noqa: F401
     ObsidianService,
     SystemDiagnosticsService,
     SystemIntegrationService,
+    ZipperAgentService,
+    ZipperCommandRunnerService,
+    ZipperConfigProviderService,
+    ZipperCustomToolRunnerService,
+    ZipperMCPToolProviderService,
+    ZipperMemoryStoreService,
+    ZipperNoteWriterService,
+    ZipperTextOutputService,
+    ZipperUrlOpenerService,
+    ZipperVoiceOutputService,
 )
 from src.domain.audio import microphone_menu_title  # noqa: F401
 from src.domain.constants import Config
@@ -38,6 +49,7 @@ from src.domain.hotkeys import (  # noqa: F401
     normalize_key_combination,
     normalize_key_name,
 )
+from src.domain.reader_types import TTSConfig
 from src.domain.types import (  # noqa: F401
     AppPreferences,
     LaunchConfig,
@@ -107,6 +119,16 @@ from src.infrastructure.text_input import (
 from src.infrastructure.tts_macos import MacOSTTSController
 from src.infrastructure.tts_mlx import MlxStreamingTTSController
 from src.infrastructure.tts_router import ReaderTTSRouter
+from src.infrastructure.zipper_config import ZipperConfigProvider
+from src.infrastructure.zipper_runtime import (
+    FileZipperMemoryStore,
+    LangChainZipperAgent,
+    ZipperCommandRunner,
+    ZipperCustomToolRunner,
+    ZipperMCPToolProvider,
+    ZipperNoteWriter,
+    ZipperUrlOpener,
+)
 from src.use_cases.transcription import TranscriptionUseCases as SpeechTranscriber
 
 defaults = Defaults()
@@ -205,6 +227,16 @@ def parse_args() -> LaunchConfig:
         ),
     )
     parser.add_argument(
+        "--zipper_key_combination",
+        type=str,
+        default="ctrl+shift+alt+z",
+        help=(
+            "Комбинация клавиш для голосового агента Zipper: "
+            "голос → Whisper → локальный LangChain-агент. "
+            "По умолчанию: ctrl+shift+alt+z. Укажите пустую строку, чтобы отключить."
+        ),
+    )
+    parser.add_argument(
         "--llm_model",
         type=str,
         default=Config.DEFAULT_LLM_MODEL_NAME,
@@ -221,6 +253,7 @@ def parse_args() -> LaunchConfig:
             ("-l", "--language"),
             ("-t", "--max_time"),
             ("--llm_key_combination",),
+            ("--zipper_key_combination",),
             ("--llm_model",),
         )
         if _cli_option_was_provided(*option_names)
@@ -236,6 +269,7 @@ def parse_args() -> LaunchConfig:
             key_combination=args.key_combination,
             secondary_key_combination=args.secondary_key_combination,
             llm_key_combination=args.llm_key_combination,
+            zipper_key_combination=args.zipper_key_combination,
             settings_store=defaults,
             cli_overrides=cli_overrides,
         )
@@ -252,6 +286,8 @@ def _log_startup_configuration(args: LaunchConfig) -> None:
         LOGGER.info("Дополнительный хоткей: %s", args.secondary_key_combination)
     if args.llm_key_combination:
         LOGGER.info("LLM-хоткей: %s", args.llm_key_combination)
+    if args.zipper_key_combination:
+        LOGGER.info("Zipper-хоткей: %s", args.zipper_key_combination)
     LOGGER.info("Reader RSVP/TTS хоткеи читаются из NSUserDefaults с безопасными дефолтами")
 
 
@@ -352,6 +388,19 @@ def main() -> None:
         apple_speaker=MacOSTTSController(),
         mlx_speaker=MlxStreamingTTSController(),
     )
+    zipper_config_provider = ZipperConfigProvider(open_path=open_path)
+    zipper_memory_store = FileZipperMemoryStore()
+    zipper_text_output_adapter = ZipperTextOutput()
+    app_controller_holder: dict[str, Any] = {}
+
+    def _zipper_tts_config() -> TTSConfig:
+        controller = cast("DictationApp", app_controller_holder["controller"])
+        return controller.reader_preferences.tts_config
+
+    zipper_voice_output_adapter = ZipperVoiceOutput(
+        tts_speaker,
+        config_factory=_zipper_tts_config,
+    )
 
     app_controller = DictationApp(
         recorder,
@@ -373,7 +422,31 @@ def main() -> None:
         rsvp_display=rsvp_display,
         tts_speaker=tts_speaker,
         settings_store=defaults,
+        zipper_config_provider=ZipperConfigProviderService(
+            load_config=zipper_config_provider.load_config,
+            config_path=zipper_config_provider.config_path,
+            open_config=zipper_config_provider.open_config,
+        ),
+        zipper_memory_store=ZipperMemoryStoreService(
+            load=zipper_memory_store.load,
+            save=zipper_memory_store.save,
+        ),
+        zipper_agent_service=ZipperAgentService(invoke=LangChainZipperAgent(llm_processor).invoke),
+        zipper_text_output=ZipperTextOutputService(
+            show_text=zipper_text_output_adapter.show_text,
+            confirm=zipper_text_output_adapter.confirm,
+            set_debug_visible=zipper_text_output_adapter.set_debug_visible,
+            append_debug_event=zipper_text_output_adapter.append_debug_event,
+            debug_events=zipper_text_output_adapter.debug_events,
+        ),
+        zipper_voice_output=ZipperVoiceOutputService(speak=zipper_voice_output_adapter.speak),
+        zipper_url_opener=ZipperUrlOpenerService(open_url=ZipperUrlOpener().open_url),
+        zipper_command_runner=ZipperCommandRunnerService(run=ZipperCommandRunner().run),
+        zipper_custom_tool_runner=ZipperCustomToolRunnerService(run=ZipperCustomToolRunner().run),
+        zipper_mcp_tool_provider=ZipperMCPToolProviderService(tools_for_config=ZipperMCPToolProvider().tools_for_config),
+        zipper_note_writer=ZipperNoteWriterService(write_note=ZipperNoteWriter().write_note),
     )
+    app_controller_holder["controller"] = app_controller
     app = StatusBarApp(cast("Any", app_controller))
     key_listener = hotkey_listener_factory.create_listener(app_controller)
     key_listener.start()

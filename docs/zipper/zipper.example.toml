@@ -1,0 +1,43 @@
+# Пример конфига Zipper для Dictator.
+# Пользовательский конфиг установленного приложения создаётся в:
+# ~/Library/Application Support/Dictator/zipper.toml
+
+enabled = true
+system_message = """
+Ты Zipper, локальный голосовой агент Dictator.
+Работай только через доступные инструменты, не выполняй произвольные shell-команды.
+Отвечай по-русски. Короткие подтверждения можно озвучивать, длинные результаты показывай в окне.
+"""
+notes_directory = "~/Library/Application Support/Dictator/Zipper/Notes"
+
+[context]
+max_tokens = 32768
+max_events = 200
+memory_enabled = true
+
+[debug]
+enabled = false
+
+[[cli_commands]]
+name = "show_date"
+description = "Показать текущую дату через системную команду date."
+command = ["/bin/date"]
+require_confirmation = false
+
+[[cli_commands]]
+name = "list_downloads"
+description = "Показать несколько файлов из папки Downloads."
+command = ["/bin/ls", "-1", "/Users/biji/Downloads"]
+require_confirmation = true
+
+[[mcp_servers]]
+name = "filesystem_example"
+enabled = false
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/biji/Documents"]
+
+[[custom_tools]]
+name = "project_hint"
+description = "Вернуть локальную подсказку по проекту."
+kind = "static_text"
+value = "Dictator хранит пользовательские файлы в ~/Library/Application Support/Dictator."

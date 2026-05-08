@@ -279,9 +279,11 @@ def make_snapshot(**overrides):
         hotkey_status="левая ⌘ + ⌥",
         secondary_hotkey_status="не задан",
         llm_hotkey_status="не задан",
+        zipper_hotkey_status="не задан",
         primary_key_combination="cmd_l+alt",
         secondary_key_combination="",
         llm_key_combination="",
+        zipper_key_combination="",
         llm_prompt_name=Config.DEFAULT_LLM_PROMPT_NAME,
         performance_mode=Config.DEFAULT_PERFORMANCE_MODE,
         max_time=30,
@@ -330,6 +332,10 @@ def make_snapshot(**overrides):
         llm_download_interactive=False,
         llm_model_name="gemma-4-26b-a4b-it-4bit",
         llm_model_options=list(Config.LLM_MODEL_PRESETS),
+        zipper_enabled=True,
+        zipper_status="ожидание",
+        zipper_debug_panel_enabled=False,
+        zipper_config_path="/tmp/zipper.toml",
     )
     return replace(base_snapshot, **overrides)
 
@@ -358,6 +364,7 @@ class FakeDictationController:
         self.hotkey_status = snapshot.hotkey_status
         self.secondary_hotkey_status = snapshot.secondary_hotkey_status
         self.llm_hotkey_status = snapshot.llm_hotkey_status
+        self.zipper_hotkey_status = snapshot.zipper_hotkey_status
         self.llm_prompt_name = snapshot.llm_prompt_name
         self.performance_mode = snapshot.performance_mode
         self.max_time = snapshot.max_time
@@ -392,6 +399,10 @@ class FakeDictationController:
         self.total_tokens = snapshot.total_tokens
         self.llm_model_name = snapshot.llm_model_name
         self.llm_model_options = list(snapshot.llm_model_options)
+        self.zipper_enabled = snapshot.zipper_enabled
+        self.zipper_status = snapshot.zipper_status
+        self.zipper_debug_panel_enabled = snapshot.zipper_debug_panel_enabled
+        self.zipper_config_path = snapshot.zipper_config_path
 
     def subscribe(self, callback):
         """Подписывает UI на обновления snapshot и сразу отправляет текущее состояние."""
@@ -473,6 +484,38 @@ class FakeDictationController:
         """Имитирует остановку записи и публикует idle snapshot."""
         self.calls.append(("stop_recording", None))
         self.emit(replace(self._snapshot, started=False, state=Config.STATUS_IDLE))
+
+    def toggle_zipper(self):
+        """Запоминает запуск Zipper."""
+        self.calls.append(("toggle_zipper", None))
+
+    def toggle_zipper_enabled(self):
+        """Запоминает переключение Zipper."""
+        self.calls.append(("toggle_zipper_enabled", None))
+
+    def change_zipper_hotkey(self):
+        """Запоминает смену Zipper-хоткея."""
+        self.calls.append(("change_zipper_hotkey", None))
+
+    def open_zipper_config(self):
+        """Запоминает открытие конфига Zipper."""
+        self.calls.append(("open_zipper_config", None))
+
+    def reload_zipper_config(self):
+        """Запоминает перезагрузку конфига Zipper."""
+        self.calls.append(("reload_zipper_config", None))
+
+    def toggle_zipper_debug_panel(self):
+        """Запоминает переключение debug-панели Zipper."""
+        self.calls.append(("toggle_zipper_debug_panel", None))
+
+    def clear_zipper_context(self):
+        """Запоминает очистку контекста Zipper."""
+        self.calls.append(("clear_zipper_context", None))
+
+    def clear_zipper_memory(self):
+        """Запоминает очистку памяти Zipper."""
+        self.calls.append(("clear_zipper_memory", None))
 
     def on_status_tick(self):
         """Сохраняет совместимость с UI-таймером без дополнительной логики."""
@@ -582,6 +625,7 @@ class TestStatusBarInit:
         assert app.hotkeys_menu[app.hotkey_item.title].title == app.hotkey_item.title
         assert app.hotkeys_menu[app.secondary_hotkey_item.title].title == app.secondary_hotkey_item.title
         assert app.hotkeys_menu[app.llm_hotkey_item.title].title == app.llm_hotkey_item.title
+        assert app.hotkeys_menu[app.zipper_hotkey_item.title].title == app.zipper_hotkey_item.title
 
     def test_secondary_hotkey_in_menu_when_missing(self, make_app):
         """Если дополнительный хоткей не задан, это явно видно в меню."""

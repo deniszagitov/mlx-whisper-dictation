@@ -38,6 +38,7 @@ class StatusBarControllerProtocol(Protocol):
     hotkey_status: str
     secondary_hotkey_status: str
     llm_hotkey_status: str
+    zipper_hotkey_status: str
     rsvp_hotkey_status: str
     tts_hotkey_status: str
     llm_prompt_name: str
@@ -74,6 +75,7 @@ class StatusBarControllerProtocol(Protocol):
     primary_key_combination: str
     secondary_key_combination: str
     llm_key_combination: str
+    zipper_key_combination: str
     rsvp_key_combination: str
     tts_key_combination: str
     llm_model_name: str
@@ -88,6 +90,10 @@ class StatusBarControllerProtocol(Protocol):
     reader_tts_mlx_model: str
     reader_tts_mlx_voice_description: str
     reader_preprocess_enabled: bool
+    zipper_enabled: bool
+    zipper_status: str
+    zipper_debug_panel_enabled: bool
+    zipper_config_path: str
 
     def subscribe(self, callback: Callable[[AppSnapshot], None]) -> None:
         """Подписывает UI на обновления snapshot."""
@@ -159,6 +165,10 @@ class StatusBarControllerProtocol(Protocol):
 
     def change_llm_hotkey(self) -> None:
         """Меняет LLM-хоткей."""
+        ...
+
+    def change_zipper_hotkey(self) -> None:
+        """Меняет Zipper-хоткей."""
         ...
 
     def change_rsvp_hotkey(self) -> None:
@@ -315,6 +325,34 @@ class StatusBarControllerProtocol(Protocol):
 
     def toggle_llm(self) -> None:
         """Переключает LLM-сценарий."""
+        ...
+
+    def toggle_zipper(self) -> None:
+        """Переключает Zipper-сценарий."""
+        ...
+
+    def toggle_zipper_enabled(self) -> None:
+        """Включает или выключает Zipper."""
+        ...
+
+    def open_zipper_config(self) -> None:
+        """Открывает конфиг Zipper."""
+        ...
+
+    def reload_zipper_config(self) -> None:
+        """Перечитывает конфиг Zipper."""
+        ...
+
+    def toggle_zipper_debug_panel(self) -> None:
+        """Переключает debug-панель Zipper."""
+        ...
+
+    def clear_zipper_context(self) -> None:
+        """Очищает контекст Zipper."""
+        ...
+
+    def clear_zipper_memory(self) -> None:
+        """Очищает постоянную память Zipper."""
         ...
 
     def handle_escape_keycode(self, keycode: int) -> None:

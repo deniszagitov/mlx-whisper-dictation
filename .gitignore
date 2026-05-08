@@ -21,3 +21,4 @@ htmlcov/
 *.bak
 *.stale
 logs/
+zipper.local.toml
