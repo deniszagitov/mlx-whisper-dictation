@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import AppKit
@@ -74,6 +75,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self._history_title_to_text: dict[str, str] = {}
         self._microphone_profile_titles: dict[str, MicrophoneProfile] = {}
         self._delete_microphone_profile_titles: dict[str, MicrophoneProfile] = {}
+        self._last_snapshot: AppSnapshot | None = None
 
         self.status_item = rumps.MenuItem(f"🔄 Статус: {self._state_label()}")
         self.model_item = rumps.MenuItem(f"🧠 Модель: {self.model_name}")
@@ -1021,6 +1023,9 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
     def _apply_snapshot(self, snapshot: AppSnapshot) -> None:
         """Применяет новый snapshot DictationApp к меню."""
+        if self._apply_download_status_snapshot(snapshot):
+            return
+
         self.model_item.title = f"🧠 Модель: {snapshot.model_name}"
         self.language_item.title = f"🌍 Язык: {self._format_language()}"
         self.input_device_menu.title = f"🎙️ Микрофон: {self._format_input_device()}"
@@ -1069,6 +1074,37 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
         if not snapshot.started:
             self._refresh_title_and_status()
+        self._last_snapshot = snapshot
+
+    def _apply_download_status_snapshot(self, snapshot: AppSnapshot) -> bool:
+        """Быстро применяет частые snapshot-ы прогресса загрузки без перестройки меню."""
+        previous = self._last_snapshot
+        if previous is None:
+            return False
+        download_status_changed = (
+            snapshot.model_download_title != previous.model_download_title
+            or snapshot.model_download_active != previous.model_download_active
+            or snapshot.llm_download_title != previous.llm_download_title
+            or snapshot.llm_download_interactive != previous.llm_download_interactive
+        )
+        if not download_status_changed:
+            return False
+        comparable_snapshot = replace(
+            snapshot,
+            elapsed_time=previous.elapsed_time,
+            model_download_title=previous.model_download_title,
+            model_download_active=previous.model_download_active,
+            llm_download_title=previous.llm_download_title,
+            llm_download_interactive=previous.llm_download_interactive,
+        )
+        if comparable_snapshot != previous:
+            return False
+
+        self.model_download_item.title = snapshot.model_download_title
+        self.llm_download_item.title = snapshot.llm_download_title
+        self.llm_download_item.set_callback(self._download_llm_model if snapshot.llm_download_interactive else None)
+        self._last_snapshot = snapshot
+        return True
 
     def _apply_snapshot_on_main_thread(self, snapshot: AppSnapshot) -> None:
         """Переводит применение snapshot на главный поток, если callback пришёл из background thread."""

@@ -6,11 +6,15 @@
 
 import argparse
 import logging
+import os
 import platform
+import signal
 import sys
+import threading
 from typing import Any, cast
 
 import Quartz  # noqa: F401
+import rumps
 from src.adapters.hotkey_dialog import capture_hotkey_combination
 from src.adapters.overlay import RecordingOverlay
 from src.adapters.rsvp_overlay import RSVPOverlay
@@ -131,6 +135,7 @@ from src.use_cases.transcription import TranscriptionUseCases as SpeechTranscrib
 defaults = Defaults()
 
 LOGGER = logging.getLogger(__name__)
+CLI_FORCE_EXIT_DELAY_SECONDS = 2.0
 
 
 def _cli_option_was_provided(*option_names: str) -> bool:
@@ -286,6 +291,115 @@ def _log_startup_configuration(args: LaunchConfig) -> None:
     if args.zipper_key_combination:
         LOGGER.info("Zipper-хоткей: %s", args.zipper_key_combination)
     LOGGER.info("Reader RSVP/TTS хоткеи читаются из NSUserDefaults с безопасными дефолтами")
+
+
+def _safe_shutdown_call(label: str, callback: Any) -> None:
+    """Выполняет шаг остановки приложения, не срывая общий shutdown."""
+    if not callable(callback):
+        return
+    try:
+        callback()
+    except Exception:
+        LOGGER.exception("⚠️ Ошибка при завершении: %s", label)
+
+
+def _stop_runtime_for_cli_shutdown(
+    *,
+    app_controller: DictationApp,
+    key_listener: Any,
+    tts_speaker: Any,
+    rsvp_display: Any,
+    display_sleep_prevention_service: DisplaySleepPreventionService,
+) -> None:
+    """Останавливает runtime-ресурсы перед выходом из CLI."""
+    _safe_shutdown_call("отмена активной записи", app_controller.cancel_recording)
+    _safe_shutdown_call("остановка hotkey-listener", getattr(key_listener, "stop", None))
+    _safe_shutdown_call("остановка TTS", getattr(tts_speaker, "stop", None))
+    _safe_shutdown_call("закрытие RSVP", getattr(rsvp_display, "close", None))
+    _safe_shutdown_call("скрытие overlay записи", getattr(app_controller.recording_overlay, "hide", None))
+    _safe_shutdown_call("отпускание защиты дисплея", display_sleep_prevention_service.release)
+
+
+def _build_cli_shutdown_handler(
+    *,
+    app_controller: DictationApp,
+    key_listener: Any,
+    tts_speaker: Any,
+    rsvp_display: Any,
+    display_sleep_prevention_service: DisplaySleepPreventionService,
+    quit_application: Any = None,
+    force_exit: Any = os._exit,
+    timer_factory: Any = threading.Timer,
+) -> Any:
+    """Создаёт обработчик SIGINT/SIGTERM для запуска из терминала."""
+    shutdown_requested = False
+    quit_app = quit_application or rumps.quit_application
+
+    def handler(signum: int, _frame: Any = None) -> None:
+        nonlocal shutdown_requested
+        exit_code = 128 + int(signum)
+        if shutdown_requested:
+            LOGGER.warning("🛑 Получен повторный сигнал завершения, выхожу принудительно: signal=%s", signum)
+            force_exit(exit_code)
+            return
+
+        shutdown_requested = True
+        LOGGER.info("🛑 Получен сигнал завершения из CLI: signal=%s", signum)
+        timer = timer_factory(CLI_FORCE_EXIT_DELAY_SECONDS, lambda: force_exit(exit_code))
+        timer.daemon = True
+        timer.start()
+
+        _stop_runtime_for_cli_shutdown(
+            app_controller=app_controller,
+            key_listener=key_listener,
+            tts_speaker=tts_speaker,
+            rsvp_display=rsvp_display,
+            display_sleep_prevention_service=display_sleep_prevention_service,
+        )
+        _safe_shutdown_call("остановка menu bar приложения", lambda: quit_app(None))
+
+    return handler
+
+
+def _install_cli_shutdown_handlers(
+    *,
+    app_controller: DictationApp,
+    key_listener: Any,
+    tts_speaker: Any,
+    rsvp_display: Any,
+    display_sleep_prevention_service: DisplaySleepPreventionService,
+) -> None:
+    """Регистрирует Ctrl-C/Ctrl-Term shutdown для запуска приложения из CLI."""
+    handler = _build_cli_shutdown_handler(
+        app_controller=app_controller,
+        key_listener=key_listener,
+        tts_speaker=tts_speaker,
+        rsvp_display=rsvp_display,
+        display_sleep_prevention_service=display_sleep_prevention_service,
+    )
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+    def install_mach_signal_handlers() -> None:
+        try:
+            from PyObjCTools import MachSignals  # type: ignore[import-untyped]  # noqa: PLC0415
+
+            MachSignals.signal(signal.SIGINT, lambda signum: handler(signum, None))
+            MachSignals.signal(signal.SIGTERM, lambda signum: handler(signum, None))
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось зарегистрировать Mach signal handlers для CLI")
+
+    def cleanup_before_quit(*_args: Any, **_kwargs: Any) -> None:
+        _stop_runtime_for_cli_shutdown(
+            app_controller=app_controller,
+            key_listener=key_listener,
+            tts_speaker=tts_speaker,
+            rsvp_display=rsvp_display,
+            display_sleep_prevention_service=display_sleep_prevention_service,
+        )
+
+    rumps.events.before_start.register(install_mach_signal_handlers)
+    rumps.events.before_quit.register(cleanup_before_quit)
 
 
 def main() -> None:
@@ -458,6 +572,13 @@ def main() -> None:
     key_listener = hotkey_listener_factory.create_listener(app_controller)
     key_listener.start()
     app_controller.key_listener = key_listener
+    _install_cli_shutdown_handlers(
+        app_controller=app_controller,
+        key_listener=key_listener,
+        tts_speaker=tts_speaker,
+        rsvp_display=rsvp_display,
+        display_sleep_prevention_service=display_sleep_prevention_service,
+    )
     app_controller.system_event_observer = register_system_event_observer(app_controller.handle_system_power_event)
     app_controller.wake_observer = app_controller.system_event_observer
     app_controller.application_activation_observer = register_application_activation_observer(

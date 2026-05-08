@@ -683,6 +683,31 @@ class TestStatusBarInit:
         assert app.model_download_item.title == title
         assert app._menu_item(title).title == title
 
+    def test_model_download_progress_does_not_rebuild_menu_during_recording(self, make_app, monkeypatch):
+        """Частый прогресс загрузки не должен блокировать таймер overlay полной перестройкой меню."""
+        app, *_ = make_app(languages=["ru"])
+        recording_snapshot = make_snapshot(started=True, state=Config.STATUS_RECORDING, elapsed_time=3)
+        app._apply_snapshot(recording_snapshot)
+        heavy_refreshes: list[str] = []
+        monkeypatch.setattr(app, "_refresh_hotkey_items", lambda: heavy_refreshes.append("hotkeys"))
+        monkeypatch.setattr(app, "_refresh_reader_items", lambda: heavy_refreshes.append("reader"))
+        monkeypatch.setattr(app, "_refresh_input_device_menu", lambda: heavy_refreshes.append("inputs"))
+        monkeypatch.setattr(app, "_refresh_microphone_profiles_menu", lambda: heavy_refreshes.append("profiles"))
+        monkeypatch.setattr(app, "_refresh_history_menu", lambda: heavy_refreshes.append("history"))
+        progress_title = "📥 VLM-модель: 25% (4 ГБ/16 ГБ) · 20 МБ/с"
+
+        app._apply_snapshot(
+            replace(
+                recording_snapshot,
+                elapsed_time=4,
+                model_download_title=progress_title,
+                model_download_active=True,
+            )
+        )
+
+        assert app.model_download_item.title == progress_title
+        assert heavy_refreshes == []
+
     def test_started_is_false(self, make_app):
         """Запись не запущена при инициализации."""
         app, *_ = make_app(languages=["ru"])
