@@ -130,7 +130,7 @@ class MacOSDisplaySleepAssertion:
             return False
 
         self._assertion_id = int(assertion_id.value)
-        LOGGER.info("💡 Дисплей удерживается от сна на время диктовки: assertion_id=%s", self._assertion_id)
+        LOGGER.debug("💡 Дисплей удерживается от сна на время диктовки: assertion_id=%s", self._assertion_id)
         log_power_diagnostics("acquired", self._assertion_id)
         return True
 
@@ -153,7 +153,7 @@ class MacOSDisplaySleepAssertion:
             LOGGER.warning("💡 macOS вернула ошибку при отпускании display sleep assertion: IOReturn=%s", result)
             return
 
-        LOGGER.info("💡 Дисплей снова может уходить в сон: assertion_id=%s", assertion_id)
+        LOGGER.debug("💡 Дисплей снова может уходить в сон: assertion_id=%s", assertion_id)
         log_power_diagnostics("released", assertion_id)
 
     def _load_frameworks(self) -> tuple[Any, Any]:

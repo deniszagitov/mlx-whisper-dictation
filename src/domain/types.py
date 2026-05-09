@@ -777,6 +777,19 @@ class MicrophoneProfile:
 
 
 @dataclass(slots=True)
+class DownloadableModelStatus:
+    """Снимок состояния скачиваемой модели для UI."""
+
+    model_id: str
+    title: str
+    state: str
+    status_text: str
+    progress_percent: float | None
+    can_download: bool
+    can_delete: bool
+
+
+@dataclass(slots=True)
 class AppSnapshot:
     """Снимок состояния контроллера диктовки для UI и тестов."""
 
@@ -788,9 +801,13 @@ class AppSnapshot:
     hotkey_status: str
     secondary_hotkey_status: str
     llm_hotkey_status: str
+    rsvp_hotkey_status: str
+    tts_hotkey_status: str
     primary_key_combination: str
     secondary_key_combination: str
     llm_key_combination: str
+    rsvp_key_combination: str
+    tts_key_combination: str
     llm_prompt_name: str
     performance_mode: str
     max_time: float | None
@@ -818,8 +835,23 @@ class AppSnapshot:
     audio_artifact_cleanup_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
+    obsidian_vault_path: str
+    obsidian_history_directory: str
+    obsidian_today_topics: list[tuple[str, int]]
     total_tokens: int
     llm_download_title: str
     llm_download_interactive: bool
+    downloadable_models: dict[str, DownloadableModelStatus]
+    llm_model_repo: str
     llm_model_name: str
     llm_model_options: list[str]
+    reader_rsvp_wpm: int
+    reader_rsvp_chunk_size: int
+    reader_rsvp_font_size: int
+    reader_tts_rate_multiplier: float
+    reader_tts_voice_id: str | None
+    reader_tts_max_minutes: int
+    reader_tts_engine: str
+    reader_tts_mlx_model: str
+    reader_tts_mlx_voice_description: str
+    reader_preprocess_enabled: bool

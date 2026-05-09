@@ -31,6 +31,25 @@ def _release_display_sleep(runtime: Any) -> None:
         release(immediate=True, reason="llm_cancel_or_start_failure")
 
 
+def _format_llm_archive_entry(prompt_name: str, request_text: str, response_text: str) -> str:
+    """Формирует человекочитаемую архивную запись LLM-диалога."""
+    return f"Промпт: {prompt_name}\n\nЗапрос: {request_text}\n\nОтвет:\n{response_text}"
+
+
+def _archive_obsidian_entry(runtime: Any, transcriber: Any, obsidian_service: Any | None, kind: str, text: str) -> None:
+    """Сохраняет LLM-запись в Obsidian, если приватный режим выключен."""
+    if obsidian_service is None or getattr(transcriber, "private_mode_enabled", False):
+        return
+    try:
+        archive_with_runtime = getattr(runtime, "archive_obsidian_history_entry", None)
+        if callable(archive_with_runtime):
+            archive_with_runtime(kind, text)
+            return
+        obsidian_service.append_history_entry(kind, text, None)
+    except Exception:
+        LOGGER.exception("❌ Не удалось сохранить LLM-запись в Obsidian-архив")
+
+
 class LlmPipelineUseCases:
     """Оркестрирует сценарий запись → Whisper → LLM."""
 
@@ -70,7 +89,12 @@ class LlmPipelineUseCases:
 
         if not self.llm_processor.is_model_cached():
             self.runtime.system_integration_service.notify("MLX Whisper Dictation", "LLM-модель ещё не скачана. Запускаю загрузку…")
-            self.download_llm_model()
+            download_model = getattr(self.runtime, "download_model", None)
+            llm_model_repo = getattr(self.runtime, "llm_model_repo", "")
+            if callable(download_model) and llm_model_repo:
+                download_model(llm_model_repo)
+            else:
+                self.download_llm_model()
             return
 
         if not self.runtime.prepare_recording():
@@ -91,6 +115,7 @@ class LlmPipelineUseCases:
         is_obsidian = self.runtime.llm_prompt_name in Config.OBSIDIAN_PROMPT_NAMES
         is_obsidian_remind = self.runtime.llm_prompt_name == "📝 Obsidian: напомни"
         obsidian_service = self.obsidian_service
+        prompt_name = self.runtime.llm_prompt_name
 
         def on_audio_ready(
             audio_data: npt.NDArray[np.float32],
@@ -106,7 +131,9 @@ class LlmPipelineUseCases:
             context = None
 
             if is_obsidian_remind and obsidian_service is not None:
-                vault_context = obsidian_service.search_notes(whisper_text)
+                vault_context = obsidian_service.search_history(whisper_text)
+                if not vault_context:
+                    vault_context = obsidian_service.search_notes(whisper_text)
                 if vault_context:
                     context = vault_context
             elif use_clipboard:
@@ -129,6 +156,17 @@ class LlmPipelineUseCases:
                     "MLX Whisper Dictation",
                     "Ошибка LLM. Текст сохранён в буфер обмена.",
                 )
+                _archive_obsidian_entry(
+                    self.runtime,
+                    self.transcriber,
+                    obsidian_service,
+                    "поиск" if is_obsidian_remind else "llm",
+                    (
+                        _format_llm_archive_entry(prompt_name, whisper_text, "Ошибка LLM. Ответ не получен.")
+                        if is_obsidian_remind
+                        else whisper_text
+                    ),
+                )
                 self.clipboard_service.write_text(whisper_text)
                 self.transcriber.add_to_history(whisper_text)
                 return
@@ -139,6 +177,10 @@ class LlmPipelineUseCases:
                 return
 
             final_text = llm_response or whisper_text
+            archive_kind = "поиск" if is_obsidian_remind else ("заметка" if is_obsidian else "llm")
+            archive_entry = (
+                _format_llm_archive_entry(prompt_name, whisper_text, final_text) if is_obsidian_remind else final_text
+            )
 
             if is_obsidian and not is_obsidian_remind and obsidian_service is not None:
                 try:
@@ -146,6 +188,7 @@ class LlmPipelineUseCases:
                 except Exception:
                     LOGGER.exception("❌ Ошибка записи в Obsidian vault")
                 else:
+                    _archive_obsidian_entry(self.runtime, self.transcriber, obsidian_service, archive_kind, archive_entry)
                     self.transcriber.add_to_history(final_text)
                     self.runtime.system_integration_service.notify(
                         "MLX Whisper Dictation",
@@ -153,7 +196,11 @@ class LlmPipelineUseCases:
                     )
                     return
 
-            self.transcriber.add_to_history(final_text)
+            _archive_obsidian_entry(self.runtime, self.transcriber, obsidian_service, archive_kind, archive_entry)
+            history_text = final_text
+            if is_obsidian_remind:
+                history_text = f"Запрос: {whisper_text}\n\nОтвет:\n{final_text}"
+            self.transcriber.add_to_history(history_text)
             if use_clipboard:
                 self.clipboard_service.write_text(final_text)
                 LOGGER.info("🤖 LLM-ответ скопирован в буфер обмена")

@@ -59,6 +59,7 @@ class Config:
     POWER_DIAGNOSTICS_COMMAND_TIMEOUT_SECONDS = 2.0
     POWER_DIAGNOSTICS_ENV = "DICTATOR_POWER_DIAGNOSTICS"
     SYSTEM_DIAGNOSTICS_ENV = "DICTATOR_SYSTEM_DIAGNOSTICS"
+    OBSIDIAN_VAULT_PATH_ENV = "DICTATOR_OBSIDIAN_VAULT_PATH"
     ACCESSIBILITY_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     INPUT_MONITORING_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     KEYCODE_COMMAND = 0x37

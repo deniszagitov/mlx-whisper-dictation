@@ -14,7 +14,20 @@ import src.adapters.ui as ui_module
 import src.app as app_controller_module
 from src.adapters import overlay
 from src.domain.constants import Config
-from src.domain.types import LaunchConfig, MicrophoneProfile
+from src.domain.reader_constants import (
+    DEFAULT_READER_PREPROCESS_ENABLED,
+    DEFAULT_RSVP_CHUNK_SIZE,
+    DEFAULT_RSVP_FONT_SIZE,
+    DEFAULT_RSVP_HOTKEY,
+    DEFAULT_RSVP_WPM,
+    DEFAULT_TTS_ENGINE,
+    DEFAULT_TTS_HOTKEY,
+    DEFAULT_TTS_MAX_MINUTES,
+    DEFAULT_TTS_MLX_MODEL,
+    DEFAULT_TTS_MLX_VOICE_DESCRIPTION,
+    DEFAULT_TTS_RATE_MULTIPLIER,
+)
+from src.domain.types import DownloadableModelStatus, LaunchConfig, MicrophoneProfile
 
 
 class FakeRecorder:
@@ -268,6 +281,23 @@ def make_launch_config(*, languages=None, max_time=30, secondary_key_combination
     )
 
 
+def make_downloadable_model_statuses(*model_ids, downloaded=True):
+    """Создаёт статусы моделей для snapshot-тестов."""
+    ids = list(model_ids) or [*Config.MODEL_PRESETS, *Config.LLM_MODEL_PRESETS, DEFAULT_TTS_MLX_MODEL]
+    return {
+        model_id: DownloadableModelStatus(
+            model_id=model_id,
+            title=model_id.rsplit("/", maxsplit=1)[-1],
+            state="downloaded" if downloaded else "missing",
+            status_text="Загружено" if downloaded else "Не загружено",
+            progress_percent=100 if downloaded else None,
+            can_download=not downloaded,
+            can_delete=downloaded,
+        )
+        for model_id in ids
+    }
+
+
 def make_snapshot(**overrides):
     """Создаёт AppSnapshot с безопасными значениями по умолчанию для UI-тестов."""
     base_snapshot = app_controller_module.AppSnapshot(
@@ -279,9 +309,13 @@ def make_snapshot(**overrides):
         hotkey_status="левая ⌘ + ⌥",
         secondary_hotkey_status="не задан",
         llm_hotkey_status="не задан",
+        rsvp_hotkey_status="левая ⌘ + ⌥ + R",
+        tts_hotkey_status="левая ⌘ + ⌥ + T",
         primary_key_combination="cmd_l+alt",
         secondary_key_combination="",
         llm_key_combination="",
+        rsvp_key_combination=DEFAULT_RSVP_HOTKEY,
+        tts_key_combination=DEFAULT_TTS_HOTKEY,
         llm_prompt_name=Config.DEFAULT_LLM_PROMPT_NAME,
         performance_mode=Config.DEFAULT_PERFORMANCE_MODE,
         max_time=30,
@@ -325,11 +359,26 @@ def make_snapshot(**overrides):
         audio_artifact_cleanup_enabled=False,
         llm_clipboard_enabled=True,
         history=["Привет мир"],
+        obsidian_vault_path="/tmp/obsidian-vault",
+        obsidian_history_directory="/tmp/obsidian-vault/05 📅 Daily Notes/Dictator",
+        obsidian_today_topics=[("Бакеты", 2), ("Прод", 1)],
         total_tokens=123,
         llm_download_title="✅ LLM-модель загружена",
         llm_download_interactive=False,
+        downloadable_models=make_downloadable_model_statuses(),
+        llm_model_repo=Config.DEFAULT_LLM_MODEL_NAME,
         llm_model_name="gemma-4-26b-a4b-it-4bit",
         llm_model_options=list(Config.LLM_MODEL_PRESETS),
+        reader_rsvp_wpm=DEFAULT_RSVP_WPM,
+        reader_rsvp_chunk_size=DEFAULT_RSVP_CHUNK_SIZE,
+        reader_rsvp_font_size=DEFAULT_RSVP_FONT_SIZE,
+        reader_tts_rate_multiplier=DEFAULT_TTS_RATE_MULTIPLIER,
+        reader_tts_voice_id=None,
+        reader_tts_max_minutes=DEFAULT_TTS_MAX_MINUTES,
+        reader_tts_engine=DEFAULT_TTS_ENGINE,
+        reader_tts_mlx_model=DEFAULT_TTS_MLX_MODEL,
+        reader_tts_mlx_voice_description=DEFAULT_TTS_MLX_VOICE_DESCRIPTION,
+        reader_preprocess_enabled=DEFAULT_READER_PREPROCESS_ENABLED,
     )
     return replace(base_snapshot, **overrides)
 
@@ -358,6 +407,13 @@ class FakeDictationController:
         self.hotkey_status = snapshot.hotkey_status
         self.secondary_hotkey_status = snapshot.secondary_hotkey_status
         self.llm_hotkey_status = snapshot.llm_hotkey_status
+        self.rsvp_hotkey_status = snapshot.rsvp_hotkey_status
+        self.tts_hotkey_status = snapshot.tts_hotkey_status
+        self.primary_key_combination = snapshot.primary_key_combination
+        self.secondary_key_combination = snapshot.secondary_key_combination
+        self.llm_key_combination = snapshot.llm_key_combination
+        self.rsvp_key_combination = snapshot.rsvp_key_combination
+        self.tts_key_combination = snapshot.tts_key_combination
         self.llm_prompt_name = snapshot.llm_prompt_name
         self.performance_mode = snapshot.performance_mode
         self.max_time = snapshot.max_time
@@ -389,9 +445,24 @@ class FakeDictationController:
         self.audio_artifact_cleanup_enabled = snapshot.audio_artifact_cleanup_enabled
         self.llm_clipboard_enabled = snapshot.llm_clipboard_enabled
         self.history = list(snapshot.history)
+        self.obsidian_vault_path = snapshot.obsidian_vault_path
+        self.obsidian_history_directory = snapshot.obsidian_history_directory
+        self.obsidian_today_topics = list(snapshot.obsidian_today_topics)
         self.total_tokens = snapshot.total_tokens
+        self.downloadable_models = dict(snapshot.downloadable_models)
+        self.llm_model_repo = snapshot.llm_model_repo
         self.llm_model_name = snapshot.llm_model_name
         self.llm_model_options = list(snapshot.llm_model_options)
+        self.reader_rsvp_wpm = snapshot.reader_rsvp_wpm
+        self.reader_rsvp_chunk_size = snapshot.reader_rsvp_chunk_size
+        self.reader_rsvp_font_size = snapshot.reader_rsvp_font_size
+        self.reader_tts_rate_multiplier = snapshot.reader_tts_rate_multiplier
+        self.reader_tts_voice_id = snapshot.reader_tts_voice_id
+        self.reader_tts_max_minutes = snapshot.reader_tts_max_minutes
+        self.reader_tts_engine = snapshot.reader_tts_engine
+        self.reader_tts_mlx_model = snapshot.reader_tts_mlx_model
+        self.reader_tts_mlx_voice_description = snapshot.reader_tts_mlx_voice_description
+        self.reader_preprocess_enabled = snapshot.reader_preprocess_enabled
 
     def subscribe(self, callback):
         """Подписывает UI на обновления snapshot и сразу отправляет текущее состояние."""
@@ -420,13 +491,38 @@ class FakeDictationController:
         """Имитирует отсутствие изменений в истории."""
         return False
 
+    def open_obsidian_history_directory(self):
+        """Запоминает команду открытия папки Obsidian-архива."""
+        self.calls.append(("open_obsidian_history_directory", None))
+
+    def search_obsidian_history(self, query):
+        """Запоминает текстовый запрос к Obsidian-архиву."""
+        self.calls.append(("search_obsidian_history", query))
+        return "Ответ из архива"
+
     def change_language(self, language):
         """Запоминает команду смены языка."""
         self.calls.append(("change_language", language))
 
+    def change_model(self, model_name):
+        """Запоминает команду смены Whisper-модели."""
+        self.calls.append(("change_model", model_name))
+
     def change_llm_model(self, model_name):
         """Запоминает команду смены LLM-модели."""
         self.calls.append(("change_llm_model", model_name))
+
+    def download_model(self, model_name):
+        """Запоминает команду загрузки модели."""
+        self.calls.append(("download_model", model_name))
+
+    def delete_downloaded_model(self, model_name):
+        """Запоминает команду удаления модели."""
+        self.calls.append(("delete_downloaded_model", model_name))
+
+    def download_llm_model(self):
+        """Запоминает команду загрузки активной LLM-модели."""
+        self.calls.append(("download_llm_model", None))
 
     def toggle_capitalize_first_letter(self):
         """Запоминает команду переключения правила заглавной буквы."""
@@ -616,6 +712,19 @@ class TestStatusBarInit:
         app, *_ = make_app(languages=["ru"])
         assert "Токены" in app.token_usage_item.title
         assert app._menu_item(app.token_usage_item.title).title == app.token_usage_item.title
+
+    def test_history_menu_contains_obsidian_search_actions(self, make_app):
+        """В подменю истории доступны поиск по архиву и открытие папки Obsidian."""
+        app, *_ = make_app(languages=["ru"])
+
+        assert app.history_menu["🔎 Поиск по Obsidian…"].title == "🔎 Поиск по Obsidian…"
+        assert app.history_menu["📂 Открыть папку истории…"].title == "📂 Открыть папку истории…"
+
+    def test_open_settings_item_present(self, make_app):
+        """Из menu bar доступно нативное окно настроек."""
+        app, *_ = make_app(languages=["ru"])
+        assert app.open_settings_item.title == "Открыть Диктатор…"
+        assert app._menu_item(app.open_settings_item.title).title == app.open_settings_item.title
 
     def test_llm_menu_groups_prompt_clipboard_and_download(self, make_app):
         """В LLM-подменю остаются только профильные настройки и действия."""
@@ -1828,3 +1937,21 @@ class TestStatusBarWithFakeController:
             ("start_recording", None),
             ("stop_recording", None),
         ]
+
+    def test_open_settings_window_delegates_to_window_controller(self):
+        """Пункт меню открытия настроек должен показывать отдельное окно."""
+        controller = FakeDictationController(make_snapshot())
+        app = ui_module.StatusBarApp(cast("Any", controller))
+        calls: list[str] = []
+
+        class FakeSettingsWindow:
+            """Фейковое окно настроек для проверки делегирования."""
+
+            def show(self):
+                """Запоминает открытие окна."""
+                calls.append("show")
+
+        app.settings_window = FakeSettingsWindow()
+        app.open_settings_window(app.open_settings_item)
+
+        assert calls == ["show"]

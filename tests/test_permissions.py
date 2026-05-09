@@ -258,3 +258,20 @@ class TestNotifications:
 
         assert "❌ Не удалось показать системное уведомление macOS: нет Info.plist" in caplog.text
         assert all(record.exc_info is None for record in caplog.records)
+
+    def test_notify_user_logs_bundle_warning_only_once(self, monkeypatch, caplog):
+        """Отсутствие app bundle должно давать одно warning и дальше уходить в debug."""
+        import src.infrastructure.permissions as permissions_module
+
+        def fail_notification(_title, _subtitle, _message):
+            raise RuntimeError('Failed to setup the notification center: missing "CFBundleIdentifier" in Info.plist')
+
+        monkeypatch.setattr(permissions_module.rumps, "notification", fail_notification)
+        monkeypatch.setitem(permissions_module._BUNDLE_NOTIFICATION_WARNING_STATE, "shown", False)
+
+        with caplog.at_level(logging.DEBUG, logger="src.infrastructure.permissions"):
+            permissions_module.notify_user("Dictator", "Запись началась")
+            permissions_module.notify_user("Dictator", "Запись началась")
+
+        assert caplog.text.count("Системные уведомления недоступны при запуске без app bundle") == 1
+        assert "Не удалось показать системное уведомление macOS" not in caplog.text

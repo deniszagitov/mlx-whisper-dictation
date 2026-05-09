@@ -17,6 +17,12 @@ if TYPE_CHECKING:
     from ..domain.types import AudioDiagnostics, HistoryRecord, TranscriberPreferences
 
 from ..domain.constants import Config
+from ..domain.logging import (
+    DICTATION_LOGGER_NAME,
+    sanitize_mapping_for_logging,
+    sanitize_path_for_logging,
+    summarize_text_for_logging,
+)
 from ..domain.transcription import (
     CapitalizeFirstLetterRule,
     RemoveTrailingPeriodForSingleSentenceRule,
@@ -30,6 +36,7 @@ from ..domain.transcription import (
 from ..domain.types import PreprocessedAudio, RecordedAudio, TranscriberPreferences
 
 LOGGER = logging.getLogger(__name__)
+DICTATION_LOGGER = logging.getLogger(DICTATION_LOGGER_NAME)
 
 
 class _DisabledDiagnosticsStore:
@@ -245,6 +252,7 @@ class TranscriptionUseCases:
         clipboard_writer: Callable[[str], None] | None = None,
         history_item_loader: Callable[[], list[Any]] | None = None,
         history_record_saver: Callable[[list[HistoryRecord]], None] | None = None,
+        history_archive_writer: Callable[[str], None] | None = None,
         notify_user: Callable[[str, str], None] | None = None,
         is_accessibility_trusted: Callable[[], bool] | None = None,
         get_input_monitoring_status: Callable[[], bool | None] | None = None,
@@ -270,6 +278,7 @@ class TranscriptionUseCases:
             clipboard_writer: Необязательная запись в системный буфер обмена.
             history_item_loader: Необязательное чтение сырых записей истории.
             history_record_saver: Необязательное сохранение нормализованной истории.
+            history_archive_writer: Необязательное append-only сохранение в внешний архив.
             notify_user: Необязательное системное уведомление для ошибок и fallback.
             is_accessibility_trusted: Необязательная проверка права Accessibility.
             get_input_monitoring_status: Необязательная проверка права Input Monitoring.
@@ -290,6 +299,7 @@ class TranscriptionUseCases:
         self._clipboard_writer = clipboard_writer
         self._history_item_loader = history_item_loader or (lambda: [])
         self._history_record_saver = history_record_saver or (lambda _records: None)
+        self.history_archive_writer = history_archive_writer or (lambda _text: None)
         self._notify_user_runtime = notify_user or _noop_notify_user
         self._accessibility_status_reader = is_accessibility_trusted or _default_accessibility_status
         self._input_monitoring_status_reader = get_input_monitoring_status or _default_input_monitoring_status
@@ -839,8 +849,15 @@ class TranscriptionUseCases:
         rms_energy = diagnostics["rms_energy"]
         peak_amplitude = diagnostics["peak_amplitude"]
         artifact_paths = self._save_recording_artifacts(stem, audio_data, preprocessed_audio, diagnostics)
+        sanitized_artifact_paths: dict[str, str] | str | None
+        if isinstance(artifact_paths, dict):
+            sanitized_artifact_paths = sanitize_mapping_for_logging(artifact_paths)
+        elif artifact_paths is None:
+            sanitized_artifact_paths = None
+        else:
+            sanitized_artifact_paths = sanitize_path_for_logging(str(artifact_paths))
         if artifact_paths is None:
-            LOGGER.info(
+            DICTATION_LOGGER.info(
                 "🔍 Диагностика аудио: profile=%s, capture=%s/%s, final=%s, длительность=%.2f с, RMS=%.6f, peak=%.6f, "
                 "VAD=%s, gain=%.2f dB, language=%s",
                 diagnostics.get("profile_name"),
@@ -855,7 +872,7 @@ class TranscriptionUseCases:
                 language,
             )
         else:
-            LOGGER.info(
+            DICTATION_LOGGER.info(
                 "🔍 Диагностика аудио: profile=%s, capture=%s/%s, final=%s, длительность=%.2f с, RMS=%.6f, peak=%.6f, "
                 "VAD=%s, gain=%.2f dB, language=%s, artifacts=%s",
                 diagnostics.get("profile_name"),
@@ -868,18 +885,18 @@ class TranscriptionUseCases:
                 diagnostics.get("vad_speech_duration_s"),
                 diagnostics.get("gain_applied_db", 0.0),
                 language,
-                artifact_paths,
+                sanitized_artifact_paths,
             )
         if audio_duration_seconds < Config.SHORT_AUDIO_WARNING_SECONDS:
-            LOGGER.warning("⚠️ Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
+            DICTATION_LOGGER.warning("⚠️ Аудио короткое (%.2f с), но распознавание всё равно будет запущено", audio_duration_seconds)
         if rms_energy < Config.SILENCE_RMS_THRESHOLD:
-            LOGGER.warning(
+            DICTATION_LOGGER.warning(
                 "🔇 Аудио очень тихое (RMS=%.6f < %.4f), но распознавание всё равно будет запущено",
                 rms_energy,
                 Config.SILENCE_RMS_THRESHOLD,
             )
         if diagnostics.get("skip_asr"):
-            LOGGER.warning("🔇 ASR пропущен: запись похожа на тишину/no-speech")
+            DICTATION_LOGGER.warning("🔇 ASR пропущен: запись похожа на тишину/no-speech")
             self.diagnostics_store.save_transcription_artifacts(stem, diagnostics, text="", error_message="No speech")
             self._notify_user(
                 "MLX Whisper Dictation",
@@ -899,17 +916,17 @@ class TranscriptionUseCases:
             return
 
         text = str(result.get("text", "")).strip()
-        LOGGER.info("🧠 Первый проход распознавания завершен, длина текста=%s, текст=%r", len(text), text[:120])
+        DICTATION_LOGGER.info("🧠 Первый проход распознавания завершен: %s", summarize_text_for_logging(text))
 
         if not text and language is not None:
-            LOGGER.info("🔄 Первый проход вернул пустой результат, повторяю распознавание без фиксированного языка")
+            DICTATION_LOGGER.info("🔄 Первый проход вернул пустой результат, повторяю распознавание без фиксированного языка")
             try:
                 result = self._run_transcription(final_audio, None)
             except Exception:
                 LOGGER.exception("❌ Ошибка повторного распознавания без языка")
             else:
                 text = str(result.get("text", "")).strip()
-                LOGGER.info("🧠 Повторный проход завершен, длина текста=%s, текст=%r", len(text), text[:120])
+                DICTATION_LOGGER.info("🧠 Повторный проход завершен: %s", summarize_text_for_logging(text))
 
         trailing_period_was_removed = self._trailing_period_was_removed(text)
         text = self._postprocess_transcribed_text(text)
@@ -917,7 +934,7 @@ class TranscriptionUseCases:
         self.add_token_usage(extract_transcription_token_count(result))
 
         if not text:
-            LOGGER.warning("⚠️ Результат распознавания пустой")
+            DICTATION_LOGGER.warning("⚠️ Результат распознавания пустой")
             self._notify_user(
                 "MLX Whisper Dictation",
                 "Речь не распознана. Проверьте микрофон, уровень сигнала и попробуйте еще раз.",
@@ -925,13 +942,21 @@ class TranscriptionUseCases:
             return
 
         if looks_like_hallucination(text) and rms_energy < Config.HALLUCINATION_RMS_THRESHOLD:
-            LOGGER.warning("👻 Отброшен вероятный галлюцинаторный результат: %r", text)
+            DICTATION_LOGGER.warning(
+                "👻 Отброшен вероятный галлюцинаторный результат: %s",
+                summarize_text_for_logging(text),
+            )
 
         pending_period_prefix_was_active = self._pending_period_prefix_for_next_dictation
         output_text = self._apply_pending_period_prefix(text)
 
         # Сохраняем текст в историю независимо от метода вставки
         self.add_to_history(output_text)
+        if not self.private_mode_enabled:
+            try:
+                self.history_archive_writer(output_text)
+            except Exception:
+                LOGGER.exception("⚠️ Не удалось сохранить запись в внешний архив истории")
 
         # Проверяем разрешения macOS, необходимые для всех методов автовставки
         if not self._is_accessibility_trusted():
@@ -993,7 +1018,7 @@ class TranscriptionUseCases:
         for method_name, method_fn in methods:
             try:
                 method_fn(output_text)
-                LOGGER.info("✅ Текст вставлен через: %s", method_name)
+                DICTATION_LOGGER.info("✅ Текст вставлен через: %s", method_name)
                 inserted = True
                 break
             except Exception:
@@ -1045,11 +1070,11 @@ class TranscriptionUseCases:
         self._save_recording_artifacts(stem, audio_data, preprocessed_audio, diagnostics)
 
         if audio_duration_seconds < Config.SHORT_AUDIO_WARNING_SECONDS:
-            LOGGER.warning("⚠️ Аудио короткое (%.2f с)", audio_duration_seconds)
+            DICTATION_LOGGER.warning("⚠️ Аудио короткое (%.2f с)", audio_duration_seconds)
         if rms_energy < Config.SILENCE_RMS_THRESHOLD:
-            LOGGER.warning("🔇 Аудио тихое (RMS=%.6f)", rms_energy)
+            DICTATION_LOGGER.warning("🔇 Аудио тихое (RMS=%.6f)", rms_energy)
         if diagnostics.get("skip_asr"):
-            LOGGER.warning("🔇 ASR пропущен: запись похожа на тишину/no-speech")
+            DICTATION_LOGGER.warning("🔇 ASR пропущен: запись похожа на тишину/no-speech")
             self._notify_user("MLX Whisper Dictation", "Речь не обнаружена. Попробуйте ещё раз.")
             return None
 
@@ -1062,16 +1087,16 @@ class TranscriptionUseCases:
 
         text = str(result.get("text", "")).strip()
         text = self._postprocess_transcribed_text(text)
-        LOGGER.info("🧠 Транскрипция завершена: длина=%d, текст=%r", len(text), text[:120])
+        DICTATION_LOGGER.info("🧠 Транскрипция завершена: %s", summarize_text_for_logging(text))
         self.add_token_usage(extract_transcription_token_count(result))
 
         if not text:
-            LOGGER.warning("⚠️ Пустая транскрипция")
+            DICTATION_LOGGER.warning("⚠️ Пустая транскрипция")
             self._notify_user("MLX Whisper Dictation", "Речь не распознана. Попробуйте ещё раз.")
             return None
 
         if looks_like_hallucination(text) and rms_energy < Config.HALLUCINATION_RMS_THRESHOLD:
-            LOGGER.warning("👻 Отброшен галлюцинаторный результат: %r", text)
+            DICTATION_LOGGER.warning("👻 Отброшен галлюцинаторный результат: %s", summarize_text_for_logging(text))
             return None
 
         return text

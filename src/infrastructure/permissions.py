@@ -20,6 +20,13 @@ from Foundation import NSURL, NSDictionary
 from ..domain.constants import Config
 
 LOGGER = logging.getLogger(__name__)
+_BUNDLE_NOTIFICATION_WARNING_STATE = {"shown": False}
+
+
+def _is_missing_bundle_identifier_error(message: str) -> bool:
+    """Проверяет, что уведомление не сработало из-за запуска вне app bundle."""
+    normalized = message.casefold()
+    return "cfbundleidentifier" in normalized and "info.plist" in normalized
 
 
 class _WorkspaceWakeObserver(AppKit.NSObject):  # type: ignore[misc]
@@ -127,6 +134,16 @@ def notify_user(title: str, message: str) -> None:
     try:
         rumps.notification(title, "", message)
     except Exception as exc:
+        error_message = str(exc)
+        if _is_missing_bundle_identifier_error(error_message):
+            if not _BUNDLE_NOTIFICATION_WARNING_STATE["shown"]:
+                LOGGER.warning(
+                    "⚠️ Системные уведомления недоступны при запуске без app bundle: нет CFBundleIdentifier/Info.plist."
+                )
+                _BUNDLE_NOTIFICATION_WARNING_STATE["shown"] = True
+            else:
+                LOGGER.debug("⚠️ Системное уведомление пропущено вне app bundle: %s", error_message)
+            return
         LOGGER.log(logging.ERROR, "❌ Не удалось показать системное уведомление macOS: %s", exc)
 
 
@@ -179,7 +196,7 @@ def register_wake_observer(on_wake_callback: Callable[[], None]) -> Any:
     except Exception:
         LOGGER.exception("❌ Не удалось зарегистрировать observer пробуждения системы")
         return None
-    LOGGER.info("💤 Зарегистрирован observer пробуждения системы")
+    LOGGER.debug("💤 Зарегистрирован observer пробуждения системы")
     return observer
 
 
@@ -222,7 +239,7 @@ def register_system_event_observer(on_event_callback: Callable[[str], None]) -> 
         LOGGER.exception("❌ Не удалось зарегистрировать observer системных событий macOS")
         return None
 
-    LOGGER.info("🖥️ Зарегистрирован observer системных событий macOS: %s", ", ".join(registered_events))
+    LOGGER.debug("🖥️ Зарегистрирован observer системных событий macOS: %s", ", ".join(registered_events))
     return observer
 
 
@@ -251,7 +268,7 @@ def register_application_activation_observer(
     except Exception:
         LOGGER.exception("❌ Не удалось зарегистрировать observer смены активного приложения")
         return None
-    LOGGER.info("🪟 Зарегистрирован observer смены активного приложения")
+    LOGGER.debug("🪟 Зарегистрирован observer смены активного приложения")
     return observer
 
 

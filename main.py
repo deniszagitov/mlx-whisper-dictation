@@ -24,6 +24,7 @@ from src.app import (  # noqa: F401
     HotkeyListenerFactoryService,
     InputDeviceCatalogService,
     MicrophoneProfilesService,
+    ModelCacheService,
     ObsidianService,
     SystemDiagnosticsService,
     SystemIntegrationService,
@@ -70,8 +71,18 @@ from src.infrastructure.llm_runtime import (
     load_llm_runtime_objects,
     load_vlm_runtime_objects,
 )
+from src.infrastructure.model_cache import (
+    delete_cached_model,
+    ensure_model_downloaded,
+    is_huggingface_model_id,
+    is_model_cached,
+)
 from src.infrastructure.obsidian import (
-    get_default_vault_path,
+    append_obsidian_history_entry,
+    get_obsidian_history_directory,
+    load_obsidian_daily_topics,
+    load_obsidian_history_items,
+    resolve_obsidian_vault_path,
     search_obsidian_notes,
     write_obsidian_note,
 )
@@ -93,7 +104,6 @@ from src.infrastructure.permissions import (
 )
 from src.infrastructure.persistence.defaults import Defaults
 from src.infrastructure.persistence.diagnostics import DiagnosticsStore, setup_logging
-from src.infrastructure.persistence.history import load_history_items, save_history_records
 from src.infrastructure.persistence.microphone_profiles import _load_microphone_profiles, _save_microphone_profiles
 from src.infrastructure.power import MacOSDisplaySleepAssertion
 from src.infrastructure.system_diagnostics import capture_system_diagnostics
@@ -274,6 +284,34 @@ def main() -> None:
     app_preferences = AppPreferences.from_store(defaults)
     transcriber_preferences = TranscriberPreferences.from_store(defaults)
 
+    obsidian_vault_path = str(
+        resolve_obsidian_vault_path(defaults.load_str(Config.DEFAULTS_KEY_OBSIDIAN_VAULT, fallback=None))
+    )
+    obsidian_history_dir = str(get_obsidian_history_directory(obsidian_vault_path))
+
+    def append_obsidian_history(
+        kind: str,
+        text: str,
+        semantic_topics: list[str] | None = None,
+    ) -> Any:
+        return append_obsidian_history_entry(
+            obsidian_vault_path,
+            text,
+            kind=kind,
+            semantic_topics=semantic_topics,
+        )
+
+    obsidian_service = ObsidianService(
+        vault_path=obsidian_vault_path,
+        history_directory=obsidian_history_dir,
+        write_note=lambda content: write_obsidian_note(obsidian_vault_path, content),
+        search_notes=lambda query: search_obsidian_notes(obsidian_vault_path, query),
+        search_history=lambda query: search_obsidian_notes(obsidian_vault_path, query, history_only=True),
+        append_history_entry=append_obsidian_history,
+        load_history_items=lambda: load_obsidian_history_items(obsidian_vault_path),
+        load_today_topics=lambda: load_obsidian_daily_topics(obsidian_vault_path),
+    )
+
     transcriber = SpeechTranscriber(
         args.model,
         settings_store=defaults,
@@ -288,8 +326,8 @@ def main() -> None:
         send_cmd_v=lambda: send_cmd_v(frontmost_app_info=frontmost_application_info),
         clipboard_reader=read_clipboard,
         clipboard_writer=copy_to_clipboard,
-        history_item_loader=load_history_items,
-        history_record_saver=save_history_records,
+        history_item_loader=obsidian_service.load_history_items,
+        history_record_saver=lambda _records: None,
         notify_user=notify_user,
         is_accessibility_trusted=is_accessibility_trusted,
         get_input_monitoring_status=get_input_monitoring_status,
@@ -309,12 +347,6 @@ def main() -> None:
         memory_cleanup=cleanup_llm_runtime_memory,
         vlm_runtime_loader=load_vlm_runtime_objects,
         vlm_generation_runner=generate_vlm_text,
-    )
-
-    obsidian_vault_path = defaults.load_str(Config.DEFAULTS_KEY_OBSIDIAN_VAULT, fallback=None) or str(get_default_vault_path())
-    obsidian_service = ObsidianService(
-        write_note=lambda content: write_obsidian_note(obsidian_vault_path, content),
-        search_notes=lambda query: search_obsidian_notes(obsidian_vault_path, query),
     )
     clipboard_service = ClipboardService(
         read_text=read_clipboard,
@@ -345,6 +377,12 @@ def main() -> None:
     hotkey_listener_factory = HotkeyListenerFactoryService(
         create_listener=_create_hotkey_dispatcher,
     )
+    model_cache_service = ModelCacheService(
+        is_cached=is_model_cached,
+        can_download=is_huggingface_model_id,
+        download=ensure_model_downloaded,
+        delete=delete_cached_model,
+    )
     recording_overlay = RecordingOverlay()
     reader_clipboard = PasteboardReader()
     rsvp_display = RSVPOverlay()
@@ -368,6 +406,7 @@ def main() -> None:
         input_device_catalog=input_device_catalog,
         hotkey_capture_service=hotkey_capture_service,
         hotkey_listener_factory=hotkey_listener_factory,
+        model_cache_service=model_cache_service,
         recording_overlay=recording_overlay,
         reader_clipboard=reader_clipboard,
         rsvp_display=rsvp_display,

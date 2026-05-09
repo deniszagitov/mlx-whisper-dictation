@@ -11,8 +11,10 @@ if TYPE_CHECKING:
 
 from ..domain.constants import Config
 from ..domain.llm_processing import sanitize_llm_response
+from ..domain.logging import DICTATION_LOGGER_NAME, summarize_text_for_logging
 
 LOGGER = logging.getLogger(__name__)
+DICTATION_LOGGER = logging.getLogger(DICTATION_LOGGER_NAME)
 
 PERFORMANCE_MODE_NORMAL = "normal"
 PERFORMANCE_MODE_FAST = "fast"
@@ -282,13 +284,13 @@ class LlmGateway:
                 prompt = f"{system_prompt}\n\nПользователь: {text}\nОтвет:"
 
             prompt_tokens = self._count_tokens(tokenizer, prompt)
-            LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", effective_max_tokens)
+            DICTATION_LOGGER.info("🤖 Генерация ответа LLM (max_tokens=%d)", effective_max_tokens)
             raw_response = self._generation_runner(model, tokenizer, prompt, effective_max_tokens)
-            LOGGER.info("🤖 Сырой ответ LLM от модели: длина=%d, текст=%r", len(raw_response), raw_response)
+            DICTATION_LOGGER.info("🤖 Сырой ответ LLM от модели: %s", summarize_text_for_logging(raw_response))
             response = sanitize_llm_response(raw_response)
             response_tokens = self._count_tokens(tokenizer, response)
             self.last_token_usage = prompt_tokens + response_tokens
-            LOGGER.info("🤖 Очищенный ответ LLM: длина=%d, текст=%r", len(response), response)
+            DICTATION_LOGGER.info("🤖 Очищенный ответ LLM: %s", summarize_text_for_logging(response))
             return response.strip()
         finally:
             if self.performance_mode == PERFORMANCE_MODE_FAST:

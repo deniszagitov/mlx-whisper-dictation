@@ -15,6 +15,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ...domain.constants import Config
+from ...domain.logging import DICTATION_LOGGER_NAME
 from ...domain.types import RecordedAudio
 
 if TYPE_CHECKING:
@@ -65,6 +66,13 @@ class DailyRetentionFileHandler(logging.handlers.TimedRotatingFileHandler):
         _cleanup_expired_files(base_path.parent, f"{base_path.name}*", self.retention_seconds)
 
 
+def _replace_logger_handlers(logger: logging.Logger) -> None:
+    """Закрывает старые handler-ы и очищает конфигурацию логгера."""
+    for handler in logger.handlers:
+        handler.close()
+    logger.handlers.clear()
+
+
 def setup_logging() -> None:
     """Настраивает консольное и файловое логирование приложения."""
     Config.LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -72,8 +80,12 @@ def setup_logging() -> None:
 
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     root_logger = logging.getLogger()
+    dictation_logger = logging.getLogger(DICTATION_LOGGER_NAME)
     root_logger.setLevel(logging.INFO)
-    root_logger.handlers.clear()
+    dictation_logger.setLevel(logging.INFO)
+    dictation_logger.propagate = False
+    _replace_logger_handlers(root_logger)
+    _replace_logger_handlers(dictation_logger)
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
@@ -94,9 +106,17 @@ def setup_logging() -> None:
     stderr_handler.setLevel(logging.ERROR)
     stderr_handler.setFormatter(formatter)
 
+    dictation_handler = DailyRetentionFileHandler(
+        Config.LOG_DIR / "dictation.log",
+        encoding="utf-8",
+    )
+    dictation_handler.setLevel(logging.INFO)
+    dictation_handler.setFormatter(formatter)
+
     root_logger.addHandler(console_handler)
     root_logger.addHandler(stdout_handler)
     root_logger.addHandler(stderr_handler)
+    dictation_logger.addHandler(dictation_handler)
 
 
 class DiagnosticsStore:

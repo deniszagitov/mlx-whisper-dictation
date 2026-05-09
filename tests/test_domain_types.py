@@ -106,10 +106,29 @@ def test_app_snapshot_type_annotations_stay_available() -> None:
     assert set(domain_types.AppSnapshot.__annotations__) >= {
         "model_repo",
         "hotkey_status",
+        "rsvp_hotkey_status",
+        "tts_hotkey_status",
         "microphone_profiles",
         "show_recording_overlay",
         "show_recording_time_in_menu_bar",
         "capitalize_first_letter_enabled",
         "remove_trailing_period_for_single_sentence_enabled",
         "restore_trailing_period_on_next_dictation_enabled",
+        "reader_rsvp_wpm",
+        "reader_tts_engine",
+        "reader_preprocess_enabled",
+        "downloadable_models",
+        "llm_model_repo",
+    }
+
+
+def test_downloadable_model_status_type_annotations_stay_available() -> None:
+    """DownloadableModelStatus должен сохранять контракт для UI загрузки моделей."""
+    assert set(domain_types.DownloadableModelStatus.__annotations__) >= {
+        "model_id",
+        "state",
+        "status_text",
+        "progress_percent",
+        "can_download",
+        "can_delete",
     }

@@ -11,11 +11,13 @@ import AppKit
 import Quartz
 
 from ..domain.constants import Config
+from ..domain.logging import DICTATION_LOGGER_NAME
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 LOGGER = logging.getLogger(__name__)
+DICTATION_LOGGER = logging.getLogger(DICTATION_LOGGER_NAME)
 
 
 def read_clipboard() -> str | None:
@@ -41,7 +43,7 @@ def type_text_via_cgevent(
     time.sleep(0.05)
     active_app = frontmost_app_info() if frontmost_app_info is not None else None
     if active_app is not None:
-        LOGGER.info(
+        DICTATION_LOGGER.info(
             "⌨️ CGEvent Unicode ввод в приложение: name=%s, bundle_id=%s, pid=%s",
             active_app["name"],
             active_app["bundle_id"],
@@ -90,7 +92,7 @@ def send_cmd_v(*, frontmost_app_info: Callable[[], Any | None] | None = None) ->
     time.sleep(0.05)
     active_app = frontmost_app_info() if frontmost_app_info is not None else None
     if active_app is not None:
-        LOGGER.info(
+        DICTATION_LOGGER.info(
             "🎤 Пытаюсь вставить в активное приложение: name=%s, bundle_id=%s, pid=%s",
             active_app["name"],
             active_app["bundle_id"],

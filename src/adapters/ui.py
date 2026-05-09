@@ -24,6 +24,7 @@ from ..domain.reader_constants import (
     TTS_MLX_MODEL_OPTIONS,
     TTS_RATE_MULTIPLIER_STEP,
 )
+from .settings_window import SettingsWindowController
 
 if TYPE_CHECKING:
     from ..domain.ports import StatusBarControllerProtocol
@@ -64,6 +65,16 @@ def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
     return str(input_field.stringValue()).strip()
 
 
+def show_text_result(title: str, message: str) -> None:
+    """Показывает простой информационный диалог с результатом операции."""
+    AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+    alert = AppKit.NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.setInformativeText_(message)
+    alert.addButtonWithTitle_("ОК")
+    alert.runModal()
+
+
 class StatusBarApp(rumps.App):  # type: ignore[misc]
     """Menu bar UI-адаптер для контроллера диктовки."""
 
@@ -71,6 +82,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         """Создаёт menu bar приложение, привязанное к контроллеру диктовки."""
         super().__init__("whisper", "⏯")
         self.app = app
+        self.settings_window = SettingsWindowController.alloc().initWithApp_(app)
         self._history_title_to_text: dict[str, str] = {}
         self._microphone_profile_titles: dict[str, MicrophoneProfile] = {}
         self._delete_microphone_profile_titles: dict[str, MicrophoneProfile] = {}
@@ -263,6 +275,11 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.behavior_menu.add(self.paste_method_menu)
 
         self.history_menu = rumps.MenuItem("📋 История текста")
+        self.search_history_item = rumps.MenuItem("🔎 Поиск по Obsidian…", callback=self.search_history)
+        self.open_history_directory_item = rumps.MenuItem(
+            "📂 Открыть папку истории…",
+            callback=self.open_obsidian_history_directory,
+        )
         self.token_usage_item = rumps.MenuItem(self._token_usage_title())
         self.token_usage_item.set_callback(None)
 
@@ -288,11 +305,13 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.permissions_menu.add(None)
         self.permissions_menu.add(self.request_accessibility_item)
         self.permissions_menu.add(self.request_input_monitoring_item)
+        self.open_settings_item = rumps.MenuItem("Открыть Диктатор…", callback=self.open_settings_window)
 
         menu: list[Any] = [
             "Начать запись",
             "Остановить запись",
             self.status_item,
+            self.open_settings_item,
             None,
             self.recognition_menu,
             self.postprocessing_menu,
@@ -935,6 +954,9 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         if getattr(self.history_menu, "_menu", None) is not None:
             self.history_menu.clear()
         self._history_title_to_text = {}
+        self.history_menu.add(self.search_history_item)
+        self.history_menu.add(self.open_history_directory_item)
+        self.history_menu.add(None)
 
         self.app.prune_expired_history()
         history = self.history
@@ -1085,6 +1107,10 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
     def request_input_monitoring_access(self, _: object) -> None:
         """Повторно запрашивает Input Monitoring."""
         self.app.request_input_monitoring_access()
+
+    def open_settings_window(self, _: object) -> None:
+        """Открывает нативное окно настроек Dictator."""
+        self.settings_window.show()
 
     def toggle_recording_notification(self, _sender: rumps.MenuItem) -> None:
         """Переключает системное уведомление о старте записи."""
@@ -1257,6 +1283,22 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             LOGGER.warning("⚠️ Не найден текст для пункта истории: %s", sender.title)
             return
         self.app.copy_history_text(full_text)
+
+    def search_history(self, _: object) -> None:
+        """Запрашивает текстовый вопрос и запускает LLM-поиск по Obsidian-архиву."""
+        query = prompt_text(
+            "Поиск по истории",
+            "Введите вопрос к вашему архиву диктовок и заметок в Obsidian.",
+        )
+        if query is None:
+            return
+        answer = self.app.search_obsidian_history(query)
+        if answer is not None:
+            show_text_result("Ответ по истории", answer)
+
+    def open_obsidian_history_directory(self, _: object) -> None:
+        """Открывает папку дневного архива Obsidian."""
+        self.app.open_obsidian_history_directory()
 
     @rumps.clicked("Начать запись")  # type: ignore[untyped-decorator]
     def start_app(self, _: object) -> None:

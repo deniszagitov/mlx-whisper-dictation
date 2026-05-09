@@ -1,9 +1,11 @@
 """Юнит-тесты основного сценария распознавания и автовставки."""
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
 from src.domain.constants import Config
+from src.domain.logging import DICTATION_LOGGER_NAME
 
 AppInfo = dict[str, str | int]
 
@@ -310,6 +312,44 @@ def run_transcribe_to_text_scenario(app_module, monkeypatch, scenario: Transcrib
     monkeypatch.setattr(transcriber, "_notify_user", lambda *args: None)
 
     return transcriber.transcribe_to_text(make_audio(), "ru")
+
+
+def test_transcribe_to_text_logs_masked_transcription(app_module, monkeypatch):
+    """Лог транскрипции не должен содержать распознанный текст в открытом виде."""
+
+    class ListHandler(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.messages.append(record.getMessage())
+
+    transcriber = make_transcriber(app_module)
+    dictation_logger = logging.getLogger(DICTATION_LOGGER_NAME)
+    original_handlers = list(dictation_logger.handlers)
+    original_level = dictation_logger.level
+    original_propagate = dictation_logger.propagate
+    handler = ListHandler()
+    dictation_logger.handlers = [handler]
+    dictation_logger.setLevel(logging.INFO)
+    dictation_logger.propagate = False
+
+    monkeypatch.setattr(transcriber, "_run_transcription", lambda *_args: {"text": "секретная фраза"})
+
+    try:
+        result = transcriber.transcribe_to_text(make_audio(), "ru")
+    finally:
+        dictation_logger.handlers = original_handlers
+        dictation_logger.setLevel(original_level)
+        dictation_logger.propagate = original_propagate
+
+    joined = "\n".join(handler.messages)
+
+    assert result == "Секретная фраза"
+    assert "секретная фраза" not in joined.casefold()
+    assert "Транскрипция завершена" in joined
+    assert "sha256=" in joined
 
 
 def test_transcribe_inserts_via_cgevent_when_enabled(app_module, monkeypatch):

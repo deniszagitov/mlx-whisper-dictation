@@ -6,6 +6,7 @@ import os
 
 import numpy as np
 import pytest
+import src.domain.logging as domain_logging_module
 from src.domain.constants import Config
 from src.domain.transcription import looks_like_hallucination
 from src.infrastructure.persistence import diagnostics as diagnostics_module
@@ -213,7 +214,10 @@ def test_max_level_filter_blocks_records_at_and_above_limit():
 def test_setup_logging_creates_stdout_and_stderr_handlers(tmp_path, monkeypatch):
     """setup_logging должен настроить консоль и раздельные файловые хендлеры."""
     root_logger = logging.getLogger()
+    dictation_logger = logging.getLogger(domain_logging_module.DICTATION_LOGGER_NAME)
     original_handlers = list(root_logger.handlers)
+    original_dictation_handlers = list(dictation_logger.handlers)
+    original_dictation_propagate = dictation_logger.propagate
 
     monkeypatch.setattr(Config, "LOG_DIR", tmp_path)
 
@@ -221,25 +225,42 @@ def test_setup_logging_creates_stdout_and_stderr_handlers(tmp_path, monkeypatch)
 
     try:
         logger = logging.getLogger("diagnostics-test")
+        dictation_logger = logging.getLogger(domain_logging_module.DICTATION_LOGGER_NAME)
         logger.info("info message")
         logger.error("error message")
+        dictation_logger.info("dictation message")
 
         for handler in root_logger.handlers:
             if hasattr(handler, "flush"):
                 handler.flush()
+        for handler in dictation_logger.handlers:
+            if hasattr(handler, "flush"):
+                handler.flush()
 
         assert len(root_logger.handlers) == 3
+        assert len(dictation_logger.handlers) == 1
+        assert dictation_logger.propagate is False
         assert (tmp_path / "stdout.log").exists()
         assert (tmp_path / "stderr.log").exists()
+        assert (tmp_path / "dictation.log").exists()
 
         stdout_text = (tmp_path / "stdout.log").read_text(encoding="utf-8")
         stderr_text = (tmp_path / "stderr.log").read_text(encoding="utf-8")
+        dictation_text = (tmp_path / "dictation.log").read_text(encoding="utf-8")
 
         assert "info message" in stdout_text
         assert "error message" not in stdout_text
+        assert "dictation message" not in stdout_text
         assert "error message" in stderr_text
+        assert "dictation message" not in stderr_text
+        assert "dictation message" in dictation_text
     finally:
         for handler in root_logger.handlers:
             handler.close()
         root_logger.handlers.clear()
         root_logger.handlers.extend(original_handlers)
+        for handler in dictation_logger.handlers:
+            handler.close()
+        dictation_logger.handlers.clear()
+        dictation_logger.handlers.extend(original_dictation_handlers)
+        dictation_logger.propagate = original_dictation_propagate

@@ -184,8 +184,8 @@ def test_process_text_returns_empty_for_truncated_reasoning():
     assert processor.process_text("текст", "система") == ""
 
 
-def test_process_text_logs_raw_model_response(caplog):
-    """Сырой ответ модели должен явно попадать в лог даже если UI его скрывает."""
+def test_process_text_logs_masked_model_response(caplog):
+    """Лог должен фиксировать факт ответа модели, но без сырого пользовательского текста."""
     raw_response = "1. **Анализ запроса:** Пользователь просит рассказать анекдот.\n2. **Анализ ограничений:** Одно предложение."
     processor = make_processor(generated_response=raw_response)
 
@@ -193,9 +193,11 @@ def test_process_text_logs_raw_model_response(caplog):
         assert processor.process_text("текст", "система") == ""
 
     assert any(
-        "Сырой ответ LLM от модели" in record.message and "Анализ запроса" in record.message and "Анализ ограничений" in record.message
+        "Сырой ответ LLM от модели" in record.message and "sha256=" in record.message
         for record in caplog.records
     )
+    assert all("Анализ запроса" not in record.message for record in caplog.records)
+    assert all("Анализ ограничений" not in record.message for record in caplog.records)
 
 
 def test_sanitize_llm_response_drops_markdown_reasoning_block_without_answer():

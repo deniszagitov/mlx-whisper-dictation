@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         AppSnapshot,
         AudioDeviceInfo,
         AudioDiagnostics,
+        DownloadableModelStatus,
         HistoryRecord,
         MicrophoneProfile,
     )
@@ -67,15 +68,19 @@ class StatusBarControllerProtocol(Protocol):
     audio_artifact_cleanup_enabled: bool
     llm_clipboard_enabled: bool
     history: list[str]
+    obsidian_vault_path: str
+    obsidian_history_directory: str
     total_tokens: int
     recording_overlay: RecordingOverlayProtocol
     key_listener: Any
     start_time: float | None
+    downloadable_models: dict[str, DownloadableModelStatus]
     primary_key_combination: str
     secondary_key_combination: str
     llm_key_combination: str
     rsvp_key_combination: str
     tts_key_combination: str
+    llm_model_repo: str
     llm_model_name: str
     llm_model_options: list[str]
     reader_rsvp_wpm: int
@@ -109,6 +114,14 @@ class StatusBarControllerProtocol(Protocol):
         """Удаляет устаревшие записи истории, если это поддерживается."""
         ...
 
+    def open_obsidian_history_directory(self) -> None:
+        """Открывает папку дневного архива Obsidian."""
+        ...
+
+    def search_obsidian_history(self, query: str) -> str | None:
+        """Ищет ответ по архиву истории Obsidian через локальную LLM."""
+        ...
+
     def set_state(self, state: str) -> None:
         """Обновляет runtime-состояние контроллера."""
         ...
@@ -117,11 +130,11 @@ class StatusBarControllerProtocol(Protocol):
         """Обновляет статус системного разрешения."""
         ...
 
-    def change_input_device(self, index: int) -> None:
+    def change_input_device(self, index: int | None) -> None:
         """Меняет активное устройство ввода."""
         ...
 
-    def change_language(self, language: str) -> None:
+    def change_language(self, language: str | None) -> None:
         """Меняет активный язык распознавания."""
         ...
 
@@ -327,6 +340,14 @@ class StatusBarControllerProtocol(Protocol):
 
     def download_llm_model(self) -> None:
         """Запускает загрузку LLM-модели."""
+        ...
+
+    def download_model(self, model_id: str) -> None:
+        """Запускает загрузку скачиваемой модели."""
+        ...
+
+    def delete_downloaded_model(self, model_id: str) -> None:
+        """Удаляет загруженную модель из локального cache."""
         ...
 
     def change_llm_prompt(self, prompt_name: str) -> None:

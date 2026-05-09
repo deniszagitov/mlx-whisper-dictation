@@ -12,6 +12,7 @@ import pyaudio
 
 from ..domain.audio import audio_profile_for_input_device
 from ..domain.constants import Config
+from ..domain.logging import DICTATION_LOGGER_NAME
 from ..domain.types import RecordedAudio
 
 if TYPE_CHECKING:
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from ..domain.types import AudioDeviceInfo
 
 LOGGER = logging.getLogger(__name__)
+DICTATION_LOGGER = logging.getLogger(DICTATION_LOGGER_NAME)
 
 PERFORMANCE_MODE_NORMAL = "normal"
 PERFORMANCE_MODE_FAST = "fast"
@@ -221,7 +223,7 @@ class Recorder:
             high_quality_mac_builtin_enabled=self.high_quality_mac_builtin_enabled,
         )
         if profile_name == Config.AUDIO_PROFILE_MACBOOK_BUILTIN_HIGH_QUALITY:
-            LOGGER.info(
+            DICTATION_LOGGER.info(
                 "🎙️ Включён аудиопрофиль MacBook HQ: input_device_index=%s, input_device_name=%s, host_api=%s",
                 self.input_device_index,
                 self.input_device_name,
@@ -312,7 +314,7 @@ class Recorder:
         profile_name = self._current_audio_profile()
         candidates = self._stream_candidates(profile_name)
 
-        LOGGER.info(
+        DICTATION_LOGGER.info(
             "🎙️ Открываю поток записи: input_device_index=%s, input_device_name=%s, profile=%s",
             requested_device_index,
             self.input_device_name,
@@ -416,13 +418,13 @@ class Recorder:
             self.recording = False
 
         if not frames:
-            LOGGER.warning("⚠️ Запись остановлена без захваченных аудиофреймов")
+            DICTATION_LOGGER.warning("⚠️ Запись остановлена без захваченных аудиофреймов")
             self._set_status_if_current(request_id, Config.STATUS_IDLE)
             return
 
         if self.cancelled:
             self.cancelled = False
-            LOGGER.info("❌ Запись отменена, аудио отброшено (фреймов=%s)", len(frames))
+            DICTATION_LOGGER.info("❌ Запись отменена, аудио отброшено (фреймов=%s)", len(frames))
             self._set_status_if_current(request_id, Config.STATUS_IDLE)
             return
 
@@ -447,7 +449,7 @@ class Recorder:
                 "host_api_name": self.input_device_host_api_name,
             },
         )
-        LOGGER.info(
+        DICTATION_LOGGER.info(
             "✅ Запись завершена: фреймов=%s, сэмплов=%s, длительность=%.2f с, sample_rate=%s, format=%s, profile=%s",
             len(frames),
             len(audio_data),

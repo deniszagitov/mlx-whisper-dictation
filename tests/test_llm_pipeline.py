@@ -110,6 +110,35 @@ class FakeClipboardService:
         self.writes.append(text)
 
 
+class FakeObsidianService:
+    """Фейковый сервис архива Obsidian."""
+
+    def __init__(self, *, search_history_result: str = "", search_notes_result: str = "") -> None:
+        self.search_history_result = search_history_result
+        self.search_notes_result = search_notes_result
+        self.history_queries: list[str] = []
+        self.note_queries: list[str] = []
+        self.entries: list[tuple[str, str, list[str]]] = []
+
+    def search_history(self, query: str) -> str:
+        """Возвращает заготовленный контекст по архиву истории."""
+        self.history_queries.append(query)
+        return self.search_history_result
+
+    def search_notes(self, query: str) -> str:
+        """Возвращает заготовленный контекст по обычным заметкам."""
+        self.note_queries.append(query)
+        return self.search_notes_result
+
+    def append_history_entry(self, kind: str, text: str, semantic_topics: list[str] | None = None) -> None:
+        """Сохраняет архивную запись."""
+        self.entries.append((kind, text, list(semantic_topics or [])))
+
+    def write_note(self, text: str) -> SimpleNamespace:
+        """Возвращает фиктивный путь сохранённой заметки."""
+        return SimpleNamespace(name="2026-05-09 Заметка.md", text=text)
+
+
 class FakeOverlay:
     """Фейковый overlay записи."""
 
@@ -152,6 +181,7 @@ def make_use_cases(
     transcriber: FakeTranscriber | None = None,
     llm_processor: FakeLlmProcessor | None = None,
     clipboard: FakeClipboardService | None = None,
+    obsidian_service: FakeObsidianService | None = None,
     stop_calls: list[bool] | None = None,
     published_titles: list[str] | None = None,
 ) -> tuple[LlmPipelineUseCases, FakeRecorder, FakeTranscriber, FakeClipboardService]:
@@ -172,6 +202,7 @@ def make_use_cases(
         recording_overlay=runtime.recording_overlay,
         stop_recording=lambda: actual_stop_calls.append(True),
         publish_snapshot=lambda: actual_published_titles.append(runtime.llm_download_title or runtime.state),
+        obsidian_service=obsidian_service,
     )
     return use_cases, actual_recorder, actual_transcriber, actual_clipboard
 
@@ -337,6 +368,48 @@ def test_toggle_llm_falls_back_to_clipboard_on_processing_error() -> None:
     assert transcriber.history == ["исходный текст"]
     assert transcriber.token_usage == []
     assert ("MLX Whisper Dictation", "Ошибка LLM. Текст сохранён в буфер обмена.") in notifications
+
+
+def test_toggle_llm_searches_obsidian_history_and_archives_dialog() -> None:
+    """Режим напоминания должен брать контекст из архива и сохранять запрос с ответом."""
+    notifications: list[tuple[str, str]] = []
+    overlay = FakeOverlay()
+    runtime = make_runtime(overlay=overlay, notifications=notifications)
+    runtime.llm_prompt_name = "📝 Obsidian: напомни"
+    recorder = FakeRecorder()
+    transcriber = FakeTranscriber("что я говорил про бакеты")
+    llm_processor = FakeLlmProcessor(response="Ты хотел проверить продовые бакеты.")
+    clipboard = FakeClipboardService()
+    obsidian = FakeObsidianService(
+        search_history_result="--- 05 📅 Daily Notes/Dictator/2026-05-09.md ---\nПроверить бакеты для прода"
+    )
+
+    use_cases, recorder, transcriber, clipboard = make_use_cases(
+        runtime=runtime,
+        recorder=recorder,
+        transcriber=transcriber,
+        llm_processor=llm_processor,
+        clipboard=clipboard,
+        obsidian_service=obsidian,
+    )
+
+    use_cases.toggle_llm()
+    assert recorder.on_audio_ready is not None
+    recorder.on_audio_ready(object(), "ru", lambda _status: None, lambda: True)
+
+    assert obsidian.history_queries == ["что я говорил про бакеты"]
+    assert llm_processor.process_calls[0][2] == (
+        "--- 05 📅 Daily Notes/Dictator/2026-05-09.md ---\nПроверить бакеты для прода"
+    )
+    assert transcriber.history == ["Запрос: что я говорил про бакеты\n\nОтвет:\nТы хотел проверить продовые бакеты."]
+    assert obsidian.entries == [
+        (
+            "поиск",
+            "Промпт: 📝 Obsidian: напомни\n\nЗапрос: что я говорил про бакеты\n\nОтвет:\nТы хотел проверить продовые бакеты.",
+            [],
+        )
+    ]
+    assert clipboard.writes == ["Ты хотел проверить продовые бакеты."]
 
 
 def test_download_llm_model_updates_progress_and_finishes(monkeypatch: pytest.MonkeyPatch) -> None:

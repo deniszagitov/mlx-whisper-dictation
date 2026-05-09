@@ -326,6 +326,7 @@ class SettingsUseCases:
             return
 
         self.llm_processor.change_model(model_name)
+        self.runtime.llm_model_repo = model_name
         self.runtime.llm_model_name = model_name.rsplit("/", maxsplit=1)[-1]
         self.settings_store.save_str(Config.DEFAULTS_KEY_LLM_MODEL, model_name)
         LOGGER.info("🤖 LLM-модель переключена: %s", model_name)

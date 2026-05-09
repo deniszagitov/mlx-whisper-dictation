@@ -7,8 +7,10 @@ import time
 from typing import Any
 
 from ..domain.constants import Config
+from ..domain.logging import DICTATION_LOGGER_NAME
 
 LOGGER = logging.getLogger(__name__)
+DICTATION_LOGGER = logging.getLogger(DICTATION_LOGGER_NAME)
 
 _KEYCODE_ESCAPE = 53
 
@@ -51,7 +53,7 @@ class RecordingUseCases:
         if not self.runtime.prepare_recording():
             return
 
-        LOGGER.info("🎙️ Запись началась")
+        DICTATION_LOGGER.info("🎙️ Запись началась")
         self.runtime.state = Config.STATUS_RECORDING
         _prevent_display_sleep(self.runtime)
         if self.runtime.show_recording_notification:
@@ -80,7 +82,7 @@ class RecordingUseCases:
         if not self.runtime.started:
             return
 
-        LOGGER.info("⏹ Запись остановлена, запускаю распознавание")
+        DICTATION_LOGGER.info("⏹ Запись остановлена, запускаю распознавание")
         self.runtime.started = False
         self.runtime.state = Config.STATUS_TRANSCRIBING
         self.recorder.stop()
@@ -92,7 +94,7 @@ class RecordingUseCases:
         if not self.runtime.started:
             return
 
-        LOGGER.info("❌ Запись отменена пользователем (Escape)")
+        DICTATION_LOGGER.info("❌ Запись отменена пользователем (Escape)")
         self.runtime.started = False
         self.runtime.state = Config.STATUS_IDLE
         self.recorder.cancel()

@@ -8,8 +8,10 @@ runtime-state, управляет записью и LLM-сценарием, си
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .domain.audio import (
@@ -22,7 +24,8 @@ from .domain.audio import (
     microphone_menu_title as format_microphone_menu_title,
 )
 from .domain.constants import Config
-from .domain.reader_constants import DEFAULT_TTS_RATE_MULTIPLIER
+from .domain.logging import DICTATION_LOGGER_NAME, summarize_text_for_logging
+from .domain.reader_constants import DEFAULT_TTS_RATE_MULTIPLIER, TTS_MLX_MODEL_OPTIONS
 from .domain.reader_types import (
     ClipboardContent,
     ReaderClipboardPort,
@@ -34,7 +37,7 @@ from .domain.reader_types import (
     TTSPort,
     TTSVoice,
 )
-from .domain.types import AppPreferences, AppSnapshot, LaunchConfig, MicrophoneProfile
+from .domain.types import AppPreferences, AppSnapshot, DownloadableModelStatus, LaunchConfig, MicrophoneProfile
 from .use_cases.hotkey_management import HotkeyManagementUseCases
 from .use_cases.llm_pipeline import LlmPipelineUseCases
 from .use_cases.microphone_profiles import MicrophoneProfilesUseCases
@@ -52,6 +55,7 @@ if TYPE_CHECKING:
     from .use_cases.transcription import TranscriptionUseCases
 
 LOGGER = logging.getLogger(__name__)
+DICTATION_LOGGER = logging.getLogger(DICTATION_LOGGER_NAME)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,8 +78,14 @@ class MicrophoneProfilesService:
 class ObsidianService:
     """Concrete bundle для чтения и записи заметок в Obsidian vault."""
 
+    vault_path: str
+    history_directory: str
     write_note: Callable[[str], Any]
     search_notes: Callable[[str], str]
+    search_history: Callable[[str], str]
+    append_history_entry: Callable[[str, str, list[str] | None], Any]
+    load_history_items: Callable[[], list[dict[str, object]]]
+    load_today_topics: Callable[[], list[tuple[str, int]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +136,27 @@ class HotkeyListenerFactoryService:
     """Concrete bundle для создания runtime-dispatcher'а хоткеев."""
 
     create_listener: Callable[[Any], Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCacheService:
+    """Concrete bundle для проверки, скачивания и удаления локальных моделей."""
+
+    is_cached: Callable[[str], bool]
+    can_download: Callable[[str], bool]
+    download: Callable[[str, Callable[[str, float, int], None] | None], None]
+    delete: Callable[[str], bool]
+
+
+@dataclass(slots=True)
+class _ModelDownloadRuntimeState:
+    """Runtime-состояние загрузки модели между snapshot-ами."""
+
+    downloading: bool = False
+    downloaded_override: bool = False
+    error: bool = False
+    progress_percent: float | None = None
+    status_text: str = ""
 
 
 class _NullRecordingOverlay:
@@ -202,6 +233,59 @@ def _create_null_hotkey_listener(_app: Any) -> _NullHotkeyListener:
 def _noop_capture_combination(_title: str, _message: str, _current_combination: str = "") -> str | None:
     """Возвращает отсутствие новой комбинации клавиш по умолчанию."""
     return None
+
+
+def _short_model_name(model_id: str) -> str:
+    """Возвращает короткое имя модели для компактных статусов."""
+    return str(model_id or "").rsplit("/", maxsplit=1)[-1]
+
+
+_OBSIDIAN_TOPIC_PROMPT = (
+    "ПРАВИЛА: выдели от 1 до 3 коротких тем записи. "
+    "Каждая тема должна быть на новой строке, максимум 3 слова, без пояснений, без markdown, без нумерации."
+)
+_OBSIDIAN_TOPIC_MAX_LENGTH = 64
+_OBSIDIAN_TOPIC_MAX_COUNT = 3
+
+
+def _parse_obsidian_topics(response_text: str) -> list[str]:
+    """Преобразует ответ LLM в короткий список тем для Obsidian graph."""
+    topics: list[str] = []
+    seen: set[str] = set()
+    for chunk in re.split(r"[\n,;]+", str(response_text or "")):
+        cleaned = re.sub(r"\s+", " ", chunk.strip(" -*•\t\r"))
+        if not cleaned:
+            continue
+        if len(cleaned) > _OBSIDIAN_TOPIC_MAX_LENGTH:
+            cleaned = cleaned[:_OBSIDIAN_TOPIC_MAX_LENGTH].rstrip()
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        topics.append(cleaned)
+        if len(topics) >= _OBSIDIAN_TOPIC_MAX_COUNT:
+            break
+    return topics
+
+
+def _null_model_cache_is_cached(_model_id: str) -> bool:
+    """Сообщает, что cache модели недоступен в headless-сценарии."""
+    return False
+
+
+def _null_model_cache_can_download(_model_id: str) -> bool:
+    """Сообщает, что автоматическая загрузка модели не настроена."""
+    return False
+
+
+def _null_model_cache_download(_model_id: str, _progress_callback: Callable[[str, float, int], None] | None) -> None:
+    """Бросает ошибку при попытке скачать модель без runtime-сервиса."""
+    raise RuntimeError("Сервис загрузки моделей не настроен")
+
+
+def _null_model_cache_delete(_model_id: str) -> bool:
+    """Не удаляет модели без runtime-сервиса."""
+    return False
 
 
 class _NullHotkeyListener:
@@ -380,6 +464,7 @@ class DictationApp:
         input_device_catalog: InputDeviceCatalogService | None = None,
         hotkey_capture_service: HotkeyCaptureService | None = None,
         hotkey_listener_factory: HotkeyListenerFactoryService | None = None,
+        model_cache_service: ModelCacheService | None = None,
         recording_overlay: Any | None = None,
         reader_clipboard: ReaderClipboardPort | None = None,
         rsvp_display: RSVPDisplayPort | None = None,
@@ -427,6 +512,12 @@ class DictationApp:
         self.hotkey_listener_factory = hotkey_listener_factory or HotkeyListenerFactoryService(
             create_listener=_create_null_hotkey_listener,
         )
+        self.model_cache_service = model_cache_service or ModelCacheService(
+            is_cached=_null_model_cache_is_cached,
+            can_download=_null_model_cache_can_download,
+            download=_null_model_cache_download,
+            delete=_null_model_cache_delete,
+        )
         self.recording_overlay = recording_overlay or _NullRecordingOverlay()
         self.reader_clipboard = reader_clipboard or _NullReaderClipboard()
         self.rsvp_display = rsvp_display or _NullRSVPDisplay()
@@ -438,6 +529,7 @@ class DictationApp:
         self.llm_model_options = list(Config.LLM_MODEL_PRESETS)
         if self.launch_config.llm_model not in self.llm_model_options:
             self.llm_model_options.insert(0, self.launch_config.llm_model)
+        self.llm_model_repo = self.launch_config.llm_model
         self.llm_model_name = self.launch_config.llm_model.rsplit("/", maxsplit=1)[-1]
         self.max_time_options: list[float | None] = list(Config.MAX_TIME_PRESETS)
         if self.launch_config.max_time not in self.max_time_options:
@@ -475,6 +567,7 @@ class DictationApp:
         self.system_event_observer: Any = None
         self.application_activation_observer: Any = None
         self._llm_downloading = False
+        self._model_download_states: dict[str, _ModelDownloadRuntimeState] = {}
         self._preferred_input_device_unavailable = False
         self._preferred_input_device_notified = False
         self._display_sleep_prevention_active = False
@@ -482,7 +575,9 @@ class DictationApp:
         self.display_sleep_release_delay_seconds = Config.DISPLAY_SLEEP_RELEASE_GRACE_SECONDS
         self._reader_worker: threading.Thread | None = None
 
-        llm_cached = self.llm_processor.is_model_cached() if self.llm_processor is not None else False
+        llm_cached = self._is_model_cached(self.llm_model_repo) or (
+            self.llm_processor.is_model_cached() if self.llm_processor is not None else False
+        )
         self._llm_download_title = "✅ LLM-модель загружена" if llm_cached else "📥 Скачать LLM-модель…"
 
         self._subscribers: list[Callable[[AppSnapshot], None]] = []
@@ -560,6 +655,8 @@ class DictationApp:
         self.recorder.set_permission_callback(self.set_permission_status)
         self.transcriber.history_callback = self._notify_subscribers
         self.transcriber.token_usage_callback = self._notify_subscribers
+        if hasattr(self.transcriber, "history_archive_writer"):
+            self.transcriber.history_archive_writer = self._archive_plain_history_entry
         self._refresh_hotkey_statuses()
 
     def _migrate_reader_tts_rate_default(self) -> None:
@@ -723,7 +820,7 @@ class DictationApp:
 
     def handle_system_wake(self) -> None:
         """Восстанавливает аудио и хоткеи после выхода macOS из sleep."""
-        LOGGER.info("💤 macOS вышла из сна, обновляю аудио- и hotkey-runtime")
+        LOGGER.debug("💤 macOS вышла из сна, обновляю аудио- и hotkey-runtime")
         self.capture_system_diagnostics("system_wake")
         was_recording = self.started
         if self.started:
@@ -762,7 +859,7 @@ class DictationApp:
 
     def handle_system_power_event(self, event_name: str) -> None:
         """Логирует системные события экранов, сна и пользовательской сессии."""
-        LOGGER.info(
+        LOGGER.debug(
             "🖥️ Системное событие macOS: event=%s, state=%s, started=%s, display_assertion_active=%s",
             event_name,
             self.state,
@@ -776,7 +873,7 @@ class DictationApp:
 
     def capture_system_diagnostics(self, label: str) -> None:
         """Запускает расширенный снимок состояния macOS для расследования мерцаний/lock."""
-        LOGGER.info(
+        LOGGER.debug(
             "🧪 System diagnostics requested: label=%s, state=%s, started=%s, active_display_assertion=%s, input_device=%s",
             label,
             self.state,
@@ -843,6 +940,27 @@ class DictationApp:
     def history(self) -> list[str]:
         """Возвращает историю транскрипций."""
         return list(getattr(self.transcriber, "history", []))
+
+    @property
+    def obsidian_vault_path(self) -> str:
+        """Возвращает путь к активному Obsidian vault."""
+        if self.obsidian_service is None:
+            return ""
+        return self.obsidian_service.vault_path
+
+    @property
+    def obsidian_history_directory(self) -> str:
+        """Возвращает путь к дневному архиву истории в Obsidian."""
+        if self.obsidian_service is None:
+            return ""
+        return self.obsidian_service.history_directory
+
+    @property
+    def obsidian_today_topics(self) -> list[tuple[str, int]]:
+        """Возвращает темы текущего дня из дневной заметки Dictator."""
+        if self.obsidian_service is None:
+            return []
+        return list(self.obsidian_service.load_today_topics())
 
     @property
     def total_tokens(self) -> int:
@@ -1061,6 +1179,11 @@ class DictationApp:
     def llm_download_title(self, value: str) -> None:
         self._llm_download_title = value
 
+    @property
+    def downloadable_models(self) -> dict[str, DownloadableModelStatus]:
+        """Возвращает статусы всех моделей, которые приложение может скачать."""
+        return {model_id: self._downloadable_model_status(model_id) for model_id in self._downloadable_model_ids()}
+
     def subscribe(self, callback: Callable[[AppSnapshot], None]) -> None:
         """Подписывает UI или тесты на обновления snapshot."""
         self._subscribers.append(callback)
@@ -1077,9 +1200,13 @@ class DictationApp:
             hotkey_status=self.hotkey_status,
             secondary_hotkey_status=self.secondary_hotkey_status,
             llm_hotkey_status=self.llm_hotkey_status,
+            rsvp_hotkey_status=self.rsvp_hotkey_status,
+            tts_hotkey_status=self.tts_hotkey_status,
             primary_key_combination=self.primary_key_combination,
             secondary_key_combination=self.secondary_key_combination,
             llm_key_combination=self.llm_key_combination,
+            rsvp_key_combination=self.rsvp_key_combination,
+            tts_key_combination=self.tts_key_combination,
             llm_prompt_name=self.llm_prompt_name,
             performance_mode=self.performance_mode,
             max_time=self.max_time,
@@ -1111,11 +1238,26 @@ class DictationApp:
             audio_artifact_cleanup_enabled=self.audio_artifact_cleanup_enabled,
             llm_clipboard_enabled=bool(getattr(self.transcriber, "llm_clipboard_enabled", True)),
             history=list(getattr(self.transcriber, "history", [])),
+            obsidian_vault_path=self.obsidian_vault_path,
+            obsidian_history_directory=self.obsidian_history_directory,
+            obsidian_today_topics=self.obsidian_today_topics,
             total_tokens=int(getattr(self.transcriber, "total_tokens", 0)),
             llm_download_title=self._llm_download_title,
             llm_download_interactive=not self._llm_downloading and not self._is_llm_model_cached(),
+            downloadable_models=self.downloadable_models,
+            llm_model_repo=self.llm_model_repo,
             llm_model_name=self.llm_model_name,
             llm_model_options=list(self.llm_model_options),
+            reader_rsvp_wpm=self.reader_rsvp_wpm,
+            reader_rsvp_chunk_size=self.reader_rsvp_chunk_size,
+            reader_rsvp_font_size=self.reader_rsvp_font_size,
+            reader_tts_rate_multiplier=self.reader_tts_rate_multiplier,
+            reader_tts_voice_id=self.reader_tts_voice_id,
+            reader_tts_max_minutes=self.reader_tts_max_minutes,
+            reader_tts_engine=self.reader_tts_engine,
+            reader_tts_mlx_model=self.reader_tts_mlx_model,
+            reader_tts_mlx_voice_description=self.reader_tts_mlx_voice_description,
+            reader_preprocess_enabled=self.reader_preprocess_enabled,
         )
 
     def _notify_subscribers(self) -> None:
@@ -1126,6 +1268,98 @@ class DictationApp:
                 callback(snapshot)
             except Exception:
                 LOGGER.exception("⚠️ Ошибка в callback подписчика приложения")
+
+    def _downloadable_model_ids(self) -> list[str]:
+        """Возвращает упорядоченный список моделей, для которых нужен cache-статус."""
+        model_ids: list[str] = []
+        for model_id in (
+            *self.model_options,
+            *self.llm_model_options,
+            *TTS_MLX_MODEL_OPTIONS,
+            self.reader_tts_mlx_model,
+        ):
+            normalized = str(model_id or "").strip()
+            if normalized and normalized not in model_ids:
+                model_ids.append(normalized)
+        return model_ids
+
+    def _downloadable_model_status(self, model_id: str) -> DownloadableModelStatus:
+        """Строит UI-статус одной скачиваемой модели."""
+        normalized = str(model_id or "").strip()
+        state = self._model_download_states.get(normalized)
+        can_download = self._can_download_model(normalized)
+        downloaded = self._is_model_cached(normalized) or bool(state and state.downloaded_override)
+
+        if state is not None and state.downloading:
+            progress = 0.0 if state.progress_percent is None else state.progress_percent
+            return DownloadableModelStatus(
+                model_id=normalized,
+                title=_short_model_name(normalized),
+                state="downloading",
+                status_text=state.status_text or f"Загрузка: {progress:.0f}%",
+                progress_percent=progress,
+                can_download=False,
+                can_delete=False,
+            )
+
+        if downloaded:
+            return DownloadableModelStatus(
+                model_id=normalized,
+                title=_short_model_name(normalized),
+                state="downloaded",
+                status_text="Загружено",
+                progress_percent=Config.DOWNLOAD_COMPLETE_PCT,
+                can_download=False,
+                can_delete=can_download,
+            )
+
+        if state is not None and state.error:
+            return DownloadableModelStatus(
+                model_id=normalized,
+                title=_short_model_name(normalized),
+                state="error",
+                status_text=state.status_text or "Ошибка загрузки",
+                progress_percent=state.progress_percent,
+                can_download=can_download,
+                can_delete=False,
+            )
+
+        if can_download:
+            return DownloadableModelStatus(
+                model_id=normalized,
+                title=_short_model_name(normalized),
+                state="missing",
+                status_text="Не загружено",
+                progress_percent=None,
+                can_download=True,
+                can_delete=False,
+            )
+
+        return DownloadableModelStatus(
+            model_id=normalized,
+            title=_short_model_name(normalized),
+            state="local",
+            status_text="Локальный путь не найден" if normalized else "Модель не выбрана",
+            progress_percent=None,
+            can_download=False,
+            can_delete=False,
+        )
+
+    def _is_model_cached(self, model_id: str) -> bool:
+        """Безопасно проверяет наличие модели в локальном cache."""
+        try:
+            return bool(self.model_cache_service.is_cached(model_id))
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось проверить cache модели: %s", model_id)
+            return False
+
+    def _can_download_model(self, model_id: str) -> bool:
+        """Безопасно проверяет, можно ли скачать модель автоматически."""
+        try:
+            return bool(self.model_cache_service.can_download(model_id))
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось проверить возможность загрузки модели: %s", model_id)
+            return False
 
     def microphone_menu_title(self, device_info: AudioDeviceInfo) -> str:
         """Возвращает подпись микрофона для меню UI."""
@@ -1153,7 +1387,7 @@ class DictationApp:
         """Отпускает display assertion после короткой паузы после успешной диктовки."""
         self._display_sleep_release_timer = None
         if self.started or self.state != Config.STATUS_IDLE:
-            LOGGER.info(
+            LOGGER.debug(
                 "💡 Не отпускаю защиту дисплея после grace-паузы: state=%s, started=%s",
                 self.state,
                 self.started,
@@ -1180,7 +1414,7 @@ class DictationApp:
         delay = float(self.display_sleep_release_delay_seconds)
         if not immediate and delay > 0:
             if self._display_sleep_release_timer is None:
-                LOGGER.info(
+                LOGGER.debug(
                     "💡 Дисплей останется активным ещё %.0f с после диктовки: reason=%s",
                     delay,
                     reason,
@@ -1193,7 +1427,7 @@ class DictationApp:
 
         self._cancel_pending_display_sleep_release()
         try:
-            LOGGER.info("💡 Отпускаю защиту дисплея: reason=%s", reason)
+            LOGGER.debug("💡 Отпускаю защиту дисплея: reason=%s", reason)
             self.display_sleep_prevention_service.release()
         except Exception:
             LOGGER.exception("💡 Не удалось выключить защиту дисплея от сна")
@@ -1267,6 +1501,8 @@ class DictationApp:
     def change_model(self, model_repo: str) -> None:
         """Переключает модель распознавания."""
         self.settings_use_cases.change_model(model_repo)
+        if self.model_repo == model_repo and not self._is_model_cached(model_repo):
+            self.download_model(model_repo)
 
     def change_max_time(self, max_time: float | None) -> None:
         """Переключает лимит записи."""
@@ -1434,8 +1670,105 @@ class DictationApp:
     def copy_history_text(self, text: str) -> None:
         """Копирует текст из истории в системный буфер обмена."""
         self.clipboard_service.write_text(text)
-        LOGGER.info("📋 Текст из истории скопирован в буфер обмена: %r", text[:80])
+        DICTATION_LOGGER.info("📋 Текст из истории скопирован в буфер обмена: %s", summarize_text_for_logging(text))
         self.system_integration_service.notify("MLX Whisper Dictation", "Текст скопирован в буфер обмена.")
+
+    def open_obsidian_history_directory(self) -> None:
+        """Открывает папку дневного архива Obsidian."""
+        path = self.obsidian_history_directory
+        if not path:
+            self.system_integration_service.notify("MLX Whisper Dictation", "Папка истории Obsidian не настроена.")
+            return
+        try:
+            Path(path).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            LOGGER.exception("❌ Не удалось подготовить папку истории Obsidian: %s", path)
+            self.system_integration_service.notify("MLX Whisper Dictation", "Не удалось создать папку истории Obsidian.")
+            return
+        if self.system_integration_service.open_path(path):
+            LOGGER.info("🗂️ Открыта папка истории Obsidian: %s", path)
+            return
+        LOGGER.warning("⚠️ Не удалось открыть папку истории Obsidian: %s", path)
+        self.system_integration_service.notify("MLX Whisper Dictation", "Не удалось открыть папку истории Obsidian.")
+
+    def search_obsidian_history(self, query: str) -> str | None:
+        """Ищет ответ по архиву истории Obsidian через локальную LLM."""
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            return None
+        if self.obsidian_service is None:
+            self.system_integration_service.notify("MLX Whisper Dictation", "Obsidian vault не настроен.")
+            return None
+        if self.llm_processor is None:
+            self.system_integration_service.notify("MLX Whisper Dictation", "LLM-процессор не инициализирован.")
+            return None
+        if not self._is_llm_model_cached():
+            self.system_integration_service.notify(
+                "MLX Whisper Dictation",
+                "LLM-модель ещё не скачана. Сначала загрузите её в разделе LLM.",
+            )
+            return None
+
+        context = self.obsidian_service.search_history(normalized_query)
+        if not context:
+            answer = "По истории Obsidian ничего не нашлось."
+        else:
+            try:
+                answer = self.llm_processor.process_text(
+                    normalized_query,
+                    Config.LLM_PROMPT_PRESETS["📝 Obsidian: напомни"],
+                    context=context,
+                    max_tokens=Config.LLM_OBSIDIAN_MAX_TOKENS,
+                )
+            except Exception:
+                LOGGER.exception("❌ Ошибка LLM-поиска по истории Obsidian")
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    "Ошибка LLM-поиска по истории. Подробности в stderr.log.",
+                )
+                return None
+            answer = answer or "По истории Obsidian ничего не нашлось."
+
+        entry_text = f"Запрос: {normalized_query}\n\nОтвет:\n{answer}"
+        if not self.private_mode_enabled:
+            try:
+                self.archive_obsidian_history_entry("поиск", entry_text)
+            except Exception:
+                LOGGER.exception("❌ Не удалось сохранить поисковую запись в Obsidian")
+        self.transcriber.add_to_history(entry_text)
+        self.clipboard_service.write_text(answer)
+        DICTATION_LOGGER.info(
+            "🔎 Поиск по истории Obsidian завершён: %s",
+            summarize_text_for_logging(normalized_query),
+        )
+        self.system_integration_service.notify("MLX Whisper Dictation", "Ответ по истории скопирован в буфер обмена.")
+        return answer
+
+    def archive_obsidian_history_entry(self, kind: str, text: str) -> None:
+        """Сохраняет запись в Obsidian-архив и, по возможности, достраивает граф тем."""
+        if self.obsidian_service is None or self.private_mode_enabled:
+            return
+        semantic_topics = self._infer_obsidian_topics(text)
+        self.obsidian_service.append_history_entry(kind, text, semantic_topics)
+
+    def _archive_plain_history_entry(self, text: str) -> None:
+        """Сохраняет обычную запись диктовки в дневной Obsidian-архив."""
+        self.archive_obsidian_history_entry("диктовка", text)
+
+    def _infer_obsidian_topics(self, text: str) -> list[str]:
+        """Пытается локально извлечь короткие темы для Obsidian graph."""
+        if self.llm_processor is None or not self._is_llm_model_cached():
+            return []
+        try:
+            response = self.llm_processor.process_text(
+                text,
+                _OBSIDIAN_TOPIC_PROMPT,
+                max_tokens=64,
+            )
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось извлечь темы для Obsidian graph")
+            return []
+        return _parse_obsidian_topics(response)
 
     def start_recording(self) -> None:
         """Запускает обычный сценарий записи и распознавания."""
@@ -1469,11 +1802,122 @@ class DictationApp:
 
     def _is_llm_model_cached(self) -> bool:
         """Проверяет, что LLM-модель уже доступна локально."""
-        return self.llm_pipeline_use_cases.is_model_cached()
+        return self._is_model_cached(self.llm_model_repo) or self.llm_pipeline_use_cases.is_model_cached()
 
     def download_llm_model(self) -> None:
         """Запускает загрузку LLM-модели и публикует прогресс в snapshot."""
-        self.llm_pipeline_use_cases.download_llm_model()
+        self.download_model(self.llm_model_repo)
+
+    def download_model(self, model_id: str) -> None:
+        """Запускает загрузку модели и публикует прогресс в snapshot."""
+        normalized = str(model_id or "").strip()
+        if not normalized:
+            return
+        if self._is_model_cached(normalized):
+            self._model_download_states[normalized] = _ModelDownloadRuntimeState(
+                downloaded_override=True,
+                progress_percent=Config.DOWNLOAD_COMPLETE_PCT,
+                status_text="Загружено",
+            )
+            self.system_integration_service.notify("MLX Whisper Dictation", f"Модель уже загружена: {_short_model_name(normalized)}")
+            self._notify_subscribers()
+            return
+        if not self._can_download_model(normalized):
+            self.system_integration_service.notify("MLX Whisper Dictation", f"Эту модель нельзя скачать автоматически: {normalized}")
+            return
+
+        state = self._model_download_states.get(normalized)
+        if state is not None and state.downloading:
+            self.system_integration_service.notify("MLX Whisper Dictation", "Загрузка модели уже выполняется…")
+            return
+
+        state = _ModelDownloadRuntimeState(downloading=True, progress_percent=0, status_text="Загрузка: 0%")
+        self._model_download_states[normalized] = state
+        self._sync_llm_download_title(normalized, state)
+        self._notify_subscribers()
+
+        def on_progress(desc: str, pct: float, total_units: int) -> None:
+            progress = min(max(float(pct), 0.0), float(Config.DOWNLOAD_COMPLETE_PCT))
+            state.progress_percent = progress
+            if progress >= Config.DOWNLOAD_COMPLETE_PCT:
+                state.status_text = "Загружено"
+            elif total_units > 0:
+                state.status_text = f"Загрузка: {progress:.0f}%"
+            else:
+                state.status_text = f"Загрузка: {desc or f'{progress:.0f}%'}"
+            self._sync_llm_download_title(normalized, state)
+            self._notify_subscribers()
+
+        def download_thread() -> None:
+            try:
+                self.model_cache_service.download(normalized, on_progress)
+                state.downloading = False
+                state.downloaded_override = True
+                state.error = False
+                state.progress_percent = Config.DOWNLOAD_COMPLETE_PCT
+                state.status_text = "Загружено"
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    f"Модель загружена: {_short_model_name(normalized)}",
+                )
+            except Exception:
+                LOGGER.exception("❌ Ошибка загрузки модели: %s", normalized)
+                state.downloading = False
+                state.downloaded_override = False
+                state.error = True
+                state.status_text = "Ошибка загрузки"
+                self.system_integration_service.notify(
+                    "MLX Whisper Dictation",
+                    f"Не удалось скачать модель: {_short_model_name(normalized)}",
+                )
+            finally:
+                self._sync_llm_download_title(normalized, state)
+                self._notify_subscribers()
+
+        thread = threading.Thread(target=download_thread, daemon=True)
+        thread.start()
+
+    def delete_downloaded_model(self, model_id: str) -> None:
+        """Удаляет загруженную модель из локального cache."""
+        normalized = str(model_id or "").strip()
+        if not normalized:
+            return
+        state = self._model_download_states.get(normalized)
+        if state is not None and state.downloading:
+            self.system_integration_service.notify("MLX Whisper Dictation", "Нельзя удалить модель во время загрузки.")
+            return
+        try:
+            deleted = self.model_cache_service.delete(normalized)
+        except Exception:
+            LOGGER.exception("❌ Ошибка удаления модели: %s", normalized)
+            deleted = False
+        self._model_download_states.pop(normalized, None)
+        if deleted:
+            self.system_integration_service.notify(
+                "MLX Whisper Dictation",
+                f"Модель удалена: {_short_model_name(normalized)}",
+            )
+        else:
+            self.system_integration_service.notify(
+                "MLX Whisper Dictation",
+                f"Не удалось удалить модель: {_short_model_name(normalized)}",
+            )
+        self._sync_llm_download_title(normalized, None)
+        self._notify_subscribers()
+
+    def _sync_llm_download_title(self, model_id: str, state: _ModelDownloadRuntimeState | None) -> None:
+        """Синхронизирует старую строку LLM-загрузки с новым общим статусом моделей."""
+        if model_id != self.llm_model_repo:
+            return
+        self._llm_downloading = bool(state and state.downloading)
+        if state is not None and state.downloading:
+            self._llm_download_title = f"📥 Загрузка LLM: {(state.progress_percent or 0):.0f}%"
+        elif self._is_model_cached(model_id) or bool(state and state.downloaded_override):
+            self._llm_download_title = "✅ LLM-модель загружена"
+        elif state is not None and state.error:
+            self._llm_download_title = "❌ Ошибка загрузки LLM"
+        else:
+            self._llm_download_title = "📥 Скачать LLM-модель…"
 
     def change_llm_prompt(self, prompt_name: str) -> None:
         """Переключает текущий пресет системного промпта LLM."""
@@ -1484,6 +1928,8 @@ class DictationApp:
         self.settings_use_cases.change_llm_model(model_name)
         self.reader_preferences = self.reader_preferences.with_preprocess_model(model_name)
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_PREPROCESS_MODEL, self.reader_preferences.preprocess_model)
+        if self.llm_model_repo == model_name and not self._is_model_cached(model_name):
+            self.download_model(model_name)
 
     def change_reader_rsvp_wpm(self, wpm: int) -> None:
         """Меняет скорость RSVP."""
@@ -1606,6 +2052,8 @@ class DictationApp:
         self.settings_store.save_str(Config.DEFAULTS_KEY_READER_TTS_MLX_MODEL, self.reader_tts_mlx_model)
         LOGGER.info("🔈 MLX TTS-модель сохранена: %s", self.reader_tts_mlx_model)
         self._notify_subscribers()
+        if self.reader_tts_mlx_model == model_name and not self._is_model_cached(model_name):
+            self.download_model(model_name)
 
     def change_reader_tts_mlx_voice_description(self, description: str) -> None:
         """Меняет описание голоса для MLX VoiceDesign."""

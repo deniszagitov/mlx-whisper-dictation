@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+
+from src.domain.logging import DICTATION_LOGGER_NAME
 from src.infrastructure import llm_runtime
 
 
@@ -44,3 +47,48 @@ def test_cleanup_llm_runtime_memory_calls_gc(monkeypatch):
     llm_runtime.cleanup_llm_runtime_memory()
 
     assert gc_calls == [True]
+
+
+def test_process_text_logs_only_masked_llm_response():
+    """Логи LLM не должны содержать сырой пользовательский ответ модели."""
+
+    class FakeTokenizer:
+        def encode(self, text):
+            return text.split()
+
+    class ListHandler(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.messages.append(record.getMessage())
+
+    dictation_logger = logging.getLogger(DICTATION_LOGGER_NAME)
+    original_handlers = list(dictation_logger.handlers)
+    original_level = dictation_logger.level
+    original_propagate = dictation_logger.propagate
+    handler = ListHandler()
+    dictation_logger.handlers = [handler]
+    dictation_logger.setLevel(logging.INFO)
+    dictation_logger.propagate = False
+
+    gateway = llm_runtime.LlmGateway(
+        model_name="dummy-model",
+        runtime_loader=lambda _model_name: ("model", FakeTokenizer()),
+        generation_runner=lambda _model, _tokenizer, _prompt, _max_tokens: "секретный ответ модели",
+        memory_cleanup=lambda: None,
+    )
+
+    try:
+        result = gateway.process_text("пользовательский запрос", "system prompt")
+    finally:
+        dictation_logger.handlers = original_handlers
+        dictation_logger.setLevel(original_level)
+        dictation_logger.propagate = original_propagate
+
+    joined = "\n".join(handler.messages)
+
+    assert result == "секретный ответ модели"
+    assert "секретный ответ модели" not in joined
+    assert "sha256=" in joined

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 import src.app as app_module
 from src.domain.constants import Config
+from src.domain.logging import DICTATION_LOGGER_NAME
 from src.domain.types import LaunchConfig
 
 
@@ -188,6 +190,38 @@ class FakeSettingsStore:
         return None
 
 
+class FakeModelCacheService:
+    """Фейковый cache скачиваемых моделей."""
+
+    def __init__(self, *, cached=None) -> None:
+        self.cached = set(cached or [])
+        self.downloads: list[str] = []
+        self.deletions: list[str] = []
+        self.progress_callbacks: list[Any] = []
+
+    def is_cached(self, model_id: str) -> bool:
+        """Проверяет наличие модели в fake-cache."""
+        return model_id in self.cached
+
+    def can_download(self, model_id: str) -> bool:
+        """Разрешает скачивание Hugging Face-like repo id."""
+        return "/" in model_id and not model_id.startswith("/")
+
+    def download(self, model_id: str, progress_callback) -> None:
+        """Имитирует скачивание модели."""
+        self.downloads.append(model_id)
+        self.progress_callbacks.append(progress_callback)
+        if progress_callback is not None:
+            progress_callback("weights", 50, 2)
+        self.cached.add(model_id)
+
+    def delete(self, model_id: str) -> bool:
+        """Имитирует удаление модели."""
+        self.deletions.append(model_id)
+        self.cached.discard(model_id)
+        return True
+
+
 def make_system_integration_service(
     *,
     notifications=None,
@@ -234,6 +268,32 @@ def make_input_device_catalog(*, devices=None):
     return app_module.InputDeviceCatalogService(list_input_devices=lambda: list(input_devices))
 
 
+def make_obsidian_service(
+    *,
+    search_history_result="",
+    search_notes_result="",
+    entries=None,
+    history_directory="/tmp/obsidian-vault/05 📅 Daily Notes/Dictator",
+    today_topics=None,
+):
+    """Создаёт concrete bundle Obsidian для тестов controller."""
+    sink = entries if entries is not None else []
+
+    def append_history_entry(kind, text, semantic_topics=None):
+        sink.append((kind, text, list(semantic_topics or [])))
+
+    return app_module.ObsidianService(
+        vault_path="/tmp/obsidian-vault",
+        history_directory=history_directory,
+        write_note=lambda text: type("NotePath", (), {"name": "note.md", "text": text})(),
+        search_notes=lambda _query: search_notes_result,
+        search_history=lambda _query: search_history_result,
+        append_history_entry=append_history_entry,
+        load_history_items=lambda: [],
+        load_today_topics=lambda: list(today_topics or []),
+    )
+
+
 def install_display_sleep_prevention(controller):
     """Подключает к контроллеру фейковый display sleep assertion и возвращает журнал событий."""
     events: list[str] = []
@@ -259,7 +319,7 @@ def install_system_diagnostics(controller):
     return events
 
 
-def make_controller(monkeypatch, *, system_integration_service=None):
+def make_controller(monkeypatch, *, system_integration_service=None, model_cache_service=None, obsidian_service=None):
     """Создаёт DictationApp с замоканными внешними зависимостями."""
     recorder = FakeRecorder()
     transcriber = FakeTranscriber()
@@ -291,8 +351,10 @@ def make_controller(monkeypatch, *, system_integration_service=None):
         launch_config=launch_config,
         clipboard_service=clipboard_service,
         microphone_profiles_service=microphone_profiles_service,
+        obsidian_service=obsidian_service,
         system_integration_service=system_integration_service,
         input_device_catalog=input_device_catalog,
+        model_cache_service=model_cache_service,
         settings_store=cast("Any", settings_store),
     )
     controller.display_sleep_release_delay_seconds = 0
@@ -357,6 +419,119 @@ def test_reader_tts_rate_default_migration_resets_previous_speed_once():
     controller = create_controller()
 
     assert controller.reader_tts_rate_multiplier == 1.4
+
+
+def test_change_whisper_model_starts_download_when_model_is_missing(monkeypatch) -> None:
+    """Выбор нескачанной Whisper-модели должен запускать загрузку и публиковать прогресс."""
+    cache = FakeModelCacheService(cached={Config.DEFAULT_MODEL_NAME, Config.DEFAULT_LLM_MODEL_NAME})
+    service = app_module.ModelCacheService(
+        is_cached=cache.is_cached,
+        can_download=cache.can_download,
+        download=cache.download,
+        delete=cache.delete,
+    )
+    controller, _, _ = make_controller(monkeypatch, model_cache_service=service)
+    published: list[Any] = []
+    controller.subscribe(published.append)
+
+    class ImmediateThread:
+        """Поток, немедленно выполняющий target в тесте."""
+
+        def __init__(self, *, target, daemon) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+
+    controller.change_model("mlx-community/whisper-turbo")
+
+    assert cache.downloads == ["mlx-community/whisper-turbo"]
+    assert any(
+        snapshot.downloadable_models["mlx-community/whisper-turbo"].state == "downloading"
+        and snapshot.downloadable_models["mlx-community/whisper-turbo"].progress_percent == 50
+        for snapshot in published
+    )
+    assert controller.snapshot().downloadable_models["mlx-community/whisper-turbo"].state == "downloaded"
+
+
+def test_change_llm_model_tracks_full_repo_and_starts_download(monkeypatch) -> None:
+    """Выбор нескачанной LLM-модели должен сохранить полный repo id и скачать её."""
+    target_model = Config.LLM_MODEL_PRESETS[1]
+    cache = FakeModelCacheService(cached={Config.DEFAULT_MODEL_NAME})
+    service = app_module.ModelCacheService(
+        is_cached=cache.is_cached,
+        can_download=cache.can_download,
+        download=cache.download,
+        delete=cache.delete,
+    )
+    controller, _, _ = make_controller(monkeypatch, model_cache_service=service)
+
+    class ImmediateThread:
+        """Поток, немедленно выполняющий target в тесте."""
+
+        def __init__(self, *, target, daemon) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+
+    controller.change_llm_model(target_model)
+
+    assert controller.snapshot().llm_model_repo == target_model
+    assert cache.downloads == [target_model]
+    assert controller.snapshot().downloadable_models[target_model].state == "downloaded"
+
+
+def test_change_mlx_tts_model_starts_download_when_model_is_missing(monkeypatch) -> None:
+    """Выбор нескачанной MLX TTS-модели должен запускать загрузку."""
+    cache = FakeModelCacheService(cached={Config.DEFAULT_MODEL_NAME, Config.DEFAULT_LLM_MODEL_NAME})
+    service = app_module.ModelCacheService(
+        is_cached=cache.is_cached,
+        can_download=cache.can_download,
+        download=cache.download,
+        delete=cache.delete,
+    )
+    controller, _, _ = make_controller(monkeypatch, model_cache_service=service)
+
+    class ImmediateThread:
+        """Поток, немедленно выполняющий target в тесте."""
+
+        def __init__(self, *, target, daemon) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            self._target()
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+
+    controller.change_reader_tts_mlx_model("mlx-community/custom-tts")
+
+    assert cache.downloads == ["mlx-community/custom-tts"]
+    assert controller.snapshot().downloadable_models["mlx-community/custom-tts"].state == "downloaded"
+
+
+def test_delete_downloaded_model_removes_cache_entry(monkeypatch) -> None:
+    """Загруженную модель можно удалить из локального cache."""
+    cache = FakeModelCacheService(cached={Config.DEFAULT_MODEL_NAME, Config.DEFAULT_LLM_MODEL_NAME})
+    service = app_module.ModelCacheService(
+        is_cached=cache.is_cached,
+        can_download=cache.can_download,
+        download=cache.download,
+        delete=cache.delete,
+    )
+    controller, _, _ = make_controller(monkeypatch, model_cache_service=service)
+
+    controller.delete_downloaded_model(Config.DEFAULT_MODEL_NAME)
+
+    assert cache.deletions == [Config.DEFAULT_MODEL_NAME]
+    assert controller.snapshot().downloadable_models[Config.DEFAULT_MODEL_NAME].state == "missing"
 
 
 def test_refresh_input_devices_rebinds_selected_microphone_by_name(monkeypatch):
@@ -773,6 +948,14 @@ def test_change_secondary_hotkey_updates_listener_and_snapshot(monkeypatch):
 
 def test_copy_history_text_uses_injected_clipboard_service(monkeypatch):
     """Копирование записи истории должно идти через clipboard bundle приложения."""
+    class ListHandler(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.messages.append(record.getMessage())
+
     written_texts: list[str] = []
     settings_store = FakeSettingsStore()
     launch_config = LaunchConfig.from_sources(
@@ -802,6 +985,70 @@ def test_copy_history_text_uses_injected_clipboard_service(monkeypatch):
         settings_store=cast("Any", settings_store),
     )
 
-    controller.copy_history_text("готовый текст")
+    dictation_logger = logging.getLogger(DICTATION_LOGGER_NAME)
+    original_handlers = list(dictation_logger.handlers)
+    original_level = dictation_logger.level
+    original_propagate = dictation_logger.propagate
+    handler = ListHandler()
+    dictation_logger.handlers = [handler]
+    dictation_logger.setLevel(logging.INFO)
+    dictation_logger.propagate = False
+
+    try:
+        controller.copy_history_text("готовый текст")
+    finally:
+        dictation_logger.handlers = original_handlers
+        dictation_logger.setLevel(original_level)
+        dictation_logger.propagate = original_propagate
 
     assert written_texts == ["готовый текст"]
+    assert "готовый текст" not in "\n".join(handler.messages)
+    assert "sha256=" in "\n".join(handler.messages)
+
+
+def test_search_obsidian_history_uses_local_llm_and_archives_result(monkeypatch):
+    """Текстовый поиск по истории должен идти через LLM и сохраняться в Obsidian."""
+    notifications: list[tuple[str, str]] = []
+    written_texts: list[str] = []
+    archived_entries: list[tuple[str, str, list[str]]] = []
+    obsidian_service = make_obsidian_service(
+        search_history_result="--- 05 📅 Daily Notes/Dictator/2026-05-09.md ---\nПроверить бакеты для прода",
+        entries=archived_entries,
+    )
+    system_service = make_system_integration_service(notifications=notifications)
+    controller, _recorder, transcriber = make_controller(
+        monkeypatch,
+        system_integration_service=system_service,
+        obsidian_service=obsidian_service,
+    )
+    controller.clipboard_service = app_module.ClipboardService(read_text=lambda: None, write_text=written_texts.append)
+    controller.llm_processor.process_text = lambda *args, **kwargs: "текст"  # type: ignore[method-assign]
+
+    answer = controller.search_obsidian_history("что я говорил про бакеты")
+
+    assert answer == "текст"
+    assert written_texts == ["текст"]
+    assert transcriber.history == ["Запрос: что я говорил про бакеты\n\nОтвет:\nтекст"]
+    assert archived_entries == [
+        (
+            "поиск",
+            "Запрос: что я говорил про бакеты\n\nОтвет:\nтекст",
+            ["текст"],
+        )
+    ]
+    assert ("MLX Whisper Dictation", "Ответ по истории скопирован в буфер обмена.") in notifications
+
+
+def test_open_obsidian_history_directory_uses_system_open(monkeypatch):
+    """Открытие архива должно идти через системный open_path adapter."""
+    opened_paths: list[str] = []
+    system_service = make_system_integration_service(open_paths=opened_paths)
+    controller, _recorder, _transcriber = make_controller(
+        monkeypatch,
+        system_integration_service=system_service,
+        obsidian_service=make_obsidian_service(history_directory="/tmp/project/obsidian-vault/05 📅 Daily Notes/Dictator"),
+    )
+
+    controller.open_obsidian_history_directory()
+
+    assert opened_paths == ["/tmp/project/obsidian-vault/05 📅 Daily Notes/Dictator"]
