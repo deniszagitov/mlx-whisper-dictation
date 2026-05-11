@@ -94,6 +94,7 @@ from src.infrastructure.permissions import (
 from src.infrastructure.persistence.defaults import Defaults
 from src.infrastructure.persistence.diagnostics import DiagnosticsStore, setup_logging
 from src.infrastructure.persistence.history import load_history_items, save_history_records
+from src.infrastructure.persistence.journal_db import JournalDb
 from src.infrastructure.persistence.microphone_profiles import _load_microphone_profiles, _save_microphone_profiles
 from src.infrastructure.power import MacOSDisplaySleepAssertion
 from src.infrastructure.system_diagnostics import capture_system_diagnostics
@@ -274,6 +275,8 @@ def main() -> None:
     app_preferences = AppPreferences.from_store(defaults)
     transcriber_preferences = TranscriberPreferences.from_store(defaults)
 
+    journal_db = JournalDb()
+
     transcriber = SpeechTranscriber(
         args.model,
         settings_store=defaults,
@@ -298,6 +301,7 @@ def main() -> None:
         warn_missing_accessibility_permission=warn_missing_accessibility_permission,
         warn_missing_input_monitoring_permission=warn_missing_input_monitoring_permission,
         frontmost_application_info=frontmost_application_info,
+        journal_writer=journal_db.record_event,
     )
     recorder = Recorder()
     llm_processor = LLMProcessor(

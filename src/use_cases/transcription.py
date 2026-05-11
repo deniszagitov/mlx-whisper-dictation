@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..domain.types import AudioDiagnostics, HistoryRecord, TranscriberPreferences
 
 from ..domain.constants import Config
+from ..domain.dictation_log import DictationEvent
 from ..domain.transcription import (
     CapitalizeFirstLetterRule,
     RemoveTrailingPeriodForSingleSentenceRule,
@@ -253,6 +254,7 @@ class TranscriptionUseCases:
         warn_missing_accessibility_permission: Callable[[], None] | None = None,
         warn_missing_input_monitoring_permission: Callable[[], None] | None = None,
         frontmost_application_info: Callable[[], dict[str, str | int] | None] | None = None,
+        journal_writer: Callable[[DictationEvent], int] | None = None,
     ) -> None:
         """Создаёт use case распознавания и вставки.
 
@@ -278,6 +280,8 @@ class TranscriptionUseCases:
             warn_missing_accessibility_permission: Необязательное предупреждение о недостающем Accessibility.
             warn_missing_input_monitoring_permission: Необязательное предупреждение о недостающем Input Monitoring.
             frontmost_application_info: Необязательное чтение текущего активного приложения.
+            journal_writer: Необязательная запись успешных распознаваний в журнал
+                (текст + сырое аудио). Если не задан, журнал не ведётся.
         """
         self.settings_store = settings_store or _InMemorySettingsStore()
         self.diagnostics_store = diagnostics_store or _DisabledDiagnosticsStore()
@@ -304,6 +308,7 @@ class TranscriptionUseCases:
             warn_missing_input_monitoring_permission or _noop_permission_warning
         )
         self._frontmost_application_info_reader = frontmost_application_info
+        self._journal_writer = journal_writer
         self.model_name = model_name
         self.preferences = preferences or TranscriberPreferences.from_store(self.settings_store)
         self._sync_diagnostics_cleanup_setting()
@@ -806,6 +811,52 @@ class TranscriptionUseCases:
             return save_recording_artifacts(stem, raw_audio, preprocessed_audio, diagnostics)
         return self.diagnostics_store.save_audio_recording(stem, preprocessed_audio.audio, diagnostics)
 
+    def _record_journal_event(
+        self,
+        text: str,
+        preprocessed_audio: PreprocessedAudio,
+        diagnostics: dict[str, Any],
+        language: str | None,
+        source: str,
+    ) -> None:
+        """Записывает успешное распознавание в журнал (текст + PCM16 аудио)."""
+        writer = self._journal_writer
+        if writer is None or not text:
+            return
+        if self.private_mode_enabled:
+            return
+        try:
+            audio_bytes = self._encode_audio_pcm16(preprocessed_audio.audio)
+            duration_value = diagnostics.get("duration_seconds", preprocessed_audio.duration_s)
+            duration_seconds = float(duration_value) if isinstance(duration_value, int | float) else 0.0
+            rms_value = diagnostics.get("rms_energy", 0.0)
+            rms_energy = float(rms_value) if isinstance(rms_value, int | float) else 0.0
+            ended_at = self._current_time()
+            started_at = ended_at - max(duration_seconds, 0.0)
+            event = DictationEvent(
+                started_at=started_at,
+                ended_at=ended_at,
+                text=text,
+                language=language,
+                model=self.model_name,
+                source=source,
+                audio_pcm16=audio_bytes,
+                sample_rate=int(preprocessed_audio.sample_rate),
+                duration_seconds=duration_seconds,
+                rms_energy=rms_energy,
+            )
+            writer(event)
+        except Exception:
+            LOGGER.exception("⚠️ Не удалось записать событие в журнал диктовок")
+
+    @staticmethod
+    def _encode_audio_pcm16(audio: npt.NDArray[np.float32]) -> bytes:
+        """Кодирует float32 mono в PCM16 little-endian для хранения в журнале."""
+        flat = np.asarray(audio, dtype=np.float32).reshape(-1)
+        clipped = np.clip(flat, -1.0, 1.0)
+        pcm16 = (clipped * 32767.0).astype(np.int16, copy=False)
+        return pcm16.tobytes()
+
     def _build_text_postprocessor(self) -> TranscriptionPostprocessor:
         """Собирает цепочку включённых правил постобработки распознанного текста."""
         rules: list[TranscriptionPostprocessingRule] = []
@@ -932,6 +983,13 @@ class TranscriptionUseCases:
 
         # Сохраняем текст в историю независимо от метода вставки
         self.add_to_history(output_text)
+        self._record_journal_event(
+            output_text,
+            preprocessed_audio,
+            diagnostics,
+            language,
+            Config.JOURNAL_SOURCE_DICTATION,
+        )
 
         # Проверяем разрешения macOS, необходимые для всех методов автовставки
         if not self._is_accessibility_trusted():
@@ -1074,4 +1132,11 @@ class TranscriptionUseCases:
             LOGGER.warning("👻 Отброшен галлюцинаторный результат: %r", text)
             return None
 
+        self._record_journal_event(
+            text,
+            preprocessed_audio,
+            diagnostics,
+            language,
+            Config.JOURNAL_SOURCE_LLM,
+        )
         return text
