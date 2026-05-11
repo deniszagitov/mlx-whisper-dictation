@@ -655,8 +655,6 @@ class DictationApp:
         self.recorder.set_permission_callback(self.set_permission_status)
         self.transcriber.history_callback = self._notify_subscribers
         self.transcriber.token_usage_callback = self._notify_subscribers
-        if hasattr(self.transcriber, "history_archive_writer"):
-            self.transcriber.history_archive_writer = self._archive_plain_history_entry
         self._refresh_hotkey_statuses()
 
     def _migrate_reader_tts_rate_default(self) -> None:
@@ -1750,10 +1748,6 @@ class DictationApp:
             return
         semantic_topics = self._infer_obsidian_topics(text)
         self.obsidian_service.append_history_entry(kind, text, semantic_topics)
-
-    def _archive_plain_history_entry(self, text: str) -> None:
-        """Сохраняет обычную запись диктовки в дневной Obsidian-архив."""
-        self.archive_obsidian_history_entry("диктовка", text)
 
     def _infer_obsidian_topics(self, text: str) -> list[str]:
         """Пытается локально извлечь короткие темы для Obsidian graph."""
