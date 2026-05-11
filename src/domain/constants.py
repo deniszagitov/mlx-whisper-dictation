@@ -54,6 +54,33 @@ class Config:
     AUDIO_CLIPPING_WARNING_RATIO = 0.005
     MAX_DEBUG_ARTIFACTS = 10
     LOG_DIR = Path.home() / "Library/Logs/whisper-dictation"
+    APP_SUPPORT_DIR = Path.home() / "Library/Application Support/Dictator"
+    JOURNAL_DB_PATH = APP_SUPPORT_DIR / "journal.db"
+    JOURNAL_SOURCE_DICTATION = "dictation"
+    JOURNAL_SOURCE_LLM = "llm"
+    DIGEST_FALLBACK_DIR = APP_SUPPORT_DIR / "digests"
+    DIGEST_OBSIDIAN_DAILY_SUBDIR = "Daily"
+    OBSIDIAN_VAULT_ENV = "DICTATOR_OBSIDIAN_VAULT"
+    DIGEST_DISABLED_ENV = "DICTATOR_DIGEST_DISABLE_EXPORT"
+    DIGEST_HOURLY_MIN_DURATION_SECONDS = 5.0
+    DIGEST_HOURLY_MIN_EVENT_COUNT = 1
+    DIGEST_HOURLY_MAX_TOKENS = 400
+    DIGEST_DAILY_MAX_TOKENS = 1200
+    DIGEST_HOURLY_PROMPT = (
+        "Ты — личный журнал пользователя. На вход — расшифровки голосовых заметок "
+        "за один час. Сожми их в краткое связное резюме на русском, в 1-3 предложениях. "
+        "Сохраняй смысловые акценты, факты, имена и числа. Без markdown-заголовков, "
+        "без вступлений 'пользователь сказал', пиши от первого лица. "
+        "Если несколько тем — раздели короткими фразами через тире."
+    )
+    DIGEST_DAILY_PROMPT = (
+        "Ты — личный журнал пользователя. На вход — часовые резюме за один день, "
+        "уже отсортированные по времени. Сделай одно цельное резюме дня на русском "
+        "в свободной форме, 4-8 предложений. Подчеркни главные события, темы, решения. "
+        "Не повторяй формат 'в 9 часов он, в 10 часов он', а интегрируй в один рассказ "
+        "от первого лица, упоминая время только когда это значимо. "
+        "Без markdown-заголовков и списков, только связный абзац."
+    )
     ARTIFACT_TTL_SECONDS = 24 * 60 * 60
     DISPLAY_SLEEP_RELEASE_GRACE_SECONDS = 0
     POWER_DIAGNOSTICS_COMMAND_TIMEOUT_SECONDS = 2.0

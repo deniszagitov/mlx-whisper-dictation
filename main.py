@@ -104,6 +104,7 @@ from src.infrastructure.permissions import (
 )
 from src.infrastructure.persistence.defaults import Defaults
 from src.infrastructure.persistence.diagnostics import DiagnosticsStore, setup_logging
+from src.infrastructure.persistence.journal_db import JournalDb
 from src.infrastructure.persistence.microphone_profiles import _load_microphone_profiles, _save_microphone_profiles
 from src.infrastructure.power import MacOSDisplaySleepAssertion
 from src.infrastructure.system_diagnostics import capture_system_diagnostics
@@ -311,6 +312,7 @@ def main() -> None:
         load_history_items=lambda: load_obsidian_history_items(obsidian_vault_path),
         load_today_topics=lambda: load_obsidian_daily_topics(obsidian_vault_path),
     )
+    journal_db = JournalDb()
 
     transcriber = SpeechTranscriber(
         args.model,
@@ -336,6 +338,7 @@ def main() -> None:
         warn_missing_accessibility_permission=warn_missing_accessibility_permission,
         warn_missing_input_monitoring_permission=warn_missing_input_monitoring_permission,
         frontmost_application_info=frontmost_application_info,
+        journal_writer=journal_db.record_event,
     )
     recorder = Recorder()
     llm_processor = LLMProcessor(
