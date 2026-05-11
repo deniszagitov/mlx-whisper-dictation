@@ -27,6 +27,8 @@ from ..domain.reader_constants import (
 from .settings_window import SettingsWindowController
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..domain.ports import StatusBarControllerProtocol
     from ..domain.types import AppSnapshot, MicrophoneProfile
 
@@ -41,9 +43,24 @@ def _call_on_main_thread(callback: Any, *args: Any) -> None:
     callAfter(callback, *args)
 
 
+def _run_modal_with_keyboard_focus(run: Callable[[], int]) -> int:
+    """Временно делает приложение Regular, чтобы NSAlert получал клавиатурный фокус.
+
+    Without this, accessory-style apps (LSUIElement, как rumps menubar) не получают
+    keyboard focus в модальных NSAlert — текстовые поля игнорируют ввод.
+    """
+    shared_app = AppKit.NSApplication.sharedApplication()
+    previous_policy = shared_app.activationPolicy()
+    shared_app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+    shared_app.activateIgnoringOtherApps_(True)
+    try:
+        return run()
+    finally:
+        shared_app.setActivationPolicy_(previous_policy)
+
+
 def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
     """Открывает простое AppKit-окно ввода текста и возвращает введённое значение."""
-    AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
     input_field = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 420, 24))
     input_field.setStringValue_(default_text)
     input_field.setEditable_(True)
@@ -60,19 +77,19 @@ def prompt_text(title: str, message: str, default_text: str = "") -> str | None:
     alert.window().setInitialFirstResponder_(input_field)
     input_field.selectText_(None)
 
-    if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
+    response = _run_modal_with_keyboard_focus(alert.runModal)
+    if response != AppKit.NSAlertFirstButtonReturn:
         return None
     return str(input_field.stringValue()).strip()
 
 
 def show_text_result(title: str, message: str) -> None:
     """Показывает простой информационный диалог с результатом операции."""
-    AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
     alert = AppKit.NSAlert.alloc().init()
     alert.setMessageText_(title)
     alert.setInformativeText_(message)
     alert.addButtonWithTitle_("ОК")
-    alert.runModal()
+    _run_modal_with_keyboard_focus(alert.runModal)
 
 
 class StatusBarApp(rumps.App):  # type: ignore[misc]

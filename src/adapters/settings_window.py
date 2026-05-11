@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -968,9 +969,24 @@ def build_settings_screens(snapshot: AppSnapshot, *, tts_voices: Sequence[TTSVoi
     return tuple(screens[item.identifier] for item in NAVIGATION_ITEMS)
 
 
+def _run_modal_with_keyboard_focus(run: Callable[[], int]) -> int:
+    """Временно делает приложение Regular, чтобы NSAlert получал клавиатурный фокус.
+
+    Без этого accessory-стиль (LSUIElement, как rumps menubar) не отдаёт
+    keyboard focus модальным NSAlert — текстовые поля игнорируют ввод.
+    """
+    shared_app = AppKit.NSApplication.sharedApplication()
+    previous_policy = shared_app.activationPolicy()
+    shared_app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+    shared_app.activateIgnoringOtherApps_(True)
+    try:
+        return run()
+    finally:
+        shared_app.setActivationPolicy_(previous_policy)
+
+
 def _prompt_text(title: str, message: str, default_text: str = "") -> str | None:
     """Открывает нативный диалог ввода текста."""
-    AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
     input_field = AppKit.NSTextField.alloc().initWithFrame_(AppKit.NSMakeRect(0, 0, 420, 24))
     input_field.setStringValue_(default_text)
     input_field.setEditable_(True)
@@ -987,19 +1003,19 @@ def _prompt_text(title: str, message: str, default_text: str = "") -> str | None
     alert.window().setInitialFirstResponder_(input_field)
     input_field.selectText_(None)
 
-    if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
+    response = _run_modal_with_keyboard_focus(alert.runModal)
+    if response != AppKit.NSAlertFirstButtonReturn:
         return None
     return str(input_field.stringValue()).strip()
 
 
 def _show_text_result(title: str, message: str) -> None:
     """Показывает результат операции в простом нативном диалоге."""
-    AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
     alert = AppKit.NSAlert.alloc().init()
     alert.setMessageText_(title)
     alert.setInformativeText_(message)
     alert.addButtonWithTitle_("ОК")
-    alert.runModal()
+    _run_modal_with_keyboard_focus(alert.runModal)
 
 
 class SettingsWindowController(AppKit.NSObject):  # type: ignore[misc]

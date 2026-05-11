@@ -1031,6 +1031,12 @@ class TestStatusBarMenuSelections:
                     def activateIgnoringOtherApps_(self, enabled):
                         calls["activated"] = enabled
 
+                    def activationPolicy(self):
+                        return 1  # accessory
+
+                    def setActivationPolicy_(self, policy):
+                        calls.setdefault("policies", []).append(policy)
+
                 return App()
 
         class FakeField:
