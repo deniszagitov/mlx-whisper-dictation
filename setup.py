@@ -71,17 +71,27 @@ ROOT = Path(__file__).parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 _PY2APP_PACKAGES = [
+    "hydra",
+    "huggingface_hub",
     "mlx",
     "mlx_audio",
     "mlx_whisper",
     "numpy",
+    "omegaconf",
+    "pyannote",
     "pyaudio",
     "pynput",
     "rumps",
     "sounddevice",
+    "soundfile",
     "soxr",
     "src",
+    "torch",
+    "torchaudio",
     "tqdm",
+    "transcribe_cpp",
+    "transcribe_cpp_native",
+    "transformers",
     "webrtcvad",
 ]
 
@@ -144,7 +154,7 @@ setup_kwargs = {
     "distclass": Py2AppDistribution,
     "name": "Dictator",
     "version": "0.1.0",
-    "description": "Офлайн-приложение диктовки для macOS на базе локальных MLX ASR-моделей.",
+    "description": "Офлайн-приложение диктовки для macOS на базе локальных ASR-моделей.",
     "long_description": README,
     "long_description_content_type": "text/markdown",
     "options": {"py2app": OPTIONS},

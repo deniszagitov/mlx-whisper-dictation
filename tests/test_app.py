@@ -586,6 +586,20 @@ def test_snapshot_reflects_initial_runtime_state(monkeypatch):
     assert recorder.input_device["index"] == 0
 
 
+def test_multilingual_model_exposes_five_languages_and_restores_default(monkeypatch):
+    """Смена ASR-модели должна обновлять доступные языки menu bar."""
+    controller, _recorder, _transcriber = make_controller(monkeypatch)
+
+    controller.change_model(Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL)
+
+    assert controller.languages == ["ru", "en", "kk", "ky", "uz"]
+    assert controller.current_language == "ru"
+
+    controller.change_model("mlx-community/whisper-turbo")
+
+    assert controller.languages == ["ru"]
+
+
 def test_subscribe_receives_state_transitions(monkeypatch):
     """Подписчик должен получать новые snapshot при смене состояния."""
     controller, recorder, _transcriber = make_controller(monkeypatch)

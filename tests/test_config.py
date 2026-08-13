@@ -117,6 +117,26 @@ def install_defaults(monkeypatch, fake_defaults):
     )
 
 
+def test_gigaam_preset_uses_exact_fp16_filename_in_ui():
+    """Статус модели должен явно показывать выбранный FP16 GGUF."""
+    assert Config.GIGAAM_MODEL_REPO in Config.MODEL_PRESETS
+    assert Config.asr_model_display_name(Config.GIGAAM_MODEL_REPO) == "gigaam-v3-e2e-rnnt-F16.gguf"
+
+
+def test_gigaam_multilingual_preset_uses_large_ctc_and_five_languages():
+    """В список диктовки входит large_ctc, но не encoder-only large_ssl."""
+    assert Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL in Config.MODEL_PRESETS
+    assert Config.asr_model_display_name(Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL) == "GigaAM-Multilingual large_ctc"
+    assert Config.asr_model_supported_languages(Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL) == (
+        "ru",
+        "en",
+        "kk",
+        "ky",
+        "uz",
+    )
+    assert all("large_ssl" not in model for model in Config.MODEL_PRESETS)
+
+
 def test_defaults_contains_key_returns_presence(monkeypatch):
     """Defaults.contains_key должен проверять наличие objectForKey_."""
     fake_defaults = FakeNSUserDefaults(object_values={"existing": "value"})

@@ -1,4 +1,4 @@
-"""Приложение офлайн-диктовки для macOS на базе MLX Whisper.
+"""Приложение офлайн-диктовки для macOS на базе локальных ASR-моделей.
 
 Точка входа приложения: парсинг аргументов командной строки,
 запуск menu bar приложения и глобальных обработчиков клавиш.
@@ -136,14 +136,14 @@ def parse_args() -> LaunchConfig:
         ValueError: Если выбран несовместимый язык для модели с суффиксом `.en`.
     """
     parser = argparse.ArgumentParser(
-        description=("Приложение диктовки на базе MLX Whisper. По умолчанию комбинация cmd+option запускает и останавливает диктовку.")
+        description=("Приложение локальной диктовки. По умолчанию комбинация cmd+option запускает и останавливает диктовку.")
     )
     parser.add_argument(
         "-m",
         "--model",
         type=str,
         default=Config.DEFAULT_MODEL_NAME,
-        help="Локальный путь к модели MLX или Hugging Face repo для распознавания.",
+        help="Локальный путь к модели MLX/GGUF/PyTorch или Hugging Face repo для распознавания.",
     )
     parser.add_argument(
         "-k",
@@ -200,7 +200,7 @@ def parse_args() -> LaunchConfig:
         default="ctrl+shift+alt+l",
         help=(
             "Комбинация клавиш для запуска LLM-пайплайна: "
-            "голос → Whisper → LLM → результат в буфер обмена и уведомление. "
+            "голос → ASR → LLM → результат в буфер обмена и уведомление. "
             "По умолчанию: ctrl+shift+alt+l. Укажите пустую строку, чтобы отключить."
         ),
     )

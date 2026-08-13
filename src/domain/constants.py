@@ -10,11 +10,19 @@ class Config:
     """Константы и пресеты приложения Dictator."""
 
     DEFAULT_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
+    GIGAAM_MODEL_REPO = "handy-computer/gigaam-v3-e2e-rnnt-gguf"
+    GIGAAM_MODEL_FILENAME = "gigaam-v3-e2e-rnnt-F16.gguf"
+    GIGAAM_MULTILINGUAL_REPO = "ai-sage/GigaAM-Multilingual"
+    GIGAAM_MULTILINGUAL_LARGE_CTC_REVISION = "large_ctc"
+    GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL = f"{GIGAAM_MULTILINGUAL_REPO}@{GIGAAM_MULTILINGUAL_LARGE_CTC_REVISION}"
+    GIGAAM_MULTILINGUAL_LANGUAGES: ClassVar[tuple[str, ...]] = ("ru", "en", "kk", "ky", "uz")
     MODEL_PRESETS: ClassVar[list[str]] = [
         "mlx-community/whisper-large-v3-turbo",
         "mlx-community/whisper-large-v3-mlx",
         "mlx-community/whisper-turbo",
         "mlx-community/Qwen3-ASR-1.7B-8bit",
+        GIGAAM_MODEL_REPO,
+        GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL,
     ]
     MAX_TIME_PRESETS: ClassVar[list[int | None]] = [15, 30, 45, 60, 90, None]
     MIN_HOTKEY_PARTS = 2
@@ -196,6 +204,22 @@ class Config:
         if float(max_time).is_integer():
             return f"{int(max_time)} с"
         return f"{max_time} с"
+
+    @staticmethod
+    def asr_model_display_name(model_repo: str) -> str:
+        """Возвращает точное имя выбранной ASR-модели для статуса и меню."""
+        if model_repo.strip().lower() == Config.GIGAAM_MODEL_REPO.lower():
+            return Config.GIGAAM_MODEL_FILENAME
+        if model_repo.strip().lower() == Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL.lower():
+            return "GigaAM-Multilingual large_ctc"
+        return model_repo.rsplit("/", maxsplit=1)[-1]
+
+    @staticmethod
+    def asr_model_supported_languages(model_repo: str) -> tuple[str, ...] | None:
+        """Возвращает фиксированный список языков модели, если он известен."""
+        if model_repo.strip().lower() == Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL.lower():
+            return Config.GIGAAM_MULTILINGUAL_LANGUAGES
+        return None
 
     @staticmethod
     def performance_mode_label(performance_mode: str) -> str:

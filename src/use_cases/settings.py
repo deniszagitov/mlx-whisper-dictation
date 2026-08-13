@@ -74,9 +74,10 @@ class SettingsUseCases:
             return
 
         self.runtime.model_repo = model_repo
-        self.runtime.model_name = model_repo.rsplit("/", maxsplit=1)[-1]
         self.transcriber.model_name = model_repo
         self.settings_store.save_str(Config.DEFAULTS_KEY_MODEL, model_repo)
+        if self.runtime.current_language is not None:
+            self.settings_store.save_str(Config.DEFAULTS_KEY_LANGUAGE, self.runtime.current_language)
         LOGGER.info("🧠 Выбрана модель: %s", model_repo)
         self.runtime.system_integration_service.notify("MLX Whisper Dictation", f"Модель переключена: {self.runtime.model_name}")
         self.publish_snapshot()
