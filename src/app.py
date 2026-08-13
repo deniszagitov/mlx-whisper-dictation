@@ -391,6 +391,10 @@ class DictationApp:
         self.transcriber = transcriber
         self.llm_processor = llm_processor
         self.launch_config = launch_config
+        self._configured_languages = launch_config.languages
+        supported_languages = Config.asr_model_supported_languages(self.launch_config.model)
+        if supported_languages is not None:
+            self.launch_config = self.launch_config.with_languages(supported_languages)
         self.app_preferences = app_preferences or AppPreferences.from_store(self.settings_store)
         self._migrate_reader_tts_rate_default()
         self.reader_preferences = ReaderPreferences.from_store(self.settings_store, llm_model=self.launch_config.llm_model)
@@ -443,7 +447,7 @@ class DictationApp:
         if self.launch_config.max_time not in self.max_time_options:
             self.max_time_options.insert(0, self.launch_config.max_time)
 
-        self.model_name = self.launch_config.model.rsplit("/", maxsplit=1)[-1]
+        self.model_name = Config.asr_model_display_name(self.launch_config.model)
         self.input_devices: list[AudioDeviceInfo] = []
         initial_language = self.languages[0] if self.languages is not None else None
         if self.languages is not None and self.app_preferences.selected_language in self.languages:
@@ -856,8 +860,12 @@ class DictationApp:
 
     @model_repo.setter
     def model_repo(self, value: str) -> None:
-        self.launch_config = self.launch_config.with_model(value)
-        self.model_name = self.launch_config.model.rsplit("/", maxsplit=1)[-1]
+        supported_languages = Config.asr_model_supported_languages(value)
+        languages = supported_languages if supported_languages is not None else self._configured_languages
+        self.launch_config = self.launch_config.with_model(value).with_languages(languages)
+        self.model_name = Config.asr_model_display_name(self.launch_config.model)
+        if self.languages is not None and self.current_language not in self.languages:
+            self.current_language = self.languages[0]
         if self.launch_config.model not in self.model_options:
             self.model_options.insert(0, self.launch_config.model)
 

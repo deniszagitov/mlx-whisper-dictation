@@ -464,6 +464,16 @@ mlx-community/whisper-large-v3-turbo
 - `mlx-community/whisper-large-v3-mlx`, если качество важнее задержки
 - `mlx-community/whisper-turbo`, если нужна минимальная задержка и допустима более слабая точность
 - `mlx-community/Qwen3-ASR-1.7B-8bit`, если нужен Qwen3-ASR через `mlx-audio` без промежуточного WAV
+- `handy-computer/gigaam-v3-e2e-rnnt-gguf`, если нужна русскоязычная GigaAM-v3 e2e RNN-T в FP16 через `transcribe.cpp` и Metal
+- `ai-sage/GigaAM-Multilingual@large_ctc`, если нужна официальная 600M CTC-модель для русского, английского, казахского, киргизского и узбекского языков
+
+Для пресета GigaAM приложение скачивает с Hugging Face ровно файл `gigaam-v3-e2e-rnnt-F16.gguf` (около 431 MB) и хранит его в стандартном локальном кэше Hugging Face. Модель работает полностью локально, поддерживает только русский язык и возвращает текст с пунктуацией и нормализацией. Нативный runtime автоматически выбирает Metal на Apple Silicon и использует CPU как запасной backend.
+
+Один вызов GigaAM ограничен 25 секундами аудио. Более длинная запись автоматически разбивается на последовательные фрагменты без отбрасывания хвоста, после чего распознанный текст объединяется.
+
+GigaAM Multilingual `large_ctc` загружается из официальной revision `large_ctc` (веса около 2.34 GB) и работает локально через PyTorch: MPS на Apple Silicon, CPU как fallback. Это CTC-модель с единым символьным декодером: язык выбирается в меню для статуса и диагностик, а само распознавание не требует языкового prompt. Результат не содержит e2e-пунктуацию и нормализацию чисел.
+
+Revision `large_ssl` не показывается среди моделей диктовки: это self-supervised encoder без ASR-головы и текстового декодера. Он предназначен для эмбеддингов и fine-tuning, а не для готовой транскрибации.
 
 Пример запуска:
 
@@ -580,7 +590,9 @@ uv run python setup.py py2app -A
 
 - используется прямой вызов `mlx_whisper.transcribe(audio, path_or_hf_repo=...)`
 - для `Qwen3-ASR` используется локальный backend `mlx-audio`, которому аудио передается напрямую из памяти
-- модель задается как Hugging Face repo или локальный путь
+- для `GigaAM-v3 e2e RNN-T` используется `transcribe.cpp` с GGUF-моделью `gigaam-v3-e2e-rnnt-F16.gguf`; на Apple Silicon runtime выбирает Metal
+- для `GigaAM Multilingual large_ctc` используется официальный PyTorch checkpoint revision `large_ctc`; runtime выбирает MPS или CPU
+- модель задается как Hugging Face repo или локальный путь; локальный путь к файлу `gigaam-v3-e2e-rnnt-*.gguf` также запускает GigaAM-backend
 - аудио пишется через `PyAudio`
 - горячие клавиши отслеживаются через `pynput`
 - автоматическая вставка выполняется через настраиваемую цепочку методов: CGEvent Unicode, Accessibility API или буфер обмена с восстановлением; все распознанные тексты сохраняются в историю

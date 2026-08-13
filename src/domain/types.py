@@ -392,6 +392,10 @@ class LaunchConfig:
         """Возвращает новый конфиг с обновлённой моделью."""
         return replace(self, model=_coerce_model_name(model, fallback=self.model))
 
+    def with_languages(self, languages: object) -> LaunchConfig:
+        """Возвращает новый конфиг с обновлённым набором языков."""
+        return replace(self, languages=_coerce_languages(languages))
+
     def with_max_time(self, max_time: object) -> LaunchConfig:
         """Возвращает новый конфиг с обновлённым лимитом записи."""
         return replace(self, max_time=_coerce_max_time(max_time, fallback=self.max_time))

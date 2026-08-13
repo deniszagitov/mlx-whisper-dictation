@@ -90,6 +90,11 @@ def test_setup_registers_expected_metadata(monkeypatch):
     assert captured_kwargs["distclass"] is module.Py2AppDistribution
     assert captured_kwargs["name"] == "Dictator"
     assert captured_kwargs["options"]["py2app"]["plist"]["CFBundleIdentifier"] == "com.deniszagitov.dictator"
+    assert "transcribe_cpp" in captured_kwargs["options"]["py2app"]["packages"]
+    assert "transcribe_cpp_native" in captured_kwargs["options"]["py2app"]["packages"]
+    assert "torch" in captured_kwargs["options"]["py2app"]["packages"]
+    assert "torchaudio" in captured_kwargs["options"]["py2app"]["packages"]
+    assert "pyannote" in captured_kwargs["options"]["py2app"]["packages"]
     assert "cmdclass" not in captured_kwargs
 
 

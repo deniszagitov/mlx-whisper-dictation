@@ -778,6 +778,10 @@ class TranscriptionUseCases:
     def _asr_backend_name(self) -> str:
         """Возвращает короткое имя ASR backend-а по текущей модели."""
         normalized_model = self.model_name.rsplit("/", maxsplit=1)[-1].lower()
+        if "gigaam-multilingual@large_ctc" in normalized_model:
+            return "gigaam-multilingual-large-ctc"
+        if normalized_model.startswith("gigaam-v3-e2e-rnnt"):
+            return "gigaam-v3-e2e-rnnt"
         if normalized_model.startswith("qwen3-asr"):
             return "qwen3-asr"
         return "mlx_whisper"

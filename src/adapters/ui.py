@@ -696,7 +696,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
 
     def _model_menu_title(self, model_repo: str) -> str:
         """Возвращает подпись пункта меню модели."""
-        return f"Модель: {model_repo.rsplit('/', maxsplit=1)[-1]}"
+        return f"Модель: {Config.asr_model_display_name(model_repo)}"
 
     def _llm_model_menu_title(self, model_repo: str) -> str:
         """Возвращает подпись пункта меню LLM-модели."""
@@ -858,6 +858,14 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
             title = self._format_tts_max_minutes(max_minutes)
             self.reader_tts_max_minutes_menu[title].state = int(max_minutes == self.reader_tts_max_minutes)
 
+    def _refresh_language_menu(self) -> None:
+        """Пересобирает список языков после смены ASR-модели."""
+        if getattr(self.language_item, "_menu", None) is not None:
+            self.language_item.clear()
+        if self.languages is not None and len(self.languages) > 1:
+            for language in self.languages:
+                self.language_item.add(rumps.MenuItem(language, callback=self.change_language))
+
     def _refresh_input_device_menu(self) -> None:
         """Пересобирает подменю выбора микрофона."""
         if getattr(self.input_device_menu, "_menu", None) is not None:
@@ -981,6 +989,7 @@ class StatusBarApp(rumps.App):  # type: ignore[misc]
         self.llm_model_menu.title = f"🤖 LLM-модель: {snapshot.llm_model_name}"
 
         self._refresh_hotkey_items()
+        self._refresh_language_menu()
         self._refresh_reader_items()
         self._refresh_permission_items()
         self._refresh_token_usage_item()

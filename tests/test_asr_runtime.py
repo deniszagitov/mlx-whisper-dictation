@@ -1,6 +1,9 @@
-"""Юнит-тесты общего ASR runtime для Whisper и Qwen3-ASR."""
+"""Юнит-тесты общего ASR runtime для Whisper, Qwen3-ASR и GigaAM."""
+
+from types import SimpleNamespace
 
 import numpy as np
+from src.domain.constants import Config
 from src.infrastructure import asr_runtime as asr_runtime_module
 
 
@@ -30,6 +33,47 @@ def test_run_asr_transcription_dispatches_to_qwen_backend(monkeypatch):
     assert calls
     assert calls[0][1] == "mlx-community/Qwen3-ASR-1.7B-8bit"
     assert calls[0][2] == "ru"
+
+
+def test_run_asr_transcription_dispatches_to_gigaam_backend(monkeypatch):
+    """Пресет GigaAM должен идти через transcribe.cpp backend."""
+    calls: list[tuple[object, str, str | None]] = []
+
+    def fake_gigaam_transcription(audio_data, model_name, language):
+        calls.append((audio_data, model_name, language))
+        return {"text": "gigaam"}
+
+    monkeypatch.setattr(asr_runtime_module, "run_gigaam_transcription", fake_gigaam_transcription)
+
+    result = asr_runtime_module.run_asr_transcription(
+        make_audio(),
+        "handy-computer/gigaam-v3-e2e-rnnt-gguf",
+        "ru",
+    )
+
+    assert result == {"text": "gigaam"}
+    assert calls[0][1] == "handy-computer/gigaam-v3-e2e-rnnt-gguf"
+    assert calls[0][2] == "ru"
+
+
+def test_run_asr_transcription_dispatches_to_gigaam_multilingual_large_ctc(monkeypatch):
+    """Официальный large_ctc checkpoint должен идти через PyTorch runtime."""
+    calls = []
+
+    def fake_multilingual(audio_data, model_name, language):
+        calls.append((audio_data, model_name, language))
+        return {"text": "multilingual"}
+
+    monkeypatch.setattr(asr_runtime_module, "run_gigaam_multilingual_transcription", fake_multilingual)
+
+    result = asr_runtime_module.run_asr_transcription(
+        make_audio(),
+        Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL,
+        "uz",
+    )
+
+    assert result == {"text": "multilingual"}
+    assert calls[0][1:] == (Config.GIGAAM_MULTILINGUAL_LARGE_CTC_MODEL, "uz")
 
 
 def test_run_asr_transcription_dispatches_to_whisper_backend(monkeypatch):
@@ -113,3 +157,126 @@ def test_run_qwen_transcription_falls_back_to_auto_language(monkeypatch):
     assert not isinstance(captured["audio"], str)
     assert result["language"] == "English"
     assert result["total_tokens"] == 2
+
+
+def test_resolve_gigaam_model_downloads_exact_fp16_file(monkeypatch):
+    """Hugging Face-пресет должен скачивать только выбранный F16 GGUF."""
+    calls = []
+
+    def fake_download(**kwargs):
+        calls.append(kwargs)
+        return "/tmp/gigaam-v3-e2e-rnnt-F16.gguf"
+
+    monkeypatch.setattr(asr_runtime_module, "hf_hub_download", fake_download)
+
+    path = asr_runtime_module._resolve_gigaam_model_path("handy-computer/gigaam-v3-e2e-rnnt-gguf")
+
+    assert str(path) == "/tmp/gigaam-v3-e2e-rnnt-F16.gguf"
+    assert calls == [
+        {
+            "repo_id": "handy-computer/gigaam-v3-e2e-rnnt-gguf",
+            "filename": "gigaam-v3-e2e-rnnt-F16.gguf",
+        }
+    ]
+
+
+def test_run_gigaam_transcription_normalizes_result_and_ignores_language(monkeypatch):
+    """GigaAM получает float32 PCM, а результат возвращается в общем формате ASR."""
+    captured = {}
+
+    class FakeSession:
+        limits = SimpleNamespace(effective_max_audio_ms=25_000)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def run(self, audio, **kwargs):
+            captured["audio"] = audio
+            captured["kwargs"] = kwargs
+            return SimpleNamespace(
+                text="Привет, мир!",
+                segments=(SimpleNamespace(text="Привет, мир!", t0_ms=100, t1_ms=900, n_tokens=3),),
+                tokens=(object(), object(), object()),
+            )
+
+    class FakeModel:
+        def session(self):
+            return FakeSession()
+
+    monkeypatch.setattr(asr_runtime_module, "_get_cached_gigaam_model", lambda _model_name: FakeModel())
+
+    result = asr_runtime_module.run_gigaam_transcription(
+        np.ones(16_000, dtype=np.float64),
+        "handy-computer/gigaam-v3-e2e-rnnt-gguf",
+        "en",
+    )
+
+    assert captured["audio"].dtype == np.float32
+    assert captured["audio"].flags.c_contiguous is True
+    assert captured["kwargs"] == {"language": None, "timestamps": "auto"}
+    assert result == {
+        "text": "Привет, мир!",
+        "language": "ru",
+        "segments": [{"text": "Привет, мир!", "start": 0.1, "end": 0.9, "tokens": 3}],
+        "total_tokens": 3,
+    }
+
+
+def test_run_gigaam_transcription_splits_long_audio_without_losing_tail(monkeypatch):
+    """Запись длиннее лимита GigaAM разбивается, а все части попадают в ответ."""
+    chunks = []
+
+    class FakeSession:
+        limits = SimpleNamespace(effective_max_audio_ms=25_000)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def run(self, audio, **_kwargs):
+            chunks.append(audio.copy())
+            index = len(chunks)
+            return SimpleNamespace(text=f"часть {index}", segments=(), tokens=())
+
+    class FakeModel:
+        def session(self):
+            return FakeSession()
+
+    monkeypatch.setattr(asr_runtime_module, "_get_cached_gigaam_model", lambda _model_name: FakeModel())
+    audio = np.arange(400_123, dtype=np.float32)
+
+    result = asr_runtime_module.run_gigaam_transcription(audio, "handy-computer/gigaam-v3-e2e-rnnt-gguf", "ru")
+
+    assert [len(chunk) for chunk in chunks] == [400_000, 123]
+    np.testing.assert_array_equal(np.concatenate(chunks), audio)
+    assert result["text"] == "часть 1 часть 2"
+    assert result["segments"][1]["start"] == 25.0
+    assert result["segments"][1]["end"] == 25.0 + 123 / 16_000
+
+
+def test_gigaam_model_is_loaded_once(monkeypatch, tmp_path):
+    """GGUF-модель должна оставаться загруженной между диктовками."""
+    model_path = tmp_path / "gigaam-v3-e2e-rnnt-F16.gguf"
+    model_path.touch()
+    loaded_models = []
+    fake_model = object()
+
+    def fake_load_model(path):
+        loaded_models.append(path)
+        return fake_model
+
+    monkeypatch.setattr(asr_runtime_module, "_resolve_gigaam_model_path", lambda _model_name: model_path)
+    monkeypatch.setattr(asr_runtime_module, "_load_gigaam_model", fake_load_model)
+    monkeypatch.setattr(asr_runtime_module, "_GIGAAM_MODEL_CACHE", {})
+
+    first = asr_runtime_module._get_cached_gigaam_model("gigaam-v3-e2e-rnnt-F16.gguf")
+    second = asr_runtime_module._get_cached_gigaam_model("gigaam-v3-e2e-rnnt-F16.gguf")
+
+    assert first is fake_model
+    assert second is fake_model
+    assert loaded_models == [model_path]

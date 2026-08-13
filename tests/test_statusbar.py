@@ -1046,6 +1046,16 @@ class TestStatusBarMenuSelections:
 
         assert (Config.DEFAULTS_KEY_MODEL, "mlx-community/whisper-turbo") in saved_values
 
+    def test_change_to_multilingual_model_rebuilds_language_menu(self, make_app):
+        """После выбора large_ctc меню должно показать все пять языков."""
+        app, *_ = make_app(languages=["ru"], max_time=30)
+
+        app.change_model(app._menu_item("Модель: GigaAM-Multilingual large_ctc"))
+
+        assert app.languages == ["ru", "en", "kk", "ky", "uz"]
+        for language in app.languages:
+            assert app._menu_item(language).title == language
+
     def test_change_input_device_persists_selection(self, patched_app_module, monkeypatch):
         """Выбранный микрофон должен сохраняться в настройках."""
         saved_values = []
